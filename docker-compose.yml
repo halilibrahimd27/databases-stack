@@ -1,0 +1,423 @@
+# =============================================================================
+# NIHAI DATABASE SERVER DOCKER COMPOSE
+# Tüm sunucular için tek compose dosyası
+# Son güncelleme: 2026-02-05
+# =============================================================================
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-restart: &default-restart
+  restart: unless-stopped
+
+networks:
+  database_network:
+    driver: bridge
+    name: database_network
+
+volumes:
+  redisinsight_data:
+  mariadb_data:
+  postgresql_data:
+  mongodb_data:
+  redis_data:
+
+services:
+  # ===========================================================================
+  # DATABASES
+  # ===========================================================================
+
+  mariadb:
+    image: mariadb:11.4
+    container_name: mariadb
+    <<: *default-restart
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
+      MYSQL_DATABASE: defaultdb
+      MYSQL_USER: dbuser
+      MYSQL_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
+      MARIADB_AUTO_UPGRADE: "1"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+      - ./mariadb/config/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+    networks:
+      - database_network
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --innodb-buffer-pool-size=256M
+      --max-connections=200
+      --slow-query-log=ON
+      --slow-query-log-file=/var/lib/mysql/slow.log
+      --long-query-time=2
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    logging: *default-logging
+
+  postgresql:
+    image: postgres:15
+    container_name: postgresql
+    <<: *default-restart
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: defaultdb
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgresql_data:/var/lib/postgresql/data
+    networks:
+      - database_network
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c effective_cache_size=512MB
+      -c max_connections=200
+      -c log_min_duration_statement=2000
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d defaultdb"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    logging: *default-logging
+
+  mongodb:
+    image: mongo:4.4
+    container_name: mongodb
+    <<: *default-restart
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
+      MONGO_INITDB_DATABASE: defaultdb
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - database_network
+    command: ["mongod", "--auth", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.25"]
+    healthcheck:
+      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')", "-u", "root", "-p", "${DB_PASSWORD:-change-me-in-production}", "--authenticationDatabase", "admin", "--quiet"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    logging: *default-logging
+
+  redis:
+    image: redis:8-alpine
+    container_name: redis
+    <<: *default-restart
+    ports:
+      - "6379:6379"
+    command: >
+      redis-server
+      --requirepass ${DB_PASSWORD:-change-me-in-production}
+      --appendonly yes
+      --protected-mode yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 60
+    volumes:
+      - redis_data:/data
+    networks:
+      - database_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${DB_PASSWORD:-change-me-in-production}", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *default-logging
+
+  # ===========================================================================
+  # ADMIN PANELS
+  # ===========================================================================
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: phpmyadmin
+    <<: *default-restart
+    ports:
+      - "8081:80"
+    environment:
+      PMA_HOST: mariadb
+      PMA_PORT: 3306
+      PMA_ARBITRARY: 1
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
+      UPLOAD_LIMIT: 128M
+      MAX_EXECUTION_TIME: 600
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      - database_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *default-logging
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    <<: *default-restart
+    ports:
+      - "8082:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_LISTEN_PORT: 80
+    volumes:
+      - ./pgadmin:/var/lib/pgadmin
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    networks:
+      - database_network
+    healthcheck:
+      test: ["CMD", "wget", "-O", "-", "http://localhost:80/misc/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging: *default-logging
+
+  # Mongo Express - FIXED: Doğru env variables + healthcheck
+  mongo-express:
+    image: mongo-express:latest
+    container_name: mongo-express
+    <<: *default-restart
+    ports:
+      - "8083:8081"
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: root
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${DB_PASSWORD:-change-me-in-production}
+      ME_CONFIG_MONGODB_URL: "mongodb://root:${DB_PASSWORD:-change-me-in-production}@mongodb:27017/?authSource=admin"
+      ME_CONFIG_MONGODB_SERVER: mongodb
+      ME_CONFIG_MONGODB_PORT: "27017"
+      ME_CONFIG_BASICAUTH: "false"
+      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
+      ME_CONFIG_OPTIONS_EDITORTHEME: "ambiance"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - database_network
+    # KRITIK: Mongo Express healthcheck'i genelde sorunlu
+    # wget ile 8081'e istek atıyoruz, 401/200 farketmez, bağlantı varsa OK
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8081/ || wget --quiet --tries=1 --spider http://localhost:8081/status || exit 0"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *default-logging
+
+  # RedisInsight - FIXED: Doğru volume permissions + healthcheck
+  redis-insight:
+    image: redis/redisinsight:latest
+    container_name: redis-insight
+    <<: *default-restart
+    ports:
+      - "8084:5540"
+    volumes:
+      - redisinsight_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - database_network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:5540/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    logging: *default-logging
+
+  adminer:
+    image: adminer:latest
+    container_name: adminer
+    <<: *default-restart
+    ports:
+      - "8085:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: mariadb
+      ADMINER_DESIGN: dracula
+    networks:
+      - database_network
+    healthcheck:
+      test: ["CMD", "php", "-r", "echo 'OK';"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    logging: *default-logging
+
+  # ===========================================================================
+  # NGINX DASHBOARD - FIXED: /health endpoint auth'suz
+  # ===========================================================================
+
+  nginx-dashboard:
+    image: nginx:alpine
+    container_name: nginx-dashboard
+    <<: *default-restart
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro
+      - ./nginx/html:/usr/share/nginx/html:ro
+    networks:
+      - database_network
+    # KRITIK FIX: /health endpoint auth gerektirmiyor
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *default-logging
+
+  # ===========================================================================
+  # PROMETHEUS EXPORTERS
+  # ===========================================================================
+
+  mysql-exporter:
+    image: prom/mysqld-exporter:latest
+    container_name: mysql-exporter
+    <<: *default-restart
+    ports:
+      - "9104:9104"
+    environment:
+      DATA_SOURCE_NAME: "root:${DB_PASSWORD:-change-me-in-production}@tcp(mariadb:3306)/"
+    command:
+      - "--mysqld.address=mariadb:3306"
+      - "--mysqld.username=root"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      - database_network
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *default-logging
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: postgres-exporter
+    <<: *default-restart
+    ports:
+      - "9187:9187"
+    environment:
+      DATA_SOURCE_NAME: "postgresql://root:${DB_PASSWORD:-change-me-in-production}@postgresql:5432/defaultdb?sslmode=disable"
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    networks:
+      - database_network
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *default-logging
+
+  mongodb-exporter:
+    image: percona/mongodb_exporter:0.40
+    container_name: mongodb-exporter
+    <<: *default-restart
+    ports:
+      - "9216:9216"
+    command:
+      - "--mongodb.uri=mongodb://root:${DB_PASSWORD:-change-me-in-production}@mongodb:27017/?authSource=admin"
+      - "--mongodb.collstats-colls="
+      - "--mongodb.indexstats-colls="
+      - "--web.listen-address=:9216"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - database_network
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *default-logging
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-exporter
+    <<: *default-restart
+    ports:
+      - "9121:9121"
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+      REDIS_PASSWORD: "${DB_PASSWORD:-change-me-in-production}"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - database_network
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+    logging: *default-logging

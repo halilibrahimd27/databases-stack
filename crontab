@@ -1,0 +1,62 @@
+# =============================================================================
+# DATABASE BACKUP & SYNC AUTOMATION - 15 MINUTE INTERVALS
+# Server: <YOUR_DB_HOSTNAME>
+# Last Updated: 2025-01-27
+# =============================================================================
+#
+# TIMELINE (Her Saat):
+# :00 → Full backup başlar (~2-5 dk sürer)
+# :05 → Google Drive sync başlar
+# :15 → Full backup başlar
+# :20 → Google Drive sync başlar
+# :30 → Full backup başlar
+# :35 → Google Drive sync başlar
+# :45 → Full backup başlar
+# :50 → Google Drive sync başlar
+#
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# BACKUP - Her 15 dakikada bir (Full backup)
+# -----------------------------------------------------------------------------
+*/15 * * * * /opt/databases/backup.sh all >> /opt/databases/logs/cron_backup.log 2>&1
+
+# -----------------------------------------------------------------------------
+# GOOGLE DRIVE SYNC - Backup'tan 5 dakika sonra
+# -----------------------------------------------------------------------------
+5,20,35,50 * * * * /opt/databases/sync_remote.sh >> /opt/databases/logs/cron_sync.log 2>&1
+
+# -----------------------------------------------------------------------------
+# MAINTENANCE - Temizlik & Raporlama
+# -----------------------------------------------------------------------------
+# Eski backupları temizle - Her gün 04:00 (7 gün retention)
+0 * * * * find /opt/databases/backups -name "*.gz" -mmin +360 -delete 2>/dev/null
+
+# Günlük istatistik raporu - Her gün 08:00
+0 8 * * * /opt/databases/backup.sh stats >> /opt/databases/logs/cron_stats.log 2>&1
+
+# Log dosyalarını temizle - Her Pazar 03:00 (7 günden eski)
+0 3 * * 0 find /opt/databases/logs -name "*.log" -mtime +7 -delete 2>/dev/null
+
+# -----------------------------------------------------------------------------
+# OPTIONAL: Disk space alert (uncomment to enable)
+# -----------------------------------------------------------------------------
+# 0 */6 * * * df -h /opt/databases | awk 'NR==2 && int($5) > 80 {print "DISK WARNING: "$5" used"}' | mail -s "Disk Alert" admin@example.com
+
+# =============================================================================
+# NOTES:
+# =============================================================================
+# - Backup lock mekanizması var, çakışma olmaz
+# - Sync lock mekanizması var, çakışma olmaz
+# - Günde 96 backup alınır (4 DB × 24 saat × 4 kez)
+# - 7 günlük retention = ~672 backup dosyası max
+# - Tahmini disk kullanımı: DB boyutuna göre değişir
+#
+# MANUAL COMMANDS:
+# - Manual backup:  /opt/databases/backup.sh all
+# - Manual sync:    /opt/databases/sync_remote.sh
+# - Check status:   /opt/databases/backup.sh stats
+# - List backups:   /opt/databases/backup.sh list
+# - Test sync:      /opt/databases/sync_remote.sh test
+# =============================================================================

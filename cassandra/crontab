@@ -1,0 +1,85 @@
+# =============================================================================
+# CASSANDRA BACKUP & SYNC AUTOMATION
+# Server: Cassandra Database Server
+# Last Updated: 2025-01-28
+# =============================================================================
+#
+# TIMELINE (Her Saat):
+# :00 → Full snapshot backup başlar (~5-10 dk sürer)
+# :15 → Google Drive sync başlar
+# :30 → Schema backup (sadece)
+# :45 → Health check ve log rotation
+#
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# BACKUP - Her saat başı full snapshot
+# -----------------------------------------------------------------------------
+0 * * * * /opt/cassandra/backup.sh all >> /opt/cassandra/logs/cron_backup.log 2>&1
+
+# -----------------------------------------------------------------------------
+# SCHEMA BACKUP - Her 6 saatte bir (hızlı, küçük)
+# -----------------------------------------------------------------------------
+30 */6 * * * /opt/cassandra/backup.sh schema >> /opt/cassandra/logs/cron_backup.log 2>&1
+
+# -----------------------------------------------------------------------------
+# GOOGLE DRIVE SYNC - Backup'tan 15 dakika sonra
+# -----------------------------------------------------------------------------
+15 * * * * /opt/cassandra/sync_remote.sh >> /opt/cassandra/logs/cron_sync.log 2>&1
+
+# -----------------------------------------------------------------------------
+# MAINTENANCE - Temizlik & Raporlama
+# -----------------------------------------------------------------------------
+# Eski backupları temizle - Her gün 04:00 (7 gün retention)
+0 4 * * * /opt/cassandra/backup.sh clean 7 >> /opt/cassandra/logs/cron_clean.log 2>&1
+
+# Günlük istatistik raporu - Her gün 08:00
+0 8 * * * /opt/cassandra/backup.sh stats >> /opt/cassandra/logs/cron_stats.log 2>&1
+
+# Log dosyalarını temizle - Her Pazar 03:00 (7 günden eski)
+0 3 * * 0 find /opt/cassandra/logs -name "*.log" -mtime +7 -delete 2>/dev/null
+
+# -----------------------------------------------------------------------------
+# CASSANDRA MAINTENANCE
+# -----------------------------------------------------------------------------
+# Repair job - Her Pazar 02:00 (off-peak hours)
+0 2 * * 0 docker exec cassandra nodetool repair >> /opt/cassandra/logs/cron_repair.log 2>&1
+
+# Compaction stats - Her gün 06:00
+0 6 * * * docker exec cassandra nodetool compactionstats >> /opt/cassandra/logs/cron_compaction.log 2>&1
+
+# Health check - Her 5 dakikada
+*/5 * * * * docker exec cassandra nodetool status > /opt/cassandra/logs/node_status.log 2>&1
+
+# -----------------------------------------------------------------------------
+# OPTIONAL: Disk space alert (uncomment to enable)
+# -----------------------------------------------------------------------------
+# 0 */6 * * * df -h /opt/cassandra | awk 'NR==2 && int($5) > 80 {print "DISK WARNING: "$5" used"}' | mail -s "Cassandra Disk Alert" admin@example.com
+
+# =============================================================================
+# NOTES:
+# =============================================================================
+# - Backup lock mekanizması var, çakışma olmaz
+# - Sync lock mekanizması var, çakışma olmaz
+# - Günde 24 full backup alınır
+# - 7 günlük retention = ~168 backup dosyası max
+# - Tahmini disk kullanımı: Keyspace boyutuna göre değişir
+# - nodetool repair haftalık çalışmalı (cluster sağlığı için)
+#
+# MANUAL COMMANDS:
+# - Manual backup:     /opt/cassandra/backup.sh all
+# - Schema only:       /opt/cassandra/backup.sh schema
+# - Manual sync:       /opt/cassandra/sync_remote.sh
+# - Check status:      /opt/cassandra/backup.sh stats
+# - List backups:      /opt/cassandra/backup.sh list
+# - List keyspaces:    /opt/cassandra/backup.sh keyspaces
+# - Test sync:         /opt/cassandra/sync_remote.sh test
+#
+# CASSANDRA COMMANDS:
+# - Node status:       docker exec cassandra nodetool status
+# - Cluster info:      docker exec cassandra nodetool describecluster
+# - CQL shell:         docker exec -it cassandra cqlsh -u cassandra -p change-me-in-production
+# - Compaction:        docker exec cassandra nodetool compactionstats
+# - Flush:             docker exec cassandra nodetool flush
+# =============================================================================

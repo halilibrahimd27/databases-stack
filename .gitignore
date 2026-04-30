@@ -1,0 +1,44 @@
+# ───── Secrets ─────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# ───── Logs ─────
+logs/
+*.log
+
+# ───── Backups (volume contents) ─────
+backups/
+*.sql
+*.sql.gz
+*.tar
+*.tar.gz
+*.dump
+*.rdb
+*.rdb.gz
+
+# ───── Volume data (persistent) ─────
+mariadb/data/
+postgresql/data/
+mongodb/data/
+redis/data/
+pgadmin/sessions/
+pgadmin/storage/
+pgadmin/*.db
+redisinsight-data/
+
+# ───── nginx auth ─────
+nginx/.htpasswd
+
+# ───── Lock files ─────
+*.lock
+
+# ───── Editör / OS ─────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
