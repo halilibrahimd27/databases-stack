@@ -47,14 +47,10 @@ services:
       - ./mariadb/config/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
     networks:
       - database_network
-    command: >
-      --character-set-server=utf8mb4
-      --collation-server=utf8mb4_unicode_ci
-      --innodb-buffer-pool-size=256M
-      --max-connections=200
-      --slow-query-log=ON
-      --slow-query-log-file=/var/lib/mysql/slow.log
-      --long-query-time=2
+    # NOT: Tüm MariaDB ayarları mariadb/config/my.cnf içindedir (tek yetki
+    # kaynağı). Eskiden buradaki `command:` bloğu mount edilen my.cnf'i eziyor,
+    # buffer pool'u 256M'ye düşürüyordu. `command:` kaldırıldı; ayarları
+    # değiştirmek için my.cnf'i düzenleyin (bkz. README → "MariaDB tuning").
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 30s
@@ -64,7 +60,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: ${MARIADB_MEM_LIMIT:-8G}
     logging: *default-logging
 
   postgresql:
