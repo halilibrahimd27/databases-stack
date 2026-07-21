@@ -25,6 +25,7 @@ volumes:
   postgresql_data:
   mongodb_data:
   redis_data:
+  mssql_data:
 
 services:
   # ===========================================================================
@@ -152,6 +153,35 @@ services:
       resources:
         limits:
           memory: ${REDIS_MEM_LIMIT:-600M}
+    logging: *default-logging
+
+  # Microsoft SQL Server. Admin kullanıcısı MSSQL'de sabittir: 'sa' (root olamaz).
+  # SA parolası ${DB_PASSWORD} — MSSQL politikası gereği güçlü olmalı (büyük+küçük+
+  # rakam+özel'den en az 3'ü, 8+ karakter). Developer sürümü ücretsiz (dev/test).
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: mssql
+    <<: *default-restart
+    ports:
+      - "1433:1433"
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
+      MSSQL_PID: "Developer"
+    volumes:
+      - mssql_data:/var/opt/mssql
+    networks:
+      - database_network
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: ${MSSQL_MEM_LIMIT:-4G}
     logging: *default-logging
 
   # ===========================================================================
