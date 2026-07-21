@@ -205,7 +205,7 @@
                     <div class="connection-card">
                         <h4>MariaDB</h4>
                         <div class="connection-details">
-                            Host: <SERVER_IP><br>
+                            Host: <span class="host-ip"></span><br>
                             Port: 3306<br>
                             User: root<br>
                             DB: defaultdb
@@ -215,7 +215,7 @@
                     <div class="connection-card">
                         <h4>PostgreSQL</h4>
                         <div class="connection-details">
-                            Host: <SERVER_IP><br>
+                            Host: <span class="host-ip"></span><br>
                             Port: 5432<br>
                             User: root<br>
                             DB: defaultdb
@@ -225,7 +225,7 @@
                     <div class="connection-card">
                         <h4>MongoDB</h4>
                         <div class="connection-details">
-                            Host: <SERVER_IP><br>
+                            Host: <span class="host-ip"></span><br>
                             Port: 27017<br>
                             User: root<br>
                             Auth DB: admin
@@ -235,7 +235,7 @@
                     <div class="connection-card">
                         <h4>Redis</h4>
                         <div class="connection-details">
-                            Host: <SERVER_IP><br>
+                            Host: <span class="host-ip"></span><br>
                             Port: 6379<br>
                         </div>
                     </div>
@@ -243,5 +243,22 @@
             </div>
         </div>
     </div>
+    <script>
+      // Sunucu IP'sini tarayıcının adres çubuğundan al — böylece bu sayfa
+      // hangi host'tan açılırsa o host'a bağlanır; deploy sırasında
+      // <SERVER_IP> placeholder'ını elle değiştirmeye gerek kalmaz.
+      (function () {
+        var host = location.hostname;
+        document.querySelectorAll('.host-ip').forEach(function (el) {
+          el.textContent = host;
+        });
+        document.querySelectorAll('a[href]').forEach(function (a) {
+          var raw = a.getAttribute('href');
+          if (raw && raw.indexOf('<SERVER_IP>') !== -1) {
+            a.setAttribute('href', raw.replace('<SERVER_IP>', host));
+          }
+        });
+      })();
+    </script>
 </body>
 </html>
