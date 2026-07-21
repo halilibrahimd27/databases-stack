@@ -28,9 +28,8 @@ BANDWIDTH_LIMIT=""              # Boş = limitsiz, örn: "10M" = 10MB/s
 RETRY_COUNT=3                   # Hata durumunda tekrar deneme
 RETRY_SLEEP=10                  # Tekrar denemeler arası bekleme (saniye)
 
-# Lock mechanism
-LOCK_FILE="/tmp/sync_remote.lock"
-LOCK_TIMEOUT=1800               # 30 dakika timeout
+# Lock mechanism (flock-based — bkz. acquire_lock)
+LOCK_FILE="${LOCK_FILE:-/tmp/sync_remote.lock}"
 
 # Colors
 RED='\033[0;31m'
@@ -44,38 +43,31 @@ NC='\033[0m'
 mkdir -p "$LOG_DIR"
 
 # =============================================================================
-# LOCK MECHANISM
+# LOCK MECHANISM (flock-based)
 # =============================================================================
+# backup.sh ile aynı düzeltme: eski yaş-tabanlı mantık, sahibi hâlâ çalışırken
+# LOCK_TIMEOUT'tan eski kilidi silip eşzamanlı ikinci bir sync başlatabiliyordu.
+# flock kilidi açık bir fd'ye (9) bağlar; kilit yalnızca process ölünce
+# çekirdek tarafından bırakılır, sahibi yaşadığı sürece ASLA kırılmaz.
 acquire_lock() {
-    if [ -f "$LOCK_FILE" ]; then
-        local lock_pid=$(cat "$LOCK_FILE" 2>/dev/null)
-        local lock_age=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
-
-        if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
-            if [ "$lock_age" -gt "$LOCK_TIMEOUT" ]; then
-                log "WARNING" "Stale lock detected (${lock_age}s old), removing..."
-                rm -f "$LOCK_FILE"
-            else
-                log "ERROR" "Another sync is running (PID: $lock_pid, Age: ${lock_age}s)"
-                exit 1
-            fi
-        else
-            log "WARNING" "Orphaned lock file found, removing..."
-            rm -f "$LOCK_FILE"
-        fi
+    command -v flock >/dev/null 2>&1 || {
+        log "ERROR" "flock (util-linux) gerekli ama sistemde bulunamadı"
+        exit 1
+    }
+    exec 9>>"$LOCK_FILE" || {
+        log "ERROR" "Lock dosyası açılamadı: $LOCK_FILE"
+        exit 1
+    }
+    if ! flock -n 9; then
+        log "ERROR" "Başka bir sync kilidi tutuyor ($LOCK_FILE). Çıkılıyor."
+        exit 1
     fi
-
-    echo $$ > "$LOCK_FILE"
     trap cleanup EXIT INT TERM
-    log "INFO" "Lock acquired (PID: $$)"
-}
-
-release_lock() {
-    rm -f "$LOCK_FILE"
+    log "INFO" "Lock acquired (PID: $$, flock: $LOCK_FILE)"
 }
 
 cleanup() {
-    release_lock
+    # flock, fd 9 kapanınca otomatik bırakılır — burada rm YOK (bilerek).
     log "INFO" "Lock released"
 }
 

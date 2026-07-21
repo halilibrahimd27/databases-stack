@@ -33,9 +33,8 @@ RETENTION_DAYS=7              # 15 dk'da bir backup = 7 gün yeterli
 MAX_BACKUP_SIZE="50G"
 COMPRESSION_LEVEL=1           # 1=fast, 9=best (15 dk için 1 önerilir)
 
-# Lock mechanism
-LOCK_FILE="/tmp/db_backup.lock"
-LOCK_TIMEOUT=840              # 14 dakika (15 dk cycle için)
+# Lock mechanism (flock-based — bkz. acquire_lock)
+LOCK_FILE="${LOCK_FILE:-/tmp/db_backup.lock}"
 
 # Renk kodları
 RED='\033[0;31m'
@@ -46,43 +45,40 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # =============================================================================
-# LOCK MECHANISM - Prevents concurrent backups
+# LOCK MECHANISM - Prevents concurrent backups (flock-based)
 # =============================================================================
+# Eski mantık lock dosyasının YAŞINA bakıyordu: LOCK_TIMEOUT'tan (840 sn, 15 dk
+# cron aralığının altında) eskiyse, sahibi hâlâ çalışıyor olsa bile kilidi silip
+# eşzamanlı ikinci bir yedek başlatabiliyordu. İki paralel `docker exec` dump =
+# DB container cgroup'unda çift bellek baskısı = CONSTRAINT_MEMCG OOM.
+#
+# flock kilidi açık bir dosya tanımlayıcısına (fd 9) bağlar; kilit yalnızca
+# process ölünce çekirdek tarafından bırakılır, sahibi yaşadığı sürece ASLA
+# kırılmaz. Lock dosyası hiç silinmez (flock'lu bir path'i unlink etmek yarış
+# koşuludur), sadece kilit fd üzerinden yönetilir.
 acquire_lock() {
-    if [ -f "$LOCK_FILE" ]; then
-        local lock_pid=$(cat "$LOCK_FILE" 2>/dev/null)
-        local lock_age=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0) ))
-
-        # Process hala çalışıyor mu kontrol et
-        if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
-            # Lock timeout kontrolü
-            if [ "$lock_age" -gt "$LOCK_TIMEOUT" ]; then
-                log "WARNING" "Stale lock detected (${lock_age}s old), removing..."
-                rm -f "$LOCK_FILE"
-            else
-                log "ERROR" "Another backup is running (PID: $lock_pid, Age: ${lock_age}s)"
-                log "ERROR" "If this is incorrect, remove: $LOCK_FILE"
-                exit 1
-            fi
-        else
-            log "WARNING" "Orphaned lock file found (PID $lock_pid not running), removing..."
-            rm -f "$LOCK_FILE"
-        fi
+    command -v flock >/dev/null 2>&1 || {
+        log "ERROR" "flock (util-linux) gerekli ama sistemde bulunamadı"
+        exit 1
+    }
+    # Append modu: dosyayı truncate etmez, yoksa oluşturur.
+    exec 9>>"$LOCK_FILE" || {
+        log "ERROR" "Lock dosyası açılamadı: $LOCK_FILE"
+        exit 1
+    }
+    if ! flock -n 9; then
+        log "ERROR" "Başka bir yedek/işlem kilidi tutuyor ($LOCK_FILE)."
+        log "ERROR" "Eşzamanlı çalışmayı önlemek için çıkılıyor."
+        exit 1
     fi
-
-    # Lock dosyasını oluştur
-    echo $$ > "$LOCK_FILE"
     trap cleanup EXIT INT TERM
-    log "INFO" "Lock acquired (PID: $$)"
-}
-
-release_lock() {
-    rm -f "$LOCK_FILE"
-    log "INFO" "Lock released"
+    log "INFO" "Lock acquired (PID: $$, flock: $LOCK_FILE)"
 }
 
 cleanup() {
-    release_lock
+    # flock, fd 9 process çıkışında kapanınca çekirdek tarafından otomatik
+    # bırakılır — burada rm YOK (bilerek).
+    log "INFO" "Lock released"
 }
 
 # =============================================================================
@@ -908,7 +904,7 @@ backup_stats() {
     log "INFO" "Configuration:"
     log "INFO" "  Retention: $RETENTION_DAYS days"
     log "INFO" "  Compression: gzip -$COMPRESSION_LEVEL"
-    log "INFO" "  Lock timeout: ${LOCK_TIMEOUT}s"
+    log "INFO" "  Lock: flock ($LOCK_FILE)"
     log "INFO" "========================================="
 }
 
