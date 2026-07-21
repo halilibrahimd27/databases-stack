@@ -176,7 +176,7 @@ services:
     networks:
       - database_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:80/"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -207,7 +207,7 @@ services:
     networks:
       - database_network
     healthcheck:
-      test: ["CMD", "wget", "-O", "-", "http://localhost:80/misc/ping"]
+      test: ["CMD", "wget", "-O", "-", "http://127.0.0.1:80/misc/ping"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -242,7 +242,7 @@ services:
     # KRITIK: Mongo Express healthcheck'i genelde sorunlu
     # wget ile 8081'e istek atıyoruz, 401/200 farketmez, bağlantı varsa OK
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:8081/ || wget --quiet --tries=1 --spider http://localhost:8081/status || exit 0"]
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:8081/ || wget --quiet --tries=1 --spider http://127.0.0.1:8081/status || exit 0"]
       interval: 30s
       timeout: 15s
       retries: 5
@@ -268,7 +268,7 @@ services:
     networks:
       - database_network
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:5540/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:5540/api/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -320,7 +320,7 @@ services:
       - database_network
     # KRITIK FIX: /health endpoint auth gerektirmiyor
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost/health || exit 1"]
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -343,6 +343,9 @@ services:
       - "9104:9104"
     environment:
       DATA_SOURCE_NAME: "root:${DB_PASSWORD:-change-me-in-production}@tcp(mariadb:3306)/"
+      # Yeni mysqld-exporter (--mysqld.address ile) parolayı DATA_SOURCE_NAME'den
+      # DEĞİL bu env'den okur; yoksa "using password: NO" → Access denied → mysql_up=0.
+      MYSQLD_EXPORTER_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
     command:
       - "--mysqld.address=mariadb:3306"
       - "--mysqld.username=root"
