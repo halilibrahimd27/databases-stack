@@ -251,7 +251,7 @@ sync_to_google_drive() {
 
     # Sync each database folder
     echo ""
-    for db in mariadb postgresql mongodb redis; do
+    for db in mariadb postgresql mongodb redis mssql; do
         if sync_folder "$db"; then
             ((synced_count++))
         else
@@ -278,7 +278,7 @@ sync_to_google_drive() {
     log "INFO" "Verifying sync..."
     local verify_ok=0
     local verify_fail=0
-    for db in mariadb postgresql mongodb redis; do
+    for db in mariadb postgresql mongodb redis mssql; do
         if verify_sync "$db"; then
             ((verify_ok++))
         else
@@ -398,7 +398,7 @@ show_status() {
     # Per-database breakdown
     log "INFO" ""
     log "INFO" "Breakdown by Database:"
-    for db in mariadb postgresql mongodb redis; do
+    for db in mariadb postgresql mongodb redis mssql; do
         local db_local=$(find "$BACKUP_DIR/$db" -type f \( -name "*.gz" -o -name "*.tar.gz" \) 2>/dev/null | wc -l)
         local db_size=$(du -sh "$BACKUP_DIR/$db" 2>/dev/null | cut -f1)
         log "INFO" "  $db: $db_local files ($db_size)"

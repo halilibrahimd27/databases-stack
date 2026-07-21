@@ -106,7 +106,7 @@ cleanup() {
 # =============================================================================
 # DIRECTORIES & LOGGING
 # =============================================================================
-mkdir -p "$BACKUP_DIR"/{mariadb,postgresql,mongodb,redis}/{full,incremental,single}
+mkdir -p "$BACKUP_DIR"/{mariadb,postgresql,mongodb,redis,mssql}/{full,incremental,single}
 mkdir -p "$LOG_DIR"
 
 # Logging function with colors
@@ -523,6 +523,84 @@ backup_redis() {
 }
 
 # =============================================================================
+# MSSQL BACKUP FUNCTIONS
+# =============================================================================
+
+# MSSQL admin kullanıcısı 'sa' (yerleşik). Parola SQLCMDPASSWORD ortam
+# değişkeniyle geçirilir (docker exec -e SQLCMDPASSWORD) → `ps` çıktısında
+# görünmez (MariaDB'deki MYSQL_PWD ile aynı mantık).
+backup_mssql() {
+    local backup_type=${1:-"full"}
+    local backup_name="mssql_${backup_type}_${DATE}"
+    local backup_path="$BACKUP_DIR/mssql/$backup_type"
+    local start_time=$(date +%s)
+    local SQLCMD="/opt/mssql-tools18/bin/sqlcmd"
+
+    log "INFO" "========================================="
+    log "INFO" "Starting MSSQL FULL BACKUP"
+    log "INFO" "========================================="
+
+    check_container "mssql" || return 1
+    check_disk_space || return 1
+
+    # Container içinde temiz backup dizini
+    docker exec mssql sh -c 'mkdir -p /var/opt/mssql/backup && rm -f /var/opt/mssql/backup/*.bak' 2>/dev/null
+
+    # Kullanıcı DB'leri (database_id>4 → master/tempdb/model/msdb hariç)
+    local databases
+    databases=$(SQLCMDPASSWORD="$DB_PASSWORD" docker exec -e SQLCMDPASSWORD mssql "$SQLCMD" \
+        -S localhost -U sa -C -h -1 -W -Q "SET NOCOUNT ON; SELECT name FROM sys.databases WHERE database_id > 4;" 2>/dev/null \
+        | tr -d '\r' | grep -v '^$')
+    local db_count
+    db_count=$(printf '%s\n' "$databases" | grep -c .)
+
+    log "INFO" "Found $db_count user databases to backup"
+
+    # Her DB'yi native .bak'a al. NOT: WITH COMPRESSION kullanılmaz — bu image'da
+    # Msg 3250 veriyor ve zaten aşağıda tar+gzip ile sıkıştırıyoruz (çift sıkıştırma
+    # gereksiz). `-b` + `|| backup_failed=1` ile BACKUP hataları gerçekten yakalanır
+    # (aksi halde boş dizin tarlanıp yanlışça "başarılı" sanılıyordu).
+    local db backup_failed=0
+    while IFS= read -r db; do
+        [ -z "$db" ] && continue
+        log "INFO" "  - $db"
+        SQLCMDPASSWORD="$DB_PASSWORD" $IO_NICE docker exec -e SQLCMDPASSWORD mssql "$SQLCMD" \
+            -S localhost -U sa -C -b \
+            -Q "BACKUP DATABASE [$db] TO DISK=N'/var/opt/mssql/backup/${db}.bak' WITH FORMAT, INIT;" \
+            2>> "$LOG_FILE" || { backup_failed=1; log "ERROR" "  ✗ BACKUP failed for: $db"; }
+    done <<< "$databases"
+
+    if [ "$backup_failed" -eq 1 ]; then
+        log "ERROR" "✗ MSSQL backup failed (one or more databases — see log)"
+        docker exec mssql sh -c 'rm -f /var/opt/mssql/backup/*.bak' 2>/dev/null
+        return 1
+    fi
+
+    # .bak dosyalarını tar+gzip ile dışarı al
+    $IO_NICE docker exec mssql tar -cf - -C /var/opt/mssql/backup . 2>/dev/null | \
+        $IO_NICE gzip -${COMPRESSION_LEVEL} > "$backup_path/${backup_name}.tar.gz"
+
+    if [ ${PIPESTATUS[0]} -eq 0 ] && [ -s "$backup_path/${backup_name}.tar.gz" ]; then
+        docker exec mssql sh -c 'rm -f /var/opt/mssql/backup/*.bak' 2>/dev/null
+        local size=$(du -h "$backup_path/${backup_name}.tar.gz" | cut -f1)
+        local duration=$(( $(date +%s) - start_time ))
+
+        log "SUCCESS" "✓ MSSQL backup completed"
+        log "INFO" "  Size: $size | Duration: $(format_duration $duration)"
+        log "INFO" "  Location: $backup_path/${backup_name}.tar.gz"
+        log "INFO" "  Databases: $db_count"
+
+        verify_backup "$backup_path/${backup_name}.tar.gz"
+        return 0
+    fi
+
+    log "ERROR" "✗ MSSQL backup failed"
+    docker exec mssql sh -c 'rm -f /var/opt/mssql/backup/*.bak' 2>/dev/null
+    rm -f "$backup_path/${backup_name}.tar.gz"
+    return 1
+}
+
+# =============================================================================
 # BACKUP ALL DATABASES
 # =============================================================================
 
@@ -558,6 +636,10 @@ backup_all() {
 
     # Redis
     backup_redis "full" && ((++success_count)) || ((++fail_count))
+    echo ""
+
+    # MSSQL
+    backup_mssql "full" && ((++success_count)) || ((++fail_count))
 
     # Summary
     local end_time=$(date +%s)
@@ -804,6 +886,55 @@ restore_redis() {
     fi
 }
 
+restore_mssql() {
+    local backup_file=$1
+    local SQLCMD="/opt/mssql-tools18/bin/sqlcmd"
+
+    if [ -z "$backup_file" ]; then
+        echo "Usage: $0 restore-mssql <backup_file.tar.gz>"
+        return 1
+    fi
+
+    if [ ! -f "$backup_file" ]; then
+        log "ERROR" "Backup file not found: $backup_file"
+        return 1
+    fi
+
+    log "WARNING" "⚠️  RESTORING MSSQL - This will overwrite existing databases!"
+    log "INFO" "From: $backup_file"
+    echo ""
+    read -p "Type 'yes' to continue: " confirm
+
+    if [ "$confirm" != "yes" ]; then
+        log "INFO" "Restore cancelled"
+        return 1
+    fi
+
+    log "INFO" "Starting MSSQL restore..."
+
+    # .bak dosyalarını container'a aç
+    docker exec mssql sh -c 'mkdir -p /var/opt/mssql/backup && rm -f /var/opt/mssql/backup/*.bak' 2>/dev/null
+    gunzip -c "$backup_file" | docker exec -i mssql tar -xf - -C /var/opt/mssql/backup
+
+    local result=0 bak db
+    for bak in $(docker exec mssql sh -c 'ls /var/opt/mssql/backup/*.bak 2>/dev/null'); do
+        db=$(basename "$bak" .bak)
+        log "INFO" "Restoring database: $db"
+        SQLCMDPASSWORD="$DB_PASSWORD" docker exec -e SQLCMDPASSWORD mssql "$SQLCMD" \
+            -S localhost -U sa -C -b \
+            -Q "RESTORE DATABASE [$db] FROM DISK=N'$bak' WITH REPLACE;" 2>> "$LOG_FILE" || result=1
+    done
+    docker exec mssql sh -c 'rm -f /var/opt/mssql/backup/*.bak' 2>/dev/null
+
+    if [ $result -eq 0 ]; then
+        log "SUCCESS" "✓ MSSQL restore completed successfully"
+        return 0
+    else
+        log "ERROR" "✗ MSSQL restore failed"
+        return 1
+    fi
+}
+
 # =============================================================================
 # MAINTENANCE FUNCTIONS
 # =============================================================================
@@ -915,13 +1046,15 @@ backup_stats() {
     local postgresql_count=$(find "$BACKUP_DIR/postgresql" -type f -name "*.gz" 2>/dev/null | wc -l)
     local mongodb_count=$(find "$BACKUP_DIR/mongodb" -type f -name "*.tar.gz" 2>/dev/null | wc -l)
     local redis_count=$(find "$BACKUP_DIR/redis" -type f -name "*.gz" 2>/dev/null | wc -l)
-    local total_count=$((mariadb_count + postgresql_count + mongodb_count + redis_count))
+    local mssql_count=$(find "$BACKUP_DIR/mssql" -type f -name "*.tar.gz" 2>/dev/null | wc -l)
+    local total_count=$((mariadb_count + postgresql_count + mongodb_count + redis_count + mssql_count))
 
     log "INFO" "Backup Counts:"
     log "INFO" "  MariaDB:    $mariadb_count backups"
     log "INFO" "  PostgreSQL: $postgresql_count backups"
     log "INFO" "  MongoDB:    $mongodb_count backups"
     log "INFO" "  Redis:      $redis_count backups"
+    log "INFO" "  MSSQL:      $mssql_count backups"
     log "INFO" "  TOTAL:      $total_count backups"
     echo ""
 
@@ -1037,12 +1170,14 @@ show_help() {
     echo "  $0 postgresql [type]          - Backup ALL PostgreSQL databases"
     echo "  $0 mongodb [type]             - Backup ALL MongoDB databases"
     echo "  $0 redis [type]               - Backup Redis"
+    echo "  $0 mssql [type]               - Backup ALL MSSQL user databases"
     echo ""
     echo -e "${BLUE}Restore Commands:${NC}"
     echo "  $0 restore-mariadb <file>     - Restore MariaDB from backup"
     echo "  $0 restore-postgresql <file>  - Restore PostgreSQL from backup"
     echo "  $0 restore-mongodb <file>     - Restore MongoDB from backup"
     echo "  $0 restore-redis <file>       - Restore Redis from backup"
+    echo "  $0 restore-mssql <file>       - Restore MSSQL from backup"
     echo ""
     echo -e "${BLUE}Maintenance Commands:${NC}"
     echo "  $0 clean [days]               - Clean old backups (default: $RETENTION_DAYS days)"
@@ -1092,6 +1227,10 @@ case "$1" in
         acquire_lock
         backup_redis "$2"
         ;;
+    "mssql")
+        acquire_lock
+        backup_mssql "$2"
+        ;;
     "restore-mariadb")
         restore_mariadb "$2"
         ;;
@@ -1103,6 +1242,9 @@ case "$1" in
         ;;
     "restore-redis")
         restore_redis "$2"
+        ;;
+    "restore-mssql")
+        restore_mssql "$2"
         ;;
     "clean")
         clean_old_backups "$2"
