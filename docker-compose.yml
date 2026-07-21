@@ -20,6 +20,7 @@ networks:
 
 volumes:
   redisinsight_data:
+  pgadmin_data:
   mariadb_data:
   postgresql_data:
   mongodb_data:
@@ -200,7 +201,11 @@ services:
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
       PGADMIN_LISTEN_PORT: 80
     volumes:
-      - ./pgadmin:/var/lib/pgadmin
+      # Named volume — bind mount (./pgadmin) host'ta root'a ait olup pgadmin
+      # (uid 5050) yazamıyordu: "Failed to create /var/lib/pgadmin/sessions:
+      # Permission denied" → worker crash-loop → panel açılmıyordu. Named volume
+      # image'ın 5050 sahipliğini devralır, izin sorunu olmaz.
+      - pgadmin_data:/var/lib/pgadmin
     depends_on:
       postgresql:
         condition: service_healthy
