@@ -542,19 +542,22 @@ backup_all() {
     local fail_count=0
 
     # MariaDB
-    backup_mariadb "full" && ((success_count++)) || ((fail_count++))
+    # NOT: pre-increment (++x) kullanılır — post-increment `((x++))` ilk artışta
+    # (0→1) 0 döndürüp exit 1 verir ve yanlışça `|| ((fail_count++))`'ı tetikler
+    # (ilk başarılı yedek "1 failed" sayılırdı). ++x her zaman ≥1 → doğru sayım.
+    backup_mariadb "full" && ((++success_count)) || ((++fail_count))
     echo ""
 
     # PostgreSQL
-    backup_postgresql "full" && ((success_count++)) || ((fail_count++))
+    backup_postgresql "full" && ((++success_count)) || ((++fail_count))
     echo ""
 
     # MongoDB
-    backup_mongodb "full" && ((success_count++)) || ((fail_count++))
+    backup_mongodb "full" && ((++success_count)) || ((++fail_count))
     echo ""
 
     # Redis
-    backup_redis "full" && ((success_count++)) || ((fail_count++))
+    backup_redis "full" && ((++success_count)) || ((++fail_count))
 
     # Summary
     local end_time=$(date +%s)
