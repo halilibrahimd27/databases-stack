@@ -19,7 +19,7 @@ SYNC_LOG="$LOG_DIR/backup_sync_$(date +%Y%m%d).log"
 REMOTE_SYNC_ENABLED="true"      # Enabled for production ✅
 RCLONE_REMOTE_NAME="gdrive"     # rclone remote name
 GDRIVE_FOLDER="${GDRIVE_FOLDER:-Database Backups}" # Google Drive klasör adı (env override)
-RETENTION_REMOTE_DAYS=30         # 15 dk'da bir backup = 7 gün yeterli
+RETENTION_REMOTE_DAYS=30         # Google Drive'da tutulacak gün sayısı (offsite retention)
 
 # Performance settings
 TRANSFERS=4                     # Paralel transfer sayısı
@@ -445,8 +445,8 @@ show_setup_instructions() {
     echo ""
     echo "STEP 5: Automate with Cron"
     echo "  crontab -e"
-    echo "  # Sync 5 minutes after each backup (every 15 min)"
-    echo "  5,20,35,50 * * * * /opt/databases/sync_remote.sh >> /opt/databases/logs/cron_sync.log 2>&1"
+    echo "  # Sync after the daily backup (backup 02:00, sync 02:30)"
+    echo "  30 2 * * * /opt/databases/sync_remote.sh >> /opt/databases/logs/cron_sync.log 2>&1"
     echo ""
     echo -e "${BLUE}=========================================${NC}"
     echo -e "${BLUE}  📊 CURRENT CONFIGURATION${NC}"

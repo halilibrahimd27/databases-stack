@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =============================================================================
-# Database Backup Script V7 - PRODUCTION GRADE WITH 15-MIN OPTIMIZATION
+# Database Backup Script V7 - PRODUCTION GRADE (günlük tam yedek)
 # PostgreSQL 15 + MongoDB 4.4 + MariaDB 11.4 + Redis 8.2.2
 #
 # ✅ ALL DATABASES BACKUP (Not just defaultdb)
@@ -1006,7 +1006,7 @@ list_all_databases() {
 
 show_help() {
     echo -e "${GREEN}================================================${NC}"
-    echo -e "${GREEN}  Database Backup Script V7 - 15-MIN OPTIMIZED${NC}"
+    echo -e "${GREEN}  Database Backup Script V7${NC}"
     echo -e "${GREEN}================================================${NC}"
     echo ""
     echo "System Configuration:"
@@ -1056,8 +1056,8 @@ show_help() {
     echo "  $0 clean 7"
     echo "  $0 restore-mariadb /opt/databases/backups/mariadb/full/mariadb_full_20250127.sql.gz"
     echo ""
-    echo -e "${CYAN}Cron Example (15 min):${NC}"
-    echo "  */15 * * * * $0 all >> /opt/databases/logs/cron.log 2>&1"
+    echo -e "${CYAN}Cron Example (daily 02:00):${NC}"
+    echo "  0 2 * * * $0 all >> /opt/databases/logs/cron_backup.log 2>&1"
     echo ""
 }
 
