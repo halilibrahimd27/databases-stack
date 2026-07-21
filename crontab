@@ -1,43 +1,49 @@
 # =============================================================================
-# DATABASE BACKUP & SYNC AUTOMATION - 15 MINUTE INTERVALS
+# DATABASE BACKUP & SYNC AUTOMATION - GÜNLÜK YEDEK
 # Server: <YOUR_DB_HOSTNAME>
-# Last Updated: 2025-01-27
+# Last Updated: 2026-07-21
 # =============================================================================
 #
-# TIMELINE (Her Saat):
-# :00 → Full backup başlar (~2-5 dk sürer)
-# :05 → Google Drive sync başlar
-# :15 → Full backup başlar
-# :20 → Google Drive sync başlar
-# :30 → Full backup başlar
-# :35 → Google Drive sync başlar
-# :45 → Full backup başlar
-# :50 → Google Drive sync başlar
+# NEDEN GÜNLÜK (15 dakikada bir DEĞİL):
+# Yedekler DB container'ının İÇİNDE `docker exec` (mariadb-dump / mongodump) ile
+# alınır; dump'ın bellek tüketimi DB container'ının KENDİ cgroup'una sayılır.
+# 15 dakikada bir tam yedek, MariaDB'yi tekrar tekrar CONSTRAINT_MEMCG OOM'a
+# soktu (container 172 kez restart etti). Günde bir tam yedek + offsite sync
+# bu baskıyı ortadan kaldırır.
+#
+# TIMELINE (Her Gün):
+# 02:00 → Full backup (tüm DB'ler)
+# 02:30 → Google Drive sync (yedek bittikten sonra)
+# 03:00 → Retention temizliği (RETENTION_DAYS=7, backup.sh clean)
+# 08:00 → İstatistik raporu
+# 03:30 (Pazar) → 7 günden eski logları temizle
 #
 # =============================================================================
 
 
 # -----------------------------------------------------------------------------
-# BACKUP - Her 15 dakikada bir (Full backup)
+# BACKUP - Her gün 02:00 (Full backup)
 # -----------------------------------------------------------------------------
-*/15 * * * * /opt/databases/backup.sh all >> /opt/databases/logs/cron_backup.log 2>&1
+0 2 * * * /opt/databases/backup.sh all >> /opt/databases/logs/cron_backup.log 2>&1
 
 # -----------------------------------------------------------------------------
-# GOOGLE DRIVE SYNC - Backup'tan 5 dakika sonra
+# GOOGLE DRIVE SYNC - Yedek bittikten sonra (02:30)
 # -----------------------------------------------------------------------------
-5,20,35,50 * * * * /opt/databases/sync_remote.sh >> /opt/databases/logs/cron_sync.log 2>&1
+30 2 * * * /opt/databases/sync_remote.sh >> /opt/databases/logs/cron_sync.log 2>&1
 
 # -----------------------------------------------------------------------------
 # MAINTENANCE - Temizlik & Raporlama
 # -----------------------------------------------------------------------------
-# Eski backupları temizle - Her gün 04:00 (7 gün retention)
-0 * * * * find /opt/databases/backups -name "*.gz" -mmin +360 -delete 2>/dev/null
+# Eski yedekleri temizle - Her gün 03:00. backup.sh clean, RETENTION_DAYS'i
+# (varsayılan 7 gün) kullanır → tek yetki kaynağı; kod ve doküman artık uyumlu.
+# (Eski satır `-mmin +360` = 6 saat siliyordu, belgelenen 7 günle çelişiyordu.)
+0 3 * * * /opt/databases/backup.sh clean >> /opt/databases/logs/cron_clean.log 2>&1
 
 # Günlük istatistik raporu - Her gün 08:00
 0 8 * * * /opt/databases/backup.sh stats >> /opt/databases/logs/cron_stats.log 2>&1
 
-# Log dosyalarını temizle - Her Pazar 03:00 (7 günden eski)
-0 3 * * 0 find /opt/databases/logs -name "*.log" -mtime +7 -delete 2>/dev/null
+# Log dosyalarını temizle - Her Pazar 03:30 (7 günden eski)
+30 3 * * 0 find /opt/databases/logs -name "*.log" -mtime +7 -delete 2>/dev/null
 
 # -----------------------------------------------------------------------------
 # OPTIONAL: Disk space alert (uncomment to enable)
@@ -47,11 +53,10 @@
 # =============================================================================
 # NOTES:
 # =============================================================================
-# - Backup lock mekanizması var, çakışma olmaz
-# - Sync lock mekanizması var, çakışma olmaz
-# - Günde 96 backup alınır (4 DB × 24 saat × 4 kez)
-# - 7 günlük retention = ~672 backup dosyası max
-# - Tahmini disk kullanımı: DB boyutuna göre değişir
+# - Backup + sync flock ile korunur; eşzamanlı çalışma olmaz (bkz. backup.sh).
+# - Günde 4 tam yedek dosyası alınır (MariaDB + PostgreSQL + MongoDB + Redis).
+# - 7 günlük retention = ~28 tam yedek dosyası (+ tekil/manuel yedekler).
+# - Tahmini disk kullanımı: DB boyutuna göre değişir.
 #
 # MANUAL COMMANDS:
 # - Manual backup:  /opt/databases/backup.sh all
