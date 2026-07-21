@@ -290,12 +290,12 @@ Container'ların **hard memory limit** toplamı (varsayılan `.env` değerleriyl
 | Servis | Limit |
 |---|---|
 | MariaDB | 8G |
-| PostgreSQL | 2G |
+| PostgreSQL | 1G |
 | MongoDB | 2G |
-| Redis | 512M |
+| Redis | 600M |
 | Admin panelleri (5) + nginx | ~1.5G |
 | Prometheus exporter'ları (4) | ~256M |
-| **Toplam (tavan)** | **~14.5 GB** |
+| **Toplam (tavan)** | **~13.5 GB** |
 
 Bunlar container başına *tavan* değerlerdir; sürekli (steady-state) RSS tüketimi
 genelde daha düşüktür. Asıl büyük tüketiciler MariaDB'nin 3G `innodb_buffer_pool`'u

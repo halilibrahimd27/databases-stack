@@ -93,7 +93,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${POSTGRES_MEM_LIMIT:-2G}
+          memory: ${POSTGRES_MEM_LIMIT:-1G}
     logging: *default-logging
 
   mongodb:
@@ -150,7 +150,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${REDIS_MEM_LIMIT:-512M}
+          memory: ${REDIS_MEM_LIMIT:-600M}
     logging: *default-logging
 
   # ===========================================================================
