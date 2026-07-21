@@ -22,16 +22,38 @@ BACKUP_DIR="${BACKUP_DIR:-${DB_BASE_DIR}/backups}"
 LOG_DIR="${LOG_DIR:-${DB_BASE_DIR}/logs}"
 DATE=$(date +%Y%m%d_%H%M%S)
 
-# DB_PASSWORD — .env'den oku ya da ortamdan al
-if [ -z "${DB_PASSWORD}" ] && [ -f "${DB_BASE_DIR}/.env" ]; then
-    # shellcheck source=/dev/null
-    DB_PASSWORD=$(grep -E '^DB_PASSWORD=' "${DB_BASE_DIR}/.env" | cut -d= -f2-)
-fi
+# .env'den yapılandırma oku — dosyayı SOURCE ETMEZ, sadece grep'ler; böylece
+# boşluklu değerler ve .env içindeki keyfi kod güvenlidir. Yalnızca ortamda
+# tanımlı OLMAYAN anahtarları doldurur → gerçek ortam değişkeni her zaman önce gelir.
+_load_from_dotenv() {
+    local env_file="${DB_BASE_DIR}/.env" key val
+    [ -f "$env_file" ] || return 0
+    for key in "$@"; do
+        [ -n "${!key}" ] && continue
+        val=$(grep -E "^${key}=" "$env_file" | head -1 | cut -d= -f2-)
+        [ -n "$val" ] && printf -v "$key" '%s' "$val"
+    done
+}
+_load_from_dotenv DB_PASSWORD RETENTION_DAYS COMPRESSION_LEVEL BACKUP_EXCLUDE_TABLE_PATTERNS
+
 DB_PASSWORD="${DB_PASSWORD:?DB_PASSWORD ortam değişkeni veya .env dosyasında tanımlı olmalı}"
 LOG_FILE="$LOG_DIR/backup_$(date +%Y%m%d).log"
-RETENTION_DAYS=7              # 15 dk'da bir backup = 7 gün yeterli
+RETENTION_DAYS="${RETENTION_DAYS:-7}"          # gün — `clean` komutu ve cron temizliği bunu kullanır
 MAX_BACKUP_SIZE="50G"
-COMPRESSION_LEVEL=1           # 1=fast, 9=best (15 dk için 1 önerilir)
+COMPRESSION_LEVEL="${COMPRESSION_LEVEL:-6}"    # 1=hızlı, 9=en iyi; günlük yedek için 6 dengeli
+
+# MariaDB dump'ından hariç tutulacak tablolar — SQL LIKE desenleri, boşlukla ayrılır.
+# Varsayılan: Laravel Telescope/Pulse (büyük, atılabilir, sürekli yazılan tablolar).
+# Kapatmak için boş bırak: BACKUP_EXCLUDE_TABLE_PATTERNS="" ./backup.sh all
+BACKUP_EXCLUDE_TABLE_PATTERNS="${BACKUP_EXCLUDE_TABLE_PATTERNS:-telescope% pulse%}"
+
+# Ağır dump/sıkıştırma adımlarını düşük CPU + idle disk önceliğiyle çalıştır: hedef
+# donanım 3 diskli RAID5, yedek diziyi doyurup canlı DB trafiğini aç bırakmasın.
+if command -v nice >/dev/null 2>&1 && command -v ionice >/dev/null 2>&1; then
+    IO_NICE="nice -n 19 ionice -c3"
+else
+    IO_NICE=""
+fi
 
 # Lock mechanism (flock-based — bkz. acquire_lock)
 LOCK_FILE="${LOCK_FILE:-/tmp/db_backup.lock}"
@@ -159,10 +181,12 @@ format_duration() {
 # =============================================================================
 
 # Get list of all databases from MariaDB
+# Parola MYSQL_PWD ortam değişkeniyle geçirilir (docker exec -e MYSQL_PWD, değer
+# argümanda DEĞİL); böylece host'ta `ps` çıktısında görünmez.
 get_mariadb_databases() {
-    docker exec mariadb mariadb -u root -p$DB_PASSWORD -N -e "SHOW DATABASES;" 2>/dev/null | \
+    MYSQL_PWD="$DB_PASSWORD" docker exec -e MYSQL_PWD mariadb mariadb -u root -N -e "SHOW DATABASES;" 2>/dev/null | \
         grep -Ev "^(information_schema|performance_schema|mysql|sys)$" || \
-    docker exec mariadb mysql -u root -p$DB_PASSWORD -N -e "SHOW DATABASES;" 2>/dev/null | \
+    MYSQL_PWD="$DB_PASSWORD" docker exec -e MYSQL_PWD mariadb mysql -u root -N -e "SHOW DATABASES;" 2>/dev/null | \
         grep -Ev "^(information_schema|performance_schema|mysql|sys)$"
 }
 
@@ -183,6 +207,21 @@ get_mongodb_databases() {
 # =============================================================================
 # MARIADB BACKUP FUNCTIONS
 # =============================================================================
+
+# BACKUP_EXCLUDE_TABLE_PATTERNS ile eşleşen tabloları --ignore-table=db.tablo
+# argümanlarına çevirir. Sorgu başarısız olursa ya da desen boşsa hiçbir şey
+# hariç tutulmaz — güvenli varsayılan tam dump'tır.
+build_mariadb_ignore_args() {
+    [ -z "$BACKUP_EXCLUDE_TABLE_PATTERNS" ] && return 0
+    local where="" p
+    for p in $BACKUP_EXCLUDE_TABLE_PATTERNS; do
+        [ -n "$where" ] && where+=" OR "
+        where+="TABLE_NAME LIKE '$p'"
+    done
+    MYSQL_PWD="$DB_PASSWORD" docker exec -e MYSQL_PWD mariadb mariadb -u root -N -e \
+        "SELECT CONCAT('--ignore-table=', TABLE_SCHEMA, '.', TABLE_NAME)
+         FROM information_schema.TABLES WHERE $where;" 2>/dev/null | tr '\n' ' '
+}
 
 # Backup ALL MariaDB databases
 backup_mariadb() {
@@ -208,12 +247,16 @@ backup_mariadb() {
         [ -n "$db" ] && log "INFO" "  - $db"
     done
 
+    # Telescope/Pulse gibi tabloları dump dışında bırak (yapılandırılabilir)
+    local ignore_args
+    ignore_args=$(build_mariadb_ignore_args)
+    [ -n "$ignore_args" ] && log "INFO" "Excluding tables from dump: $ignore_args"
+
     # Create backup with optimized options
     log "INFO" "Creating comprehensive backup..."
 
-    docker exec mariadb mariadb-dump \
+    MYSQL_PWD="$DB_PASSWORD" $IO_NICE docker exec -e MYSQL_PWD mariadb mariadb-dump \
         -u root \
-        -p$DB_PASSWORD \
         --all-databases \
         --single-transaction \
         --quick \
@@ -226,7 +269,8 @@ backup_mariadb() {
         --add-drop-table \
         --complete-insert \
         --skip-comments \
-        2>> "$LOG_FILE" | gzip -${COMPRESSION_LEVEL} > "$backup_path/${backup_name}.sql.gz"
+        $ignore_args \
+        2>> "$LOG_FILE" | $IO_NICE gzip -${COMPRESSION_LEVEL} > "$backup_path/${backup_name}.sql.gz"
 
     local exit_code=${PIPESTATUS[0]}
 
@@ -265,16 +309,19 @@ backup_mariadb_single() {
 
     log "INFO" "Creating backup for database: $db_name"
 
-    docker exec mariadb mariadb-dump \
+    local ignore_args
+    ignore_args=$(build_mariadb_ignore_args)
+
+    MYSQL_PWD="$DB_PASSWORD" $IO_NICE docker exec -e MYSQL_PWD mariadb mariadb-dump \
         -u root \
-        -p$DB_PASSWORD \
         --single-transaction \
         --quick \
         --routines \
         --triggers \
         --events \
+        $ignore_args \
         "$db_name" \
-        2>> "$LOG_FILE" | gzip -${COMPRESSION_LEVEL} > "$backup_path/${backup_name}.sql.gz"
+        2>> "$LOG_FILE" | $IO_NICE gzip -${COMPRESSION_LEVEL} > "$backup_path/${backup_name}.sql.gz"
 
     if [ ${PIPESTATUS[0]} -eq 0 ] && [ -s "$backup_path/${backup_name}.sql.gz" ]; then
         local size=$(du -h "$backup_path/${backup_name}.sql.gz" | cut -f1)
@@ -316,11 +363,11 @@ backup_postgresql() {
     # Create comprehensive backup
     log "INFO" "Creating comprehensive backup..."
 
-    docker exec postgresql pg_dumpall -U root \
+    $IO_NICE docker exec postgresql pg_dumpall -U root \
         --clean \
         --if-exists \
         --quote-all-identifiers \
-        2>> "$LOG_FILE" | gzip -${COMPRESSION_LEVEL} > "$backup_path/${backup_name}.sql.gz"
+        2>> "$LOG_FILE" | $IO_NICE gzip -${COMPRESSION_LEVEL} > "$backup_path/${backup_name}.sql.gz"
 
     local exit_code=${PIPESTATUS[0]}
 
@@ -374,11 +421,11 @@ backup_mongodb() {
     # Create backup with mongodump
     log "INFO" "Creating comprehensive backup..."
 
-    docker exec mongodb mongodump \
+    $IO_NICE docker exec mongodb mongodump \
         --host localhost \
         --port 27017 \
         --username root \
-        --password $DB_PASSWORD \
+        --password "$DB_PASSWORD" \
         --authenticationDatabase admin \
         --out /tmp/backup \
         --gzip \
@@ -387,8 +434,8 @@ backup_mongodb() {
 
     if [ $? -eq 0 ]; then
         # Create tar archive
-        docker exec mongodb tar -cf - -C /tmp backup 2>/dev/null | \
-            gzip -${COMPRESSION_LEVEL} > "$backup_path/${backup_name}.tar.gz"
+        $IO_NICE docker exec mongodb tar -cf - -C /tmp backup 2>/dev/null | \
+            $IO_NICE gzip -${COMPRESSION_LEVEL} > "$backup_path/${backup_name}.tar.gz"
 
         if [ $? -eq 0 ] && [ -s "$backup_path/${backup_name}.tar.gz" ]; then
             docker exec mongodb rm -rf /tmp/backup 2>/dev/null
@@ -453,8 +500,8 @@ backup_redis() {
         done
 
         # Copy dump.rdb
-        docker exec redis cat /data/dump.rdb 2>/dev/null | \
-            gzip -${COMPRESSION_LEVEL} > "$backup_path/${backup_name}.rdb.gz"
+        $IO_NICE docker exec redis cat /data/dump.rdb 2>/dev/null | \
+            $IO_NICE gzip -${COMPRESSION_LEVEL} > "$backup_path/${backup_name}.rdb.gz"
 
         if [ $? -eq 0 ] && [ -s "$backup_path/${backup_name}.rdb.gz" ]; then
             local size=$(du -h "$backup_path/${backup_name}.rdb.gz" | cut -f1)
@@ -594,9 +641,9 @@ restore_mariadb() {
     log "INFO" "Starting MariaDB restore..."
 
     if [[ $backup_file == *.gz ]]; then
-        gunzip -c "$backup_file" | docker exec -i mariadb mariadb -u root -p$DB_PASSWORD
+        gunzip -c "$backup_file" | MYSQL_PWD="$DB_PASSWORD" docker exec -e MYSQL_PWD -i mariadb mariadb -u root
     else
-        docker exec -i mariadb mariadb -u root -p$DB_PASSWORD < "$backup_file"
+        MYSQL_PWD="$DB_PASSWORD" docker exec -e MYSQL_PWD -i mariadb mariadb -u root < "$backup_file"
     fi
 
     if [ $? -eq 0 ]; then
