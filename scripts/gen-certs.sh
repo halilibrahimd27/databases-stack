@@ -100,9 +100,13 @@ openssl x509 -req -in "$CERT_DIR/server.csr" \
     -extfile "$CERT_DIR/server.cnf" -extensions ext 2>/dev/null
 rm -f "$CERT_DIR/server.csr"
 
-# CA'nın özel anahtarı sızarsa saldırgan bu ağ için geçerli sertifika üretebilir.
+# Özel anahtarlar yalnız sahibine. nginx MASTER süreci root olarak açılışta
+# okur, worker'lara gerek yoktur — bu yüzden 600 sorun çıkarmaz.
 chmod 600 "$CERT_DIR/ca.key" "$CERT_DIR/server.key"
+# Sertifikalar herkese okunur: içlerinde yalnız ortak anahtar vardır ve
+# nginx worker'ı (uid 101) ile /ca.crt indirmesi bunlara erişmek zorunda.
 chmod 644 "$CERT_DIR/ca.crt" "$CERT_DIR/server.crt"
+chmod 755 "$CERT_DIR"
 
 ok "Sunucu sertifikası üretildi (${DAYS_SRV} gün)"
 log "Doğrulama:"

@@ -168,7 +168,13 @@ load_env
 heading "5/8  Dizinler"
 mkdir -p state certs overrides backups logs \
          backups/{mariadb,postgresql,mongodb,redis,mssql,cassandra,elasticsearch,clickhouse,neo4j,rabbitmq,minio}/{full,single}
-chmod 700 state certs
+# İZİNLER — container'lar bu dosyaları KENDİ kullanıcılarıyla okur, host
+# kullanıcısıyla değil. Dizinler 700 bırakılırsa:
+#   • nginx worker'ı (uid 101) .htpasswd ve sertifikayı okuyamaz → her istek 500
+#   • mongod (uid 999) replica set keyfile'ını okuyamaz → replica set açılmaz
+# Bu yüzden dizinler geçilebilir; GİZLİ dosyalar tek tek kısıtlanır
+# (server.key 600, mongo-keyfile 400).
+chmod 755 state certs
 # Yönlendirme tablosu gateway'e dosya olarak bağlanır. Yoksa docker onun yerine
 # bir DİZİN yaratır ve nginx açılmaz — bu yüzden boş da olsa şimdi oluşturuluyor.
 # İçeriğini controller açılışta üretir.
@@ -209,7 +215,10 @@ else
     docker run --rm httpd:2.4-alpine htpasswd -nbB "$PANEL_USER_VAL" "$PANEL_PASS_VAL" \
         > gateway/.htpasswd
 fi
-chmod 640 gateway/.htpasswd
+# 644 olmak zorunda: auth_basic_user_file'ı nginx'in WORKER süreçleri
+# (uid 101) her istekte okur, root olan master değil. İçinde bcrypt özeti
+# vardır, düz parola değil.
+chmod 644 gateway/.htpasswd
 ok "Panel kullanıcısı: $PANEL_USER_VAL"
 
 # =============================================================================
