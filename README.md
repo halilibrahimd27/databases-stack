@@ -18,6 +18,61 @@ Sen hiçbir teknik değer girmezsin.
 
 ---
 
+## Nasıl görünüyor?
+
+<div align="center">
+
+<img src="ss/image.png" alt="Yönetim paneli — veritabanı kartları" width="880">
+
+</div>
+
+Her kart bir veritabanı. **Ne işe yaradığı sade dille** yazıyor, teknik terim
+gerekmiyor. Üst barda sunucunun durumu var: *ayrılan* bellek (motorlara söz
+verilen tavan) ve altında *gerçek kullanım*. Kapalı bir motorda "Tahmini
+bellek" yazar — açarsanız ne kadar alacağını önceden gösterir.
+
+<div align="center">
+
+<img src="ss/image1.png" alt="Çalışan ve kapalı motorlar" width="880">
+
+</div>
+
+Çalışan bir motorda kart aksiyona döner: **Kapat**, panelini aç, bağlantı
+bilgisini kopyala, **replika kur**. Kapalı motorlar hiç container yaratmaz —
+sıfır RAM, sıfır CPU.
+
+<div align="center">
+
+<img src="ss/image2.png" alt="Mesajlaşma, analitik ve graph motorları" width="880">
+
+</div>
+
+12 motor kategorilere ayrılmış: ilişkisel, doküman, key-value, wide-column,
+arama, mesajlaşma, analitik, graph, nesne depolama.
+
+<div align="center">
+
+<img src="ss/image3.png" alt="Olay akışı" width="880">
+
+</div>
+
+**Olay akışı** ne olduğunu kaydeder: hangi motor ne zaman açıldı, kaç MB
+ayrıldı, bellek dar olduğu için paneli atlandı mı, otomatik devir yaşandı mı.
+Kritik olaylar (devir) ayrıca webhook ile bildirilir.
+
+<div align="center">
+
+<img src="ss/image4.png" alt="Sertifika kurulum rehberi" width="520">
+
+</div>
+
+İç ağda alan adı olmadığı için TLS sertifikasını sunucu kendisi üretir.
+Tarayıcının "güvenli değil" uyarısını kaldırmak için **tek seferlik** bu
+rehber adım adım anlatır — sertifikayı kurduktan sonra bu sayfa sizi otomatik
+panele geçirir.
+
+---
+
 ## Kurulum
 
 **Önkoşul:** Docker (yoksa `install.sh` size kurulum komutunu verir):
