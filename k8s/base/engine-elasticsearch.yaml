@@ -38,6 +38,8 @@ spec:
             secretKeyRef:
               name: db-secrets
               key: ELASTIC_PASSWORD
+        - name: ES_JAVA_OPTS
+          value: "-Xms1g -Xmx1g"
         resources:
           requests:
             memory: "1024Mi"

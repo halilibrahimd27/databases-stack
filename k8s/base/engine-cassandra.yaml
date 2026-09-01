@@ -35,6 +35,10 @@ spec:
           value: "1G"
         - name: HEAP_NEWSIZE
           value: "256M"
+        - name: MAX_HEAP_SIZE
+          value: "1G"
+        - name: HEAP_NEWSIZE
+          value: "256M"
         resources:
           requests:
             memory: "1024Mi"

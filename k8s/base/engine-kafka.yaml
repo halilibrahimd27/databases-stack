@@ -47,6 +47,8 @@ spec:
           value: "/var/lib/kafka/data"
         - name: CLUSTER_ID
           value: "5L6g3nShT-eMCtK--X86sw"
+        - name: KAFKA_HEAP_OPTS
+          value: "-Xms512m -Xmx512m"
         resources:
           requests:
             memory: "768Mi"

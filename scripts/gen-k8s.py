@@ -70,8 +70,68 @@ IMAGES = {
     "clickhouse": "clickhouse/clickhouse-server:24.8", "neo4j": "neo4j:5-community",
     "minio": "minio/minio:RELEASE.2024-10-13T13-34-11Z",
 }
-ARGS = {"redis": ["redis-server", "--requirepass", "$(REDISCLI_AUTH)", "--appendonly", "yes"],
-        "minio": ["server", "/data", "--console-address", ":9001"]}
+# Motorların ÇALIŞMA ARGÜMANLARI.
+# ⚠ Bazı motorlar bellek ayarlarını yalnızca komut satırından alır (env
+# değişkeni okumazlar). K8s'te args verilmezse controller'ın hesapladığı
+# değerler pod'a env olarak geçer ama MOTOR ONLARI GÖRMEZ — veritabanı
+# varsayılanlarla çalışır ve ürünün "sunucuya göre ayarlıyorum" vaadi
+# sessizce boşa çıkar. $(VAR) K8s'in env yerine koyma sözdizimidir; bu yüzden
+# aşağıdaki değişkenlerin TUNING_ENV_DEFAULTS içinde tanımlı olması şart.
+ARGS = {
+    "postgresql": [
+        "postgres",
+        "-c", "shared_buffers=$(POSTGRES_SHARED_BUFFERS)",
+        "-c", "effective_cache_size=$(POSTGRES_EFFECTIVE_CACHE)",
+        "-c", "max_connections=$(POSTGRES_MAX_CONNECTIONS)",
+        "-c", "max_worker_processes=$(POSTGRES_MAX_WORKERS)",
+        "-c", "max_locks_per_transaction=$(POSTGRES_MAX_LOCKS)",
+        "-c", "work_mem=$(POSTGRES_WORK_MEM)",
+        "-c", "log_min_duration_statement=2000",
+        "-c", "wal_level=replica",
+        "-c", "hot_standby=on",
+    ],
+    "mariadb": [
+        "--innodb-buffer-pool-size=$(MARIADB_BUFFER_POOL)",
+        "--innodb-log-file-size=$(MARIADB_LOG_FILE_SIZE)",
+        "--max-connections=$(MARIADB_MAX_CONNECTIONS)",
+    ],
+    "mongodb": [
+        "mongod", "--auth", "--bind_ip_all",
+        "--wiredTigerCacheSizeGB", "$(MONGO_WIREDTIGER_CACHE_GB)",
+    ],
+    "redis": [
+        "redis-server",
+        "--requirepass", "$(REDISCLI_AUTH)",
+        "--appendonly", "yes",
+        "--maxmemory", "$(REDIS_MAXMEMORY)",
+        "--maxmemory-policy", "$(REDIS_MAXMEMORY_POLICY)",
+    ],
+    "minio": ["server", "/data", "--console-address", ":9001"],
+}
+
+# $(VAR) çözülebilmesi için bu değişkenlerin container env'inde TANIMLI olması
+# gerekir. Controller aktivasyonda `kubectl set env` ile bunları ezer;
+# buradakiler yalnız başlangıç/yedek değerlerdir (compose'daki ile aynı).
+TUNING_ENV_DEFAULTS = {
+    "postgresql": [("POSTGRES_SHARED_BUFFERS", "512MB"),
+                   ("POSTGRES_EFFECTIVE_CACHE", "1536MB"),
+                   ("POSTGRES_MAX_CONNECTIONS", "200"),
+                   ("POSTGRES_MAX_WORKERS", "8"),
+                   ("POSTGRES_MAX_LOCKS", "64"),
+                   ("POSTGRES_WORK_MEM", "4MB")],
+    "mariadb": [("MARIADB_BUFFER_POOL", "1G"),
+                ("MARIADB_LOG_FILE_SIZE", "256M"),
+                ("MARIADB_MAX_CONNECTIONS", "200")],
+    "mongodb": [("MONGO_WIREDTIGER_CACHE_GB", "1")],
+    "redis": [("REDIS_MAXMEMORY", "384mb"),
+              ("REDIS_MAXMEMORY_POLICY", "allkeys-lru")],
+    "mssql": [("MSSQL_MEMORY_LIMIT_MB", "2048")],
+    "cassandra": [("MAX_HEAP_SIZE", "1G"), ("HEAP_NEWSIZE", "256M")],
+    "elasticsearch": [("ES_JAVA_OPTS", "-Xms1g -Xmx1g")],
+    "kafka": [("KAFKA_HEAP_OPTS", "-Xms512m -Xmx512m")],
+    "neo4j": [("NEO4J_server_memory_heap_max__size", "512m"),
+              ("NEO4J_server_memory_pagecache_size", "512m")],
+}
 STORAGE = {"mariadb": "20Gi", "postgresql": "20Gi", "mongodb": "20Gi", "redis": "5Gi",
            "mssql": "30Gi", "cassandra": "30Gi", "elasticsearch": "30Gi", "kafka": "20Gi",
            "rabbitmq": "5Gi", "clickhouse": "30Gi", "neo4j": "10Gi", "minio": "50Gi"}
@@ -80,7 +140,7 @@ STORAGE = {"mariadb": "20Gi", "postgresql": "20Gi", "mongodb": "20Gi", "redis": 
 def env_block(eid, indent):
     pad = " " * indent
     out = []
-    for k, v in ENV.get(eid, []):
+    for k, v in list(ENV.get(eid, [])) + list(TUNING_ENV_DEFAULTS.get(eid, [])):
         if isinstance(v, str) and v.startswith("secret:"):
             out.append("%s- name: %s\n%s  valueFrom:\n%s    secretKeyRef:\n"
                        "%s      name: db-secrets\n%s      key: %s"

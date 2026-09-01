@@ -30,6 +30,10 @@ spec:
             secretKeyRef:
               name: db-secrets
               key: NEO4J_AUTH
+        - name: NEO4J_server_memory_heap_max__size
+          value: "512m"
+        - name: NEO4J_server_memory_pagecache_size
+          value: "512m"
         resources:
           requests:
             memory: "768Mi"

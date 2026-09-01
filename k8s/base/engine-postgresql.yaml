@@ -24,6 +24,26 @@ spec:
         ports:
         - name: client
           containerPort: 5432
+        args:
+        - "postgres"
+        - "-c"
+        - "shared_buffers=$(POSTGRES_SHARED_BUFFERS)"
+        - "-c"
+        - "effective_cache_size=$(POSTGRES_EFFECTIVE_CACHE)"
+        - "-c"
+        - "max_connections=$(POSTGRES_MAX_CONNECTIONS)"
+        - "-c"
+        - "max_worker_processes=$(POSTGRES_MAX_WORKERS)"
+        - "-c"
+        - "max_locks_per_transaction=$(POSTGRES_MAX_LOCKS)"
+        - "-c"
+        - "work_mem=$(POSTGRES_WORK_MEM)"
+        - "-c"
+        - "log_min_duration_statement=2000"
+        - "-c"
+        - "wal_level=replica"
+        - "-c"
+        - "hot_standby=on"
         env:
         - name: POSTGRES_USER
           value: "root"
@@ -36,6 +56,18 @@ spec:
               key: POSTGRES_PASSWORD
         - name: PGDATA
           value: "/var/lib/postgresql/data/pgdata"
+        - name: POSTGRES_SHARED_BUFFERS
+          value: "512MB"
+        - name: POSTGRES_EFFECTIVE_CACHE
+          value: "1536MB"
+        - name: POSTGRES_MAX_CONNECTIONS
+          value: "200"
+        - name: POSTGRES_MAX_WORKERS
+          value: "8"
+        - name: POSTGRES_MAX_LOCKS
+          value: "64"
+        - name: POSTGRES_WORK_MEM
+          value: "4MB"
         resources:
           requests:
             memory: "512Mi"

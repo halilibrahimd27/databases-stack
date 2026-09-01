@@ -24,6 +24,12 @@ spec:
         ports:
         - name: client
           containerPort: 27017
+        args:
+        - "mongod"
+        - "--auth"
+        - "--bind_ip_all"
+        - "--wiredTigerCacheSizeGB"
+        - "$(MONGO_WIREDTIGER_CACHE_GB)"
         env:
         - name: MONGO_INITDB_ROOT_USERNAME
           value: "root"
@@ -32,6 +38,8 @@ spec:
             secretKeyRef:
               name: db-secrets
               key: MONGO_PASSWORD
+        - name: MONGO_WIREDTIGER_CACHE_GB
+          value: "1"
         resources:
           requests:
             memory: "512Mi"

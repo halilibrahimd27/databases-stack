@@ -369,6 +369,28 @@ ck("SQL Server üretimde kullanılamaz olarak işaretli",
 ck("Redis için copyleft'siz alternatif belirtilmiş",
    "Valkey" in ([e for e in cat["engines"] if e["id"] == "redis"][0]["license"].get("alternative") or ""))
 compose_txt = open("docker-compose.yml", encoding="utf-8").read()
+# K8s'te bellek ayarları komut argümanı olarak geçmeli. Yalnız env olarak
+# verilirse motor onları OKUMAZ ve varsayılanlarla çalışır — ürünün
+# "sunucuya göre ayarlıyorum" vaadi sessizce boşa çıkar.
+import yaml as _yaml
+for _eid, _needle in (("postgresql", "shared_buffers=$(POSTGRES_SHARED_BUFFERS)"),
+                      ("mariadb", "--innodb-buffer-pool-size=$(MARIADB_BUFFER_POOL)"),
+                      ("mongodb", "$(MONGO_WIREDTIGER_CACHE_GB)"),
+                      ("redis", "$(REDIS_MAXMEMORY)")):
+    _f = "k8s/base/engine-%s.yaml" % _eid
+    _args, _envs = [], []
+    for _d in _yaml.safe_load_all(open(_f, encoding="utf-8")):
+        if _d and _d.get("kind") == "StatefulSet":
+            _c = _d["spec"]["template"]["spec"]["containers"][0]
+            _args = _c.get("args", []) or []
+            _envs = [e["name"] for e in _c.get("env", [])]
+    _refs = [a for a in _args if "$(" in a]
+    _missing = [r for a in _refs for r in [a[a.index("$(") + 2:a.index(")")]] if r not in _envs]
+    ck("K8s %s: bellek ayarları komut argümanında" % _eid,
+       any(_needle in a for a in _args))
+    ck("K8s %s: args'taki $(VAR) referansları env'de tanımlı" % _eid,
+       not _missing, ", ".join(_missing))
+
 ck("motor imajları <MOTOR>_IMAGE ile değiştirilebilir",
    all(("${%s_IMAGE:-" % k) in compose_txt
        for k in ("MARIADB", "POSTGRES", "MONGO", "REDIS", "MSSQL", "MINIO", "ELASTIC")))

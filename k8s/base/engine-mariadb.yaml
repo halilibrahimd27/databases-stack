@@ -24,6 +24,10 @@ spec:
         ports:
         - name: client
           containerPort: 3306
+        args:
+        - "--innodb-buffer-pool-size=$(MARIADB_BUFFER_POOL)"
+        - "--innodb-log-file-size=$(MARIADB_LOG_FILE_SIZE)"
+        - "--max-connections=$(MARIADB_MAX_CONNECTIONS)"
         env:
         - name: MARIADB_ROOT_PASSWORD
           valueFrom:
@@ -32,6 +36,12 @@ spec:
               key: MARIADB_PASSWORD
         - name: MARIADB_DATABASE
           value: "defaultdb"
+        - name: MARIADB_BUFFER_POOL
+          value: "1G"
+        - name: MARIADB_LOG_FILE_SIZE
+          value: "256M"
+        - name: MARIADB_MAX_CONNECTIONS
+          value: "200"
         resources:
           requests:
             memory: "512Mi"

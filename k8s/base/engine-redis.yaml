@@ -30,12 +30,20 @@ spec:
         - "$(REDISCLI_AUTH)"
         - "--appendonly"
         - "yes"
+        - "--maxmemory"
+        - "$(REDIS_MAXMEMORY)"
+        - "--maxmemory-policy"
+        - "$(REDIS_MAXMEMORY_POLICY)"
         env:
         - name: REDISCLI_AUTH
           valueFrom:
             secretKeyRef:
               name: db-secrets
               key: REDIS_PASSWORD
+        - name: REDIS_MAXMEMORY
+          value: "384mb"
+        - name: REDIS_MAXMEMORY_POLICY
+          value: "allkeys-lru"
         resources:
           requests:
             memory: "512Mi"
