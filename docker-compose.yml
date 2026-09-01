@@ -444,6 +444,12 @@ services:
       DATA_SOURCE_URI: "postgresql:5432/${DEFAULT_DATABASE:-defaultdb}?sslmode=disable"
       DATA_SOURCE_USER: ${POSTGRES_USER:-root}
       DATA_SOURCE_PASS: ${POSTGRES_PASSWORD:-${DB_PASSWORD}}
+    command:
+      # postmaster toplayıcısı VARSAYILAN OLARAK KAPALIDIR; açılmazsa
+      # pg_postmaster_start_time_seconds hiç üretilmez ve "kesintisiz çalışma
+      # süresi" paneli sonsuza dek boş kalır. Panelde boş kutu görmek,
+      # kullanıcının izlemeye olan güvenini en hızlı yitiren şeydir.
+      - "--collector.postmaster"
     depends_on:
       postgresql:
         condition: service_healthy
