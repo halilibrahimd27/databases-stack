@@ -400,40 +400,71 @@ restore_mongodb() {
 restore_redis() {
     local f="$1"; [ -f "$f" ] || die "Dosya yok: $f"
     confirm_restore "Redis" || return 1
-    # ⚠ KRİTİK: AOF açıkken Redis açılışta dump.rdb'yi DEĞİL AOF'u okur.
-    # Eski sürüm sadece dump.rdb'yi değiştirip yeniden başlatıyordu — "başarılı"
-    # yazıp hiçbir şey geri yüklemiyordu. Doğru sıra: AOF'u kapat, RDB'yi koy,
-    # AOF'u yeniden üret (BGREWRITEAOF), sonra tekrar aç.
     local pw="${REDIS_PASSWORD:-$DB_PASSWORD}"
-    # Geri yükleme her zaman O ANKİ ana kopyaya yapılır (devir olmuşsa yedek düğüm).
     local C; C="$(primary_of redis)"
+    local proj="${STACK_PROJECT:-databases-stack}"
+    local vol="${proj}_redis_data"
+    [ "$C" = "redis-replica" ] && vol="${proj}_redis_replica_data"
+    local img; img="$(docker inspect "$C" --format '{{.Config.Image}}' 2>/dev/null)"
+    [ -n "$img" ] || img="redis:${REDIS_VERSION:-8-alpine}"
     rcli() { docker exec -e REDISCLI_AUTH="$pw" "$C" redis-cli --no-auth-warning "$@"; }
 
-    local aof; aof="$(rcli CONFIG GET appendonly | tail -1 | tr -d '[:space:]')"
-    blog "Mevcut appendonly=$aof"
-    rcli CONFIG SET appendonly no >/dev/null
-    rcli FLUSHALL >/dev/null
-    rcli CONFIG SET save "" >/dev/null     # kapanışta RDB'yi ezmesin
-    rcli SHUTDOWN NOSAVE >/dev/null 2>&1 || true
+    # ═════════════════════════════════════════════════════════════════════
+    # ⚠ REDIS GERİ YÜKLEMESİNİN TUZAĞI
+    # appendonly=yes ile açılan Redis AOF dosyasını okur. AOF YOKSA BOŞ
+    # BAŞLAR ve dump.rdb'ye HİÇ BAKMAZ — RDB'ye geri düşmez. Yani dosyayı
+    # yerine koyup yeniden başlatmak "başarılı" der ve HİÇBİR ŞEY yüklemez.
+    # Logda şöyle görünür:  "Creating AOF incr file ... on server start"
+    # Doğru sıra: AOF KAPALI başlat (RDB okunur) → AOF'u aç ve yeniden üret
+    # → normal yapılandırmaya dön (artık AOF'ta geri yüklenmiş veri var).
+    # ═════════════════════════════════════════════════════════════════════
 
-    blog "Container'ın yeniden başlaması bekleniyor…"
-    local i=0; while [ $i -lt 30 ] && ! container_running "$C"; do sleep 1; i=$((i+1)); done
-    sleep 2
+    blog "1/5 Redis durduruluyor"
+    compose --profile redis stop "$C" >>"$LOG_FILE" 2>&1
 
-    gzip -dc "$f" | docker exec -i "$C" sh -c 'cat > /data/dump.rdb'
-    docker exec "$C" sh -c 'rm -rf /data/appendonlydir /data/appendonly.aof*' 2>/dev/null
-    docker restart "$C" >/dev/null
-    blog "Redis yeniden başlatıldı, RDB yükleniyor…"
-    i=0; while [ $i -lt 60 ]; do rcli PING 2>/dev/null | grep -q PONG && break; sleep 2; i=$((i+1)); done
+    blog "2/5 RDB yerine konuyor, AOF kalıntıları siliniyor"
+    # Container durmuş durumda; işi volume'u bağlayan yardımcı container yapar.
+    gzip -dc "$f" | docker run -i --rm -v "$vol:/d" --entrypoint sh "$img" -c         'rm -rf /d/appendonlydir /d/appendonly.aof* /d/dump.rdb && cat > /d/dump.rdb && chown 999:999 /d/dump.rdb'
+    [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "RDB yazılamadı"; return 1; }
 
-    if [ "$aof" = "yes" ]; then
-        rcli CONFIG SET appendonly yes >/dev/null
-        rcli BGREWRITEAOF >/dev/null
-        blog "AOF yeniden üretildi"
+    blog "3/5 Redis AOF KAPALI başlatılıyor (RDB okunabilsin diye)"
+    REDIS_APPENDONLY=no compose --profile redis up -d --force-recreate "$C" >>"$LOG_FILE" 2>&1
+    local i=0
+    while [ $i -lt 60 ]; do rcli PING 2>/dev/null | grep -q PONG && break; sleep 2; i=$((i+1)); done
+    [ $i -lt 60 ] || { berr "Redis açılmadı"; return 1; }
+
+    local n; n="$(rcli DBSIZE 2>/dev/null | tr -d '[:space:]')"
+    if [ "${n:-0}" -eq 0 ]; then
+        berr "Geri yükleme sonrası 0 anahtar — yedek boş ya da RDB yüklenemedi."
+        berr "Redis normal yapılandırmaya döndürülüyor."
+        compose --profile redis up -d --force-recreate "$C" >>"$LOG_FILE" 2>&1
+        return 1
     fi
-    rcli PING 2>/dev/null | grep -q PONG \
-        && bok "Redis geri yüklendi ($(rcli DBSIZE | tr -d '[:space:]') anahtar)" \
-        || { berr "Redis açılmadı"; return 1; }
+    blog "    RDB yüklendi: $n anahtar"
+
+    blog "4/5 AOF açılıyor ve geri yüklenen veriden yeniden üretiliyor"
+    rcli CONFIG SET appendonly yes >/dev/null
+    rcli BGREWRITEAOF >/dev/null
+    i=0
+    while [ $i -lt 60 ]; do
+        rcli INFO persistence 2>/dev/null | grep -q 'aof_rewrite_in_progress:0' && break
+        sleep 2; i=$((i+1))
+    done
+
+    # Normal yapılandırmaya dön. Bu ŞART: container şu an --appendonly no ile
+    # yaratılmış durumda; öyle bırakılırsa bir sonraki yeniden başlatmada
+    # AOF'u değil eskimiş RDB'yi okur ve aradaki yazmalar kaybolur.
+    blog "5/5 Normal yapılandırmaya dönülüyor (AOF açık)"
+    compose --profile redis up -d --force-recreate "$C" >>"$LOG_FILE" 2>&1
+    i=0
+    while [ $i -lt 60 ]; do rcli PING 2>/dev/null | grep -q PONG && break; sleep 2; i=$((i+1)); done
+
+    local n2; n2="$(rcli DBSIZE 2>/dev/null | tr -d '[:space:]')"
+    if [ "${n2:-0}" -eq 0 ]; then
+        berr "Normal yapılandırmaya dönünce veri kayboldu (AOF üretilememiş olabilir)"
+        return 1
+    fi
+    bok "Redis geri yüklendi ($n2 anahtar)"
 }
 
 restore_mssql() {
