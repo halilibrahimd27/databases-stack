@@ -324,6 +324,35 @@ cmd_doctor() {
 HINT
         fi
     fi
+    # --- Çalışan controller, depodaki kodla AYNI mı? ------------------------
+    # Controller bir İMAJDAN çalışır (compose'da `build:` var), gateway gibi
+    # bind-mount'tan değil. Yani `git pull` + `docker compose up -d` controller
+    # kodunu GÜNCELLEMEZ: yeni kod diskte durur, container eski imajla çalışmaya
+    # devam eder ve hiçbir hata çıkmaz. Belgelenen yükseltme yolu (`./install.sh`)
+    # imajı yeniden derlediği için doğrudur — ama alışkanlıktan `up -d` diyen
+    # biri "düzelttim ama hiçbir şey değişmedi" ile karşılaşır ve hatayı yanlış
+    # yerde arar. Burada karşılaştırıp söylüyoruz.
+    if container_running controller && [ -f controller/app.py ]; then
+        _local_md5="$(md5sum controller/app.py 2>/dev/null | cut -d' ' -f1)"
+        _img_md5="$(docker exec controller md5sum /app/app.py 2>/dev/null | cut -d' ' -f1)"
+        if [ -n "$_local_md5" ] && [ -n "$_img_md5" ] && [ "$_local_md5" != "$_img_md5" ]; then
+            warn "Çalışan controller, depodaki koddan FARKLI (imaj eski)."
+            cat >&2 <<'HINT'
+
+    Controller bir imajdan çalışır; `docker compose up -d` onu yeniden
+    derlemez. Güncellemek için:
+
+      ./install.sh          # imajı yeniden derler, parolalara dokunmaz
+
+    ya da yalnız controller için:
+
+      docker compose --env-file .env -p databases-stack up -d --build controller
+
+HINT
+        else
+            [ -n "$_img_md5" ] && ok "controller imajı depodaki kodla aynı"
+        fi
+    fi
     ./scripts/check-catalog.sh || true
     if container_running controller; then
         _api GET /api/status | python3 -c '
