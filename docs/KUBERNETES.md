@@ -99,3 +99,36 @@ gereken bilgi (panel adı, port, servis) zaten mevcuttur.
   CloudNativePG (PostgreSQL), Strimzi (Kafka), ECK (Elasticsearch),
   Percona/MongoDB Operator. Bu ürünün StatefulSet'leri tek instance içindir.
 - **Anti-affinity ve PodDisruptionBudget** çok node'lu cluster'da eklenmelidir.
+
+## Aynı makinede hem Docker yığını hem k3s çalıştırmayın
+
+Ürünü denemek için aynı sunucuya k3s kurmak cazip görünür, ama **k3s yayınlanan
+80 ve 443 portlarını Docker'dan kapar**. Sebep, iptables `nat/PREROUTING`
+zincirinde `KUBE-SERVICES` ve `CNI-HOSTPORT-DNAT` kurallarının `DOCKER`
+zincirinden **önce** gelmesidir: paket gateway'e hiç ulaşmadan Traefik'e
+yönlenir.
+
+Belirti kafa karıştırıcıdır — her şey sağlıklı görünür:
+
+- `docker ps` → gateway "Up (healthy)"
+- `docker exec gateway nginx -t` → geçerli
+- `docker exec gateway curl http://127.0.0.1/` → 200
+- ama tarayıcıda düz metin **`404 page not found`** (Traefik'in cevabı)
+
+`./stack.sh doctor` bu durumu artık işlevsel olarak yakalar: container içinden
+ve dışarıdan gelen cevabı karşılaştırır.
+
+**Önemli:** `systemctl stop k3s` bu sorunu ÇÖZMEZ. k3s durunca pod'ları
+containerd altında yaşamaya devam eder ve iptables kuralları yerinde kalır.
+Gerçekten temizlemek için:
+
+```bash
+sudo /usr/local/bin/k3s-killall.sh     # pod'ları öldürür, iptables kurallarını temizler
+sudo systemctl disable --now k3s       # yeniden başlatmada geri gelmesin
+docker restart gateway
+```
+
+k3s'i tamamen kaldırmak için `sudo /usr/local/bin/k3s-uninstall.sh`.
+
+Doğru yaklaşım: Docker kurulumu ve Kubernetes kurulumu **ayrı makinelerde**
+olsun. İkisi aynı katalogdan beslenir, ama aynı host'un ağ yığınını paylaşamaz.

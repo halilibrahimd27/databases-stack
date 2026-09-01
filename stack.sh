@@ -290,6 +290,40 @@ cmd_doctor() {
             docker exec gateway nginx -t 2>&1 | sed "s/^/    /"
         fi
     fi
+    # --- Yayınlanan portlar GERÇEKTEN gateway'e ulaşıyor mu? ------------------
+    # nginx sapasağlam olabilir ve panel yine de açılmayabilir: host'taki başka
+    # bir yönlendirme trafiği yolda kaçırıyorsa. Gerçek bir olayda aynı sunucuda
+    # kurulu k3s buna yol açtı — `systemctl stop k3s` sonrası bile pod'ları
+    # containerd altında yaşamaya devam etti ve iptables'ta KUBE-SERVICES /
+    # CNI-HOSTPORT-DNAT zincirleri DOCKER zincirinden ÖNCE geldiği için 80 ve
+    # 443, Traefik'e gitti. Kullanıcı "404 page not found" gördü; docker ps,
+    # nginx -t ve container içi istek hepsi sağlıklıydı. Bu yüzden kontrol
+    # işlevsel: dışarıdan gelen cevap, container'ın kendi cevabıyla aynı mı?
+    if container_running gateway; then
+        _in="$(docker exec gateway curl -s -o /dev/null -w '%{http_code}' \
+                 http://127.0.0.1:80/ 2>/dev/null || echo 000)"
+        _out="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+                 http://127.0.0.1:80/ 2>/dev/null || echo 000)"
+        if [ "$_in" = "$_out" ]; then
+            ok "yayınlanan portlar gateway'e ulaşıyor (80 → $_out)"
+        else
+            err "80 portu gateway'e ULAŞMIYOR: container içinden $_in, dışarıdan $_out"
+            cat >&2 <<'HINT'
+
+    Host'ta başka bir şey 80/443'ü kaçırıyor. En sık sebep: aynı makinede
+    kurulu Kubernetes (k3s). k3s'i durdurmak YETMEZ — pod'ları containerd
+    altında yaşamaya devam eder ve iptables kuralları kalır:
+
+      sudo /usr/local/bin/k3s-killall.sh     # pod'ları ve kuralları temizler
+      sudo systemctl disable --now k3s       # açılışta geri gelmesin
+      docker restart gateway
+
+    Kimin dinlediğini görmek için:  sudo ss -lntp | grep -E ':80 |:443 '
+    Yönlendirme kurallarını görmek için:  sudo iptables -t nat -L PREROUTING -n
+
+HINT
+        fi
+    fi
     ./scripts/check-catalog.sh || true
     if container_running controller; then
         _api GET /api/status | python3 -c '
