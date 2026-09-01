@@ -70,11 +70,15 @@ scrape_configs:
 |---|---|---|
 | Prometheus | ~512 MB | Metrikleri toplar ve saklar |
 | Grafana | ~256 MB | Grafikleri çizer |
-| cAdvisor | ~192 MB | Container başına CPU/RAM/disk |
 | node-exporter | ~64 MB | Sunucunun RAM/disk/CPU durumu |
 
-Toplam ~1 GB. Diğer motorlar gibi, sunucuda yer yoksa **açılmaz** ve size
-sebebini söyler — sessizce sunucuyu boğmaz.
+Toplam ~830 MB. Container başına bellek/CPU için ayrı bir araç (cAdvisor)
+çalıştırılmaz: o bilgiyi zaten belleği dağıtan controller'ın kendisi
+yayınlar. Böylece grafiklerdeki sayılar, ayırma kararını veren kodun kendi
+defterinden gelir — ayrı bir aracın farklı sayması kafa karıştırırdı.
+
+Diğer motorlar gibi, sunucuda yer yoksa **açılmaz** ve size sebebini söyler —
+sessizce sunucuyu boğmaz.
 
 Saklama süresi varsayılan **15 gün**, disk sınırı **2 GB**. İkisi birlikte
 sınırlanır: yalnız süre sınırlansaydı yoğun bir kurulumda disk sessizce dolar
@@ -134,7 +138,7 @@ docker ps --filter name=-exporter
 ```
 
 MSSQL ve Neo4j'nin exporter'ı yoktur; onlar yalnız Genel Bakış panosunda
-(cAdvisor üzerinden kaynak kullanımı olarak) görünür.
+(controller'ın yayınladığı bellek/CPU kullanımı olarak) görünür.
 
 **Grafana'ya giriş.** Panel zaten parola arkasında olduğu için Grafana'ya
 ziyaretçi olarak girersiniz; pano düzenlemek için `admin` kullanıcısıyla giriş

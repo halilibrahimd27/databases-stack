@@ -1247,33 +1247,19 @@ services:
         limits:
           memory: ${GRAFANA_MEM_LIMIT:-256M}
 
-  # Container başına CPU/bellek/disk. Bu ürün belleği OTOMATİK hesapladığı için
-  # "hesap doğru muydu" sorusunun görsel cevabı buradan gelir. Ayrıca exporter'ı
-  # olmayan motorlar (MSSQL, Neo4j) da en azından kaynak tarafından görünür olur.
-  cadvisor:
-    <<: *svc
-    profiles: [monitoring]
-    image: ${CADVISOR_IMAGE:-gcr.io/cadvisor/cadvisor:v0.49.1}
-    container_name: cadvisor
-    command:
-      # Varsayılan cAdvisor her şeyi toplar ve şişer; yalnız ihtiyacımız olan
-      # toplayıcılar açık.
-      - "--docker_only=true"
-      - "--housekeeping_interval=30s"
-      - "--disable_metrics=percpu,sched,tcp,udp,advtcp,process,hugetlb,referenced_memory,cpu_topology,resctrl"
-    privileged: true
-    devices:
-      - /dev/kmsg:/dev/kmsg
-    volumes:
-      - /:/rootfs:ro
-      - /var/run:/var/run:ro
-      - /sys:/sys:ro
-      - /var/lib/docker/:/var/lib/docker:ro
-      - /dev/disk/:/dev/disk:ro
-    deploy:
-      resources:
-        limits:
-          memory: ${CADVISOR_MEM_LIMIT:-192M}
+  # NOT — burada eskiden cAdvisor vardı ve KALDIRILDI.
+  # Container başına bellek/CPU'yu cAdvisor'dan almak doğal görünüyordu ama
+  # bu sunucuda (Docker 29, containerd snapshotter, "overlayfs") cAdvisor'ın
+  # docker entegrasyonu /var/lib/docker/image/overlay2/layerdb düzenini arıyor;
+  # o düzen artık yok. Sonuç sinsiydi: hedef "up" görünüyor, scrape başarılı,
+  # ama container başına HİÇ seri üretilmiyordu — Genel Bakış panosunun on
+  # sorgusu da sessizce boş dönüyordu. Grafikler görünür, içleri boş.
+  #
+  # Yerine controller kendi /metrics ucunu yayınlıyor. Daha sağlam (her Docker
+  # sürümünde çalışır), daha hafif (~190 MB az), privileged container ve
+  # /var/lib/docker bağlaması gerektirmiyor; en önemlisi sayılar belleği
+  # DAĞITAN kodun kendi defterinden geliyor — "otomatik hesap tuttu mu?"
+  # sorusu, hesabı yapanın rakamlarıyla cevaplanıyor.
 
   # Sunucunun kendi RAM/disk/CPU durumu. "Disk doluyor" uyarısı buradan gelir;
   # veritabanları için disk dolması en sert arıza biçimidir.

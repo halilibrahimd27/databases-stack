@@ -30,13 +30,13 @@ groups:
       # uyarmak, gece yarısı gelen "veritabanı düştü" mesajından iyidir.
       - alert: BellekSinirinaYaklasiyor
         expr: |
-          (container_memory_usage_bytes / container_spec_memory_limit_bytes > 0.90)
-          and (container_spec_memory_limit_bytes > 0)
+          (dbstack_container_memory_bytes / dbstack_container_memory_limit_bytes > 0.90)
+          and (dbstack_container_memory_limit_bytes > 0)
         for: 10m
         labels:
           severity: warning
         annotations:
-          ozet: '{{ $labels.name }} ayrılan belleğin %90ından fazlasını kullanıyor'
+          ozet: '{{ $labels.service }} ayrılan belleğin %90ından fazlasını kullanıyor'
           ne_yapmali: >-
             Sunucuda boş RAM varsa motoru kapatıp yeniden açın; bellek
             yeniden hesaplanır. Yoksa başka bir motoru kapatın.

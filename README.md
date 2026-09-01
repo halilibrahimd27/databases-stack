@@ -251,7 +251,7 @@ Hedef listesi elle yazılmaz: bir motoru açıp kapattığınızda liste kendili
 güncellenir. Kapalı motor listede olmadığı için "erişilemiyor" uyarısı da
 yağmaz — kapalı olmak arıza değildir.
 
-Kapalıyken hiçbir container çalışmaz. Açıkken ~1 GB RAM ister; sunucuda yer
+Kapalıyken hiçbir container çalışmaz. Açıkken ~830 MB RAM ister; sunucuda yer
 yoksa diğer motorlar gibi **açılmaz ve sebebini söyler**.
 
 Ayrıntı: [docs/MONITORING.md](docs/MONITORING.md).
@@ -426,7 +426,7 @@ onayında uyarı çıkar.
   motorları üçüncü taraflara **yönetilen servis olarak satarsanız** kaynak açma
   yükümlülüğü doğabilir.
 
-İzleme modülü için: **Prometheus, cAdvisor ve node-exporter Apache-2.0**
+İzleme modülü için: **Prometheus ve node-exporter Apache-2.0**
 (kısıtsız), **Grafana OSS ise AGPL-3.0**'dır. Grafana'yı olduğu gibi
 çalıştırmak serbesttir; AGPL yükümlülüğü ancak Grafana'yı DEĞİŞTİRİP ağ
 üzerinden üçüncü taraflara sunarsanız doğar. İç ağda kendi panolarınızı

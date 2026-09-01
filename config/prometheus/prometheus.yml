@@ -34,22 +34,17 @@ scrape_configs:
           - /etc/prometheus/targets/*.json
         refresh_interval: 15s
 
-  # --- Container ve sunucu kaynakları ---------------------------------------
-  # Bunlar monitoring profilinin AYRILMAZ parçası: profil açıksa ikisi de
-  # ayaktadır, kapalıysa Prometheus'un kendisi de yoktur. Bu yüzden hedef
-  # listesine değil, doğrudan buraya yazılıyorlar.
+  # --- Container kaynakları (controller yayınlıyor) --------------------------
+  # Bunlar monitoring profilinin AYRILMAZ parçası: profil açıksa ayaktadırlar,
+  # kapalıysa Prometheus'un kendisi de yoktur. Bu yüzden motor hedef listesine
+  # değil doğrudan buraya yazılıyorlar.
   #
   # Bu iki hedef unutulduğunda Genel Bakış panosunun TAMAMI sessizce boş
   # kalıyordu — grafikler görünür, içleri boştur. Bu ürün belleği otomatik
   # hesapladığı için "hesap tuttu mu" sorusunun tek görsel cevabı odur.
-  - job_name: containers
+  - job_name: controller
     static_configs:
-      - targets: ['cadvisor:8080']
-    metric_relabel_configs:
-      # cAdvisor container adını "name" etiketinde verir ama ayrıca id/image
-      # gibi yüksek kardinaliteli etiketler de üretir; onlar TSDB'yi şişirir.
-      - regex: '(id|image|container_label_.*)'
-        action: labeldrop
+      - targets: ['controller:8000']
 
   - job_name: host
     static_configs:
