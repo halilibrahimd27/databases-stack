@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Güvenlik sertifikasını kurun</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔒</text></svg>">
 <link rel="stylesheet" href="style.css">
@@ -11,10 +12,10 @@
 
 <main class="setup">
   <header class="setup-head">
-    <span class="setup-icon">🔒</span>
+    <span class="setup-icon" aria-hidden="true">🔒</span>
     <div>
       <h1>Tek seferlik güvenlik kurulumu</h1>
-      <p class="lead">Bu adımdan sonra tarayıcı uyarısı tamamen kalkar.</p>
+      <p class="lead">Üç adım sürer; sonrasında tarayıcı uyarısı tamamen kalkar.</p>
     </div>
   </header>
 
@@ -33,9 +34,11 @@
   </section>
 
   <section class="panel">
-    <h2>1. Sertifikayı indirin</h2>
-    <p><a class="btn btn-primary btn-lg" href="/ca.crt" download="databases-stack-ca.crt">
-      Sertifikayı indir (ca.crt)</a></p>
+    <h2><span class="step-num" aria-hidden="true">1</span> Sertifikayı indirin</h2>
+    <p>
+      <a class="btn btn-primary btn-lg" href="/ca.crt" download="databases-stack-ca.crt">
+        Sertifikayı indir (ca.crt)</a>
+    </p>
     <p class="muted">
       Bu dosya yalnızca <b>ortak anahtar</b> içerir — gizli bir şey değildir,
       paylaşmak güvenlidir. Özel anahtar sunucuda kalır ve hiçbir zaman gönderilmez.
@@ -43,10 +46,11 @@
   </section>
 
   <section class="panel">
-    <h2>2. Bilgisayarınıza kurun</h2>
+    <h2><span class="step-num" aria-hidden="true">2</span> Bilgisayarınıza kurun</h2>
+    <p class="muted">İşletim sisteminizi seçip adımları uygulayın.</p>
 
     <details open>
-      <summary><b>Windows</b></summary>
+      <summary>Windows</summary>
       <ol>
         <li>İndirdiğiniz <code>ca.crt</code> dosyasına <b>çift tıklayın</b>.</li>
         <li><b>Sertifikayı Yükle…</b> → <b>Yerel Bilgisayar</b> → İleri.</li>
@@ -60,7 +64,7 @@
     </details>
 
     <details>
-      <summary><b>macOS</b></summary>
+      <summary>macOS</summary>
       <ol>
         <li><code>ca.crt</code> dosyasına çift tıklayın; <b>Anahtar Zinciri Erişimi</b> açılır.</li>
         <li>Sertifikayı <b>Sistem</b> anahtar zincirine ekleyin.</li>
@@ -68,12 +72,13 @@
             → <b>Her Zaman Güven</b>.</li>
         <li>Tarayıcıyı yeniden başlatın.</li>
       </ol>
-      <p class="muted">Terminalden:
-        <code>sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ca.crt</code></p>
+      <p class="muted">Terminalden:</p>
+      <pre><code>sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain ca.crt</code></pre>
     </details>
 
     <details>
-      <summary><b>Linux (Ubuntu / Debian)</b></summary>
+      <summary>Linux (Ubuntu / Debian)</summary>
       <pre><code>sudo cp ca.crt /usr/local/share/ca-certificates/databases-stack.crt
 sudo update-ca-certificates</code></pre>
       <p class="muted">Chrome/Chromium ve Firefox kendi depolarını kullanır;
@@ -81,7 +86,7 @@ sudo update-ca-certificates</code></pre>
     </details>
 
     <details>
-      <summary><b>Android / iOS</b></summary>
+      <summary>Android / iOS</summary>
       <p><b>Android:</b> Ayarlar → Güvenlik → Şifreleme ve kimlik bilgileri →
          Sertifika yükle → CA sertifikası.</p>
       <p><b>iOS:</b> Dosyayı Safari ile indirin → Ayarlar → Profil İndirildi →
@@ -91,7 +96,7 @@ sudo update-ca-certificates</code></pre>
   </section>
 
   <section class="panel panel-ok">
-    <h2>3. Panele girin</h2>
+    <h2><span class="step-num" aria-hidden="true">3</span> Panele girin</h2>
     <p>Sertifikayı kurduktan sonra tarayıcıyı yeniden başlatın ve devam edin:</p>
     <p><a class="btn btn-primary btn-lg" id="go" href="/">Yönetim paneline git</a></p>
     <p class="muted">

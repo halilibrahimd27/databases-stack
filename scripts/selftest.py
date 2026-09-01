@@ -390,8 +390,9 @@ ck("tüm proxy_pass'ler değişkenli — kapalı motor nginx'i çökertmez",
    not fixed, "%d proxy_pass" % len(passes))
 
 blocks = re.split(r"\nserver \{", tpl)[1:]
+PROXY_SNIPPETS = ("snippets/proxy.conf", "snippets/proxy-metrics.conf")
 miss = [re.search(r"listen\s+(\d+)", b).group(1) for b in blocks
-        if "snippets/proxy.conf" in b and "snippets/inactive.conf" not in b]
+        if any(x in b for x in PROXY_SNIPPETS) and "snippets/inactive.conf" not in b]
 ck("proxy kullanan her server'da 'pasif' sayfası tanımlı", not miss, str(miss))
 
 noauth = []
@@ -415,6 +416,16 @@ missing = [e["id"] for e in cat["engines"]
            if e.get("panel") and ("listen %d ssl" % e["panel"]["port"]) not in tpl]
 ck("katalogdaki her panel portu dinleniyor", not missing, str(missing))
 
+# Metrik uçlarında gateway'in Basic auth başlığı arkaya İLETİLMEMELİ:
+# MinIO onu AWS imzası sanıp 400 döndürüyordu.
+_pm = open("gateway/snippets/proxy-metrics.conf", encoding="utf-8").read()
+ck("metrik uçlarında Authorization başlığı temizleniyor",
+   'proxy_set_header Authorization ""' in _pm)
+_m9443 = tpl[tpl.index("listen 9443 ssl"):]
+ck("tüm metrik location'ları metrik snippet'ini kullanıyor",
+   "snippets/proxy.conf" not in _m9443 and _m9443.count("proxy-metrics.conf") >= 10,
+   "%d location" % _m9443.count("proxy-metrics.conf"))
+
 for f in ("index.html", "app.js", "style.css", "inactive.html"):
     ck("statik dosya: %s" % f, os.path.exists("gateway/html/" + f))
 
@@ -422,13 +433,14 @@ for f in ("index.html", "app.js", "style.css", "inactive.html"):
 # location'ın içine include edildiği için, snippet'teki bir direktifi aynı
 # location'da tekrar yazmak gateway'i tamamen çökertir.
 snip_directives = set()
-for line in open("gateway/snippets/proxy.conf", encoding="utf-8"):
-    line = line.strip()
-    if line and not line.startswith("#") and line.endswith(";"):
-        snip_directives.add(line.split()[0])
+for fn in ("proxy", "proxy-metrics"):
+    for line in open("gateway/snippets/%s.conf" % fn, encoding="utf-8"):
+        line = line.strip()
+        if line and not line.startswith("#") and line.endswith(";")                 and not line.startswith("include "):
+            snip_directives.add(line.split()[0])
 dupes = []
 for blk in re.findall(r"location[^{]*\{([^}]*)\}", tpl):
-    if "snippets/proxy.conf" not in blk:
+    if not any(x in blk for x in PROXY_SNIPPETS):
         continue
     for line in blk.splitlines():
         line = line.strip()

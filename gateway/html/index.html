@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Veritabanı Yönetim Paneli</title>
+<meta name="description" content="Sunucudaki veritabanlarını açıp kapatmak için yönetim paneli.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗄️</text></svg>">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -11,24 +13,37 @@
 
 <header class="topbar">
   <div class="brand">
-    <span class="brand-icon">🗄️</span>
+    <span class="brand-icon" aria-hidden="true">🗄️</span>
     <div>
       <h1>Veritabanı Yönetim Paneli</h1>
       <p class="sub">İhtiyacınız olan veritabanını açın, kullanmadığınızı kapatın.</p>
     </div>
   </div>
 
-  <div class="sysbar" id="sysbar">
-    <div class="sys-item"><span class="sys-label">Sunucu</span><b id="sys-host">—</b></div>
-    <div class="sys-item"><span class="sys-label">Bellek</span><b id="sys-mem">—</b>
-      <div class="meter"><div class="meter-fill" id="sys-mem-bar"></div></div>
+  <div class="sysbar" id="sysbar" role="group" aria-label="Sunucu durumu">
+    <div class="sys-item">
+      <span class="sys-label">Sunucu</span>
+      <b id="sys-host">—</b>
     </div>
-    <div class="sys-item"><span class="sys-label">Disk</span><b id="sys-disk">—</b></div>
-    <div class="sys-item"><span class="sys-label">İşlemci</span><b id="sys-cpu">—</b></div>
+    <div class="sys-item">
+      <span class="sys-label">Bellek</span>
+      <b id="sys-mem">—</b>
+      <div class="meter" role="img" aria-label="Bellek kullanımı">
+        <div class="meter-fill" id="sys-mem-bar"></div>
+      </div>
+    </div>
+    <div class="sys-item">
+      <span class="sys-label">Disk</span>
+      <b id="sys-disk">—</b>
+    </div>
+    <div class="sys-item">
+      <span class="sys-label">İşlemci</span>
+      <b id="sys-cpu">—</b>
+    </div>
   </div>
 </header>
 
-<div id="banner" class="banner" hidden></div>
+<div id="banner" class="banner" role="alert" hidden></div>
 
 <main>
   <section class="intro">
@@ -37,56 +52,71 @@
       Aşağıdaki kartlarda her veritabanının <b>ne işe yaradığı</b> sade dille yazıyor.
       <b>Aktif Et</b> dediğinizde sistem sunucunun boş belleğini ölçer, o veritabanına
       ne kadar ayıracağını kendisi hesaplar ve ayarlarını buna göre yapar —
-      sizin teknik bir değer girmeniz gerekmez.
-      Sunucu yetmiyorsa açmaz, sebebini söyler.
+      teknik bir değer girmeniz gerekmez. Sunucu yetmiyorsa açmaz, sebebini söyler.
     </p>
     <p class="hint">
-      İlk kez kuruyorsanız ve ne seçeceğinizi bilmiyorsanız:
-      <b>PostgreSQL</b> (verileriniz için) + <b>Redis</b> (hız için) çoğu proje için doğru başlangıçtır.
+      <b>Nereden başlamalı?</b> İlk kurulumda çoğu proje için doğru başlangıç:
+      <b>PostgreSQL</b> (verileriniz için) ve <b>Redis</b> (hız için).
     </p>
   </section>
 
-  <div id="grid" class="grid"><p class="loading">Yükleniyor…</p></div>
+  <div class="legend">
+    <span class="legend-label">Durumlar</span>
+    <span class="badge on">Çalışıyor</span>
+    <span class="badge busy">Başlatılıyor</span>
+    <span class="badge err">Sorunlu</span>
+    <span class="badge off">Kapalı</span>
+  </div>
+
+  <div id="grid" class="grid" aria-live="polite">
+    <p class="loading">Yükleniyor…</p>
+  </div>
 
   <section class="events-section">
     <h3>Son olaylar</h3>
-    <p class="card-detail">Aktivasyonlar, devirler ve uyarılar. Otomatik devir
-       gerçekleştiğinde burada ve (tanımlıysa) webhook bildiriminde görürsünüz.</p>
+    <p class="card-detail">
+      Aktivasyonlar, devirler ve uyarılar. Otomatik devir gerçekleştiğinde
+      burada ve (tanımlıysa) webhook bildiriminde görürsünüz.
+    </p>
     <div id="events"><p class="card-detail">Yükleniyor…</p></div>
   </section>
 
   <section class="footer-note">
     <h3>Yardımcı bağlantılar</h3>
     <ul>
-      <li><a href="/ca.crt">Güvenlik sertifikasını indir</a> — tarayıcıdaki
-          “güvenli değil” uyarısını kaldırmak için bir kez bilgisayarınıza kurun.</li>
-      <li><a href="https://github.com/halilibrahimd27/databases-stack" target="_blank" rel="noopener">Belgeler</a></li>
+      <li><a href="/setup">Güvenlik kurulumu</a> — tarayıcıdaki
+          “güvenli değil” uyarısını kaldırmak için adım adım anlatım.</li>
+      <li><a href="/ca.crt" download="databases-stack-ca.crt">Güvenlik sertifikasını indir</a>
+          — sertifikayı zaten biliyorsanız doğrudan indirin.</li>
+      <li><a href="https://github.com/halilibrahimd27/databases-stack" target="_blank" rel="noopener">Belgeler</a>
+          — kurulum, yedekleme ve komut satırı kullanımı.</li>
     </ul>
   </section>
 </main>
 
 <!-- Onay / plan penceresi -->
-<div class="modal" id="modal" hidden>
+<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
   <div class="modal-box">
     <h3 id="modal-title">…</h3>
     <div id="modal-body"></div>
     <div class="modal-actions">
-      <button class="btn btn-ghost" id="modal-cancel">Vazgeç</button>
-      <button class="btn btn-primary" id="modal-ok">Devam</button>
+      <button type="button" class="btn btn-ghost" id="modal-cancel">Vazgeç</button>
+      <button type="button" class="btn btn-primary" id="modal-ok">Devam</button>
     </div>
   </div>
 </div>
 
 <!-- İş ilerleme penceresi -->
-<div class="modal" id="job" hidden>
+<div class="modal" id="job" role="dialog" aria-modal="true" aria-labelledby="job-title" hidden>
   <div class="modal-box">
     <h3 id="job-title">İşlem sürüyor…</h3>
     <p class="job-hint" id="job-hint">
       İlk açılışta veritabanı imajı indirileceği için bu birkaç dakika sürebilir.
+      Pencereyi açık bırakabilirsiniz; ilerleme aşağıda canlı görünür.
     </p>
-    <pre class="joblog" id="job-log"></pre>
+    <pre class="joblog" id="job-log" tabindex="0" aria-live="polite"></pre>
     <div class="modal-actions">
-      <button class="btn btn-ghost" id="job-close" disabled>Kapat</button>
+      <button type="button" class="btn btn-ghost" id="job-close" disabled>Kapat</button>
     </div>
   </div>
 </div>

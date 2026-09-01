@@ -318,64 +318,65 @@ server {
     auth_basic "metrics"; auth_basic_user_file /etc/nginx/.htpasswd;
     access_log off;
 
+
     location = /metrics/mariadb {
         set $up mariadb-exporter;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-metrics.conf;
         rewrite ^ /metrics break;
         proxy_pass http://$up:9104;
     }
     location = /metrics/postgresql {
         set $up postgres-exporter;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-metrics.conf;
         rewrite ^ /metrics break;
         proxy_pass http://$up:9187;
     }
     location = /metrics/mongodb {
         set $up mongodb-exporter;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-metrics.conf;
         rewrite ^ /metrics break;
         proxy_pass http://$up:9216;
     }
     location = /metrics/redis {
         set $up redis-exporter;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-metrics.conf;
         rewrite ^ /metrics break;
         proxy_pass http://$up:9121;
     }
     location = /metrics/cassandra {
         set $up cassandra-exporter;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-metrics.conf;
         rewrite ^ /metrics break;
         proxy_pass http://$up:9500;
     }
     location = /metrics/elasticsearch {
         set $up elasticsearch-exporter;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-metrics.conf;
         rewrite ^ /metrics break;
         proxy_pass http://$up:9114;
     }
     location = /metrics/kafka {
         set $up kafka-exporter;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-metrics.conf;
         rewrite ^ /metrics break;
         proxy_pass http://$up:9308;
     }
     # Aşağıdakilerin exporter'ı yok — metrikleri motorun kendisi sunar.
     location = /metrics/rabbitmq {
         set $up rabbitmq;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-metrics.conf;
         rewrite ^ /metrics break;
         proxy_pass http://$up:15692;
     }
     location = /metrics/clickhouse {
         set $up clickhouse;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-metrics.conf;
         rewrite ^ /metrics break;
         proxy_pass http://$up:9363;
     }
     location = /metrics/minio {
         set $up minio;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-metrics.conf;
         rewrite ^ /minio/v2/metrics/cluster break;
         proxy_pass http://$up:9000;
     }
