@@ -1,5 +1,19 @@
 /* databases-stack dashboard — bağımlılıksız, tek dosya.
-   Bütün karar mantığı controller'da; burası yalnız gösterim ve onay akışı. */
+   Bütün karar mantığı controller'da; burası yalnız gösterim ve onay akışı.
+
+   YÖN: “SAKİN”. Bu dosyada API çağrıları, onay akışları, 5 saniyelik yenileme
+   ve hata yakalama mantığı ORİJİNALİYLE AYNIDIR. Değişen tek şey gösterim:
+
+     • Açık motorlar KART, kapalı motorlar SATIR olarak çizilir (madde 2 ve 4).
+     • Sorunlu motorlar açık bölümün en başına alınır (madde 3).
+     • Kartın gündelik düğmeleri üstte; kapatma ve geri dönüşü zor işlemler
+       kartın altında kapalı bir <details> içinde, her biri kendi açıklamasıyla
+       (madde 1).
+     • Izgara HTML'i yalnız GERÇEKTEN DEĞİŞTİĞİNDE yazılır; ayrıca açık
+       <details> öğeleri ve odak, yeniden çizimde korunur. Böylece 5 saniyelik
+       yenileme kullanıcının açtığı ayrıntıyı kapatmaz ve ekran okuyucuyu
+       boşuna konuşturmaz.
+*/
 'use strict';
 
 const API = '/api';
@@ -119,7 +133,7 @@ async function activate(engine) {
       <div style="margin-top:8px">${rows}</div>
     </details>
     <p class="note">İlk açılışta veritabanı imajı indirileceği için birkaç dakika sürebilir.</p>`,
-    'Aktif Et');
+    'Aç');
   if (!ok) return;
 
   const r = await api('/engines/' + engine.id + '/activate', { method: 'POST' });
@@ -130,7 +144,7 @@ async function deactivate(engine) {
   const ok = await confirmBox(engine.name + ' kapatılsın mı?', `
     <p>Veritabanı durdurulur ve belleği serbest kalır.</p>
     <p class="note"><b>Verileriniz silinmez.</b> Diskte kalır; tekrar
-    “Aktif Et” dediğinizde her şey yerinde olur.</p>`, 'Kapat');
+    “Aç” dediğinizde her şey yerinde olur.</p>`, 'Kapat');
   if (!ok) return;
   const r = await api('/engines/' + engine.id + '/deactivate', { method: 'POST' });
   watchJob(r.job, engine.name + ' kapatılıyor…');
@@ -211,158 +225,315 @@ async function showConnection(engine) {
      <code>./stack.sh app-user</code></p>`);
 }
 
-/* ------------------------------------------------------------------ çizim */
-function cardHtml(engine, st, plan) {
-  const p = engine.plain || {};
-  const rep = engine.replication || {};
-  const blocked = !st.active && plan && !plan.ok;
+/* ================================================================== çizim */
 
-  let badge = '<span class="badge off">Kapalı</span>';
-  if (st.active && st.health === 'starting') badge = '<span class="badge busy">Başlatılıyor</span>';
-  else if (st.active && st.health === 'unhealthy') badge = '<span class="badge err">Sorunlu</span>';
-  else if (st.active) badge = '<span class="badge on">Çalışıyor</span>';
+/* Bir motorun “ne kadar dikkat istiyor” sırası. 0 en acil.
+   Açık bölümü bu sıraya göre diziyoruz: sorunlu motor 13 kartın arasında
+   kaybolmasın, en üstte dursun. */
+/* Sıralama HİSTEREZİSLİ. attention() anlık durumu söyler; sağlık kontrolü
+   salınan bir motor (starting ↔ healthy) her 5 saniyede listeyi yeniden
+   diziyor, kullanıcının imlecinin altındaki düğme yer değiştiriyordu.
+   Sıra ancak aynı sonuç ÜST ÜSTE İKİ KEZ görülünce değişir. */
+const _rankMem = {};
+function stableAttention(eid, st) {
+  const now = attention(st);
+  const m = _rankMem[eid];
+  if (!m) { _rankMem[eid] = { rank: now, n: 0 }; return now; }
+  if (now === m.rank) { m.n = 0; return m.rank; }
+  if (++m.n >= 2) { m.rank = now; m.n = 0; }
+  return m.rank;
+}
+
+function attention(st) {
+  if (st.health === 'unhealthy' || st.failed_over) return 0;
+  if (st.health === 'starting') return 1;
+  return 2;
+}
+
+/* ---------------------------------------------------- AÇIK motorun kartı */
+function cardHtml(engine, st) {
+  const p    = engine.plain || {};
+  const rep  = engine.replication || {};
+  const fo   = engine.failover || {};
+  const lic  = engine.license || {};
+  const rank = attention(st);
 
   // "tool" türü kayıtlar (izleme gibi) veritabanı değildir: istemcinin
   // bağlanacağı bir port, bağlantı bilgisi ya da yedek kopyası yoktur.
   // Kartta o düğmeleri göstermek, kullanıcıya olmayan bir şey vaat etmektir.
   const isTool = engine.kind === 'tool';
-  const ports = (engine.client_ports || []).map((x) => x.port).join(', ');
+  const ports  = (engine.client_ports || []).map((x) => x.port).join(', ');
 
-  const facts = st.active ? `
-    <dl class="facts">
-      <dt>Ayrılan bellek</dt><dd>${mb(st.memory_mb)}</dd>
-      ${ports ? `<dt>Bağlantı portu</dt><dd>${ports}</dd>` : ''}
-      ${st.replication_active ? '<dt>Replika</dt><dd>çalışıyor</dd>' : ''}
-    </dl>` : (blocked
-      ? `<div class="blocked-note">${esc(plan.reason)}</div>`
-      : `<dl class="facts">
-           <dt>Tahmini bellek</dt><dd>${plan && plan.ok ? mb(plan.limit_mb) : '—'}</dd>
-           <dt>Durum</dt><dd>Bu sunucuda açılabilir</dd>
-         </dl>`);
+  let badge = '<span class="badge on">Çalışıyor</span>';
+  if (st.health === 'starting') badge = '<span class="badge busy">Başlatılıyor</span>';
+  else if (st.health === 'unhealthy') badge = '<span class="badge err">Sorunlu</span>';
 
-  const panelBtn = (engine.panel && st.active)
-    ? `<button class="btn" data-act="panel" data-id="${engine.id}">${esc(engine.panel.name)} aç</button>` : '';
-  const connBtn = (st.active && !isTool)
-    ? `<button class="btn" data-act="conn" data-id="${engine.id}">Bağlantı bilgisi</button>` : '';
+  // Kart bilgisi tek satıra indi: kutu içinde tanım listesi yerine
+  // “512 MB · port 5432 · yedek kopya çalışıyor”.
+  const facts = [];
+  if (st.memory_mb != null) facts.push(mb(st.memory_mb) + ' bellek');
+  if (ports) facts.push('port ' + esc(ports));
+  if (st.replication_active) facts.push('yedek kopya çalışıyor');
+  if (st.auto_failover) facts.push('otomatik devir açık');
 
-  let repBtn = '';
-  if (st.active && (rep.mode === 'primary-replica' || rep.mode === 'replica-set')) {
-    repBtn = st.replication_active
-      ? `<button class="btn btn-link" data-act="rep-off" data-id="${engine.id}">Replikayı kapat</button>`
-      : `<button class="btn btn-link" data-act="rep-on"  data-id="${engine.id}">Replika kur</button>`;
+  // Sayfadaki tek renkli alan: gerçekten dikkat isteyen durum.
+  let notice = '';
+  if (st.failed_over) {
+    notice = `<p class="card-notice is-warn">Devir yapıldı — şu an
+      <b>${esc(st.primary_service || '')}</b> ana kopya. Uygulamanız aynı adrese
+      bağlanmaya devam eder. Rolleri normale döndürmek için aşağıdaki
+      “Eski kopyayı yeniden kur” işlemini kullanın.</p>`;
+  } else if (st.health === 'unhealthy') {
+    notice = `<p class="card-notice is-err">Çalışıyor ama sağlık kontrolüne
+      yanıt vermiyor. Birkaç dakika beklemesine rağmen düzelmezse kapatıp
+      yeniden açmayı deneyin.</p>`;
+  } else if (st.health === 'starting') {
+    notice = `<p class="card-notice">Başlatılıyor. İlk açılışta imaj
+      indirileceği için birkaç dakika sürebilir.</p>`;
   }
 
-  // --- otomatik failover ---
-  const fo = engine.failover || {};
-  let foBtn = '';
-  if (st.active && st.replication_active && fo.supported && fo.mode === 'supervised') {
-    foBtn = st.auto_failover
-      ? `<button class="btn btn-link" data-act="fo-off" data-id="${engine.id}">Otomatik devri kapat</button>`
-      : `<button class="btn btn-link" data-act="fo-on"  data-id="${engine.id}">Otomatik devri aç</button>`;
+  // Üretimde kullanılamayan lisans, kartta kalıcı olarak görünür.
+  const licCard = lic.free_for_production === false
+    ? `<p class="card-lic">⚠️ Lisans: ${esc(lic.name)}. Üretimde ayrı lisans gerekir.</p>` : '';
+
+  /* --- GÜNDELİK eylemler: en fazla iki, ikisi de sessiz --------------- */
+  const panelBtn = engine.panel
+    ? `<button class="btn" data-act="panel" data-id="${esc(engine.id)}">${esc(engine.panel.name)} aç</button>` : '';
+  const connBtn = !isTool
+    ? `<button class="btn" data-act="conn" data-id="${esc(engine.id)}">Bağlantı bilgisi</button>` : '';
+  const daily = panelBtn + connBtn;
+
+  /* --- GERİ DÖNÜŞÜ ZOR eylemler: kapalı açılırda, her biri açıklamalı --- */
+  let more = `
+    <div class="act">
+      <div class="act-txt"><b>Kapat</b>
+        <span>Durur, belleği serbest kalır. Verileriniz silinmez.</span></div>
+      <button class="btn btn-danger" data-act="off" data-id="${esc(engine.id)}"
+        aria-label="${esc(engine.name)} veritabanını kapat">Kapat</button>
+    </div>`;
+
+  if (st.failed_over) {
+    more += `
+    <div class="act">
+      <div class="act-txt"><b>Eski kopyayı yeniden kur</b>
+        <span>Eski kopyadaki veriler silinir, yeni ana kopyadan baştan kopyalanır.</span></div>
+      <button class="btn" data-act="rebuild" data-id="${esc(engine.id)}">Yeniden kur</button>
+    </div>`;
   }
-  // Failover yaşanmışsa: eski kopyayı yeniden replika yapma seçeneği
-  const rebuildBtn = st.failed_over
-    ? `<button class="btn" data-act="rebuild" data-id="${engine.id}">Eski kopyayı yeniden kur</button>`
-    : '';
 
-  const main = st.active
-    ? `<button class="btn btn-danger" data-act="off" data-id="${engine.id}">Kapat</button>`
-    : `<button class="btn btn-primary" data-act="on" data-id="${engine.id}"
-         ${blocked ? 'title="Sunucuda yeterli bellek yok"' : ''}>Aktif Et</button>`;
+  if (rep.mode === 'primary-replica' || rep.mode === 'replica-set') {
+    more += st.replication_active
+      ? `<div class="act">
+           <div class="act-txt"><b>Yedek kopyayı kapat</b>
+             <span>İkinci kopya durur, ana kopya etkilenmez.</span></div>
+           <button class="btn" data-act="rep-off" data-id="${esc(engine.id)}"
+                   aria-label="${esc(engine.name)} yedek kopyasını kapat">Kapat</button>
+         </div>`
+      : `<div class="act">
+           <div class="act-txt"><b>Yedek kopya kur</b>
+             <span>İkinci bir kopya tutulur; her değişiklik oraya da yazılır. Ek bellek ister.</span></div>
+           <button class="btn" data-act="rep-on" data-id="${esc(engine.id)}"
+                   aria-label="${esc(engine.name)} için yedek kopya kur">Kur</button>
+         </div>`;
+  }
 
-  const lic = engine.license || {};
-  const licClass = lic.free_for_production === false ? 'lic-warn'
-                 : lic.free_for_production === 'copyleft' ? 'lic-note' : 'lic-ok';
-  const licLine = lic.name
-    ? `<div class="lic ${licClass}" title="${esc(lic.note || '')}">
-         ${lic.free_for_production === false ? '⚠️' : '⚖️'} ${esc(lic.name)}
-         ${lic.free_for_production === false ? ' — üretimde lisans gerekir' : ''}
-       </div>` : '';
+  if (st.replication_active && fo.supported && fo.mode === 'supervised') {
+    more += st.auto_failover
+      ? `<div class="act">
+           <div class="act-txt"><b>Otomatik devri kapat</b>
+             <span>İzleme durur; ana kopya çökerse devir elle yapılır.</span></div>
+           <button class="btn" data-act="fo-off" data-id="${esc(engine.id)}"
+                   aria-label="${esc(engine.name)} otomatik devrini kapat">Kapat</button>
+         </div>`
+      : `<div class="act">
+           <div class="act-txt"><b>Otomatik devri aç</b>
+             <span>Ana kopya yanıt vermezse sistem yedeğe kendisi geçer.</span></div>
+           <button class="btn" data-act="fo-on" data-id="${esc(engine.id)}"
+                   aria-label="${esc(engine.name)} otomatik devrini aç">Aç</button>
+         </div>`;
+  }
+
+  if (p.detail) {
+    more += `<p class="more-what"><b>Ne işe yarar</b><br>${esc(p.detail)}</p>`;
+  }
+  if (lic.name) more += `<p class="more-lic">Lisans: ${esc(lic.name)}</p>`;
+
+  const cls = rank === 0 ? ' is-err' : rank === 1 ? ' is-busy' : '';
 
   return `
-  <article class="card ${st.active ? 'is-active' : ''} ${blocked ? 'is-blocked' : ''}">
+  <article class="card${cls}" id="eng-${esc(engine.id)}">
     <div class="card-head">
-      <span class="card-icon">${engine.icon}</span>
-      <div>
+      <span class="card-icon" aria-hidden="true">${esc(engine.icon)}</span>
+      <div class="card-id">
         <h3>${esc(engine.name)}</h3>
         <p class="card-plain">${esc(p.title || engine.summary)}</p>
+        ${p.badge ? `<span class="tag">${esc(p.badge)}</span>` : ''}
       </div>
       ${badge}
     </div>
-    ${p.badge ? `<div><span class="tag">${esc(p.badge)}</span></div>` : ''}
-    <p class="card-detail">${esc(p.detail || '')}</p>
-    ${facts}
-    ${st.failed_over ? `<div class="blocked-note">⚠ Devir yapıldı — şu an
-        <b>${esc(st.primary_service || '')}</b> ana kopya. Uygulamanız aynı
-        adrese bağlanmaya devam eder. Rolleri normale döndürmek için
-        "Eski kopyayı yeniden kur" deyin.</div>` : ''}
-    ${st.auto_failover ? '<div><span class="tag">Otomatik devir açık</span></div>' : ''}
-    <div class="card-actions">${main}${panelBtn}${connBtn}${rebuildBtn}${repBtn}${foBtn}</div>
+    ${facts.length ? `<p class="card-facts">${facts.map((f) => '<span>' + f + '</span>').join('')}</p>` : ''}
+    ${notice}
+    ${licCard}
+    ${daily ? `<div class="card-actions">${daily}</div>` : ''}
+    <details class="more" data-key="${esc(engine.id)}:more">
+      <summary class="sum"><span class="chev" aria-hidden="true"></span>Kapat ve diğer işlemler</summary>
+      <div class="more-body">${more}</div>
+    </details>
   </article>`;
 }
 
-function render() {
+/* ------------------------------------------------- KAPALI motorun satırı */
+/* Kapalı bir motorun taşıdığı bilgi azdır; o yüzden kapladığı yer de azdır.
+   Tek satır: ikon, ad, ne işe yaradığı, tahmini bellek, tek düğme.
+   Uzun anlatım, port, panel ve lisans satıra tıklanınca açılır. */
+function rowHtml(engine, plan) {
+  const p       = engine.plain || {};
+  const blocked = plan && !plan.ok;
+  const ports   = (engine.client_ports || []).map((x) => x.port).join(', ');
+
+  const mem = blocked ? '<span class="row-mem row-mem-block">bellek yetmiyor</span>'
+    : (plan && plan.ok ? `<span class="row-mem">~ ${mb(plan.limit_mb)}</span>` : '');
+
+  const lic = engine.license || {};
+
+  return `
+  <li class="row${blocked ? ' is-blocked' : ''}" id="eng-${esc(engine.id)}">
+    <details class="row-info" data-key="${esc(engine.id)}:info">
+      <summary class="sum row-head">
+        <span class="chev" aria-hidden="true"></span>
+        <span class="row-icon" aria-hidden="true">${esc(engine.icon)}</span>
+        <span class="row-name">${esc(engine.name)}</span>
+        <span class="row-what">${esc(p.title || engine.summary)}</span>
+        ${lic.free_for_production === false
+          ? `<span class="row-lic" title="${esc(lic.note || '')}">üretimde lisans gerekir</span>` : ''}
+      </summary>
+      <div class="row-detail">
+        <p>${esc(p.detail || engine.summary || '')}</p>
+        ${p.badge ? `<p style="margin:0 0 10px"><span class="tag">${esc(p.badge)}</span></p>` : ''}
+        <dl class="mini">
+          <dt>Tahmini bellek</dt><dd>${plan && plan.ok ? mb(plan.limit_mb) : '—'}</dd>
+          ${ports ? `<dt>Bağlantı portu</dt><dd>${esc(ports)}</dd>` : ''}
+          ${engine.panel ? `<dt>Yönetim ekranı</dt><dd>${esc(engine.panel.name)}</dd>` : ''}
+          ${lic.name ? `<dt>Lisans</dt><dd>${esc(lic.name)}${lic.free_for_production === false ? ' (üretimde ayrı lisans gerekir)' : ''}</dd>` : ''}
+        </dl>
+        ${blocked ? `<div class="blocked-note" style="margin-top:12px">${esc(plan.reason)}</div>` : ''}
+      </div>
+    </details>
+    <div class="row-side">
+      ${mem}
+      <button class="btn btn-open" data-act="on" data-id="${esc(engine.id)}"
+        ${blocked ? 'title="Sunucuda yeterli bellek yok — sebebini görmek için tıklayın"' : ''}>Aç</button>
+    </div>
+  </li>`;
+}
+
+/* --------------------------------------------- üst bar (sistem ölçüleri) */
+function renderSystem() {
   const sys = STATE.system || {};
   $('#sys-host').textContent = location.hostname;
   $('#sys-cpu').textContent  = (sys.cpus || '—') + ' çekirdek';
   $('#sys-disk').textContent = mb(sys.disk_free_mb) + ' boş';
 
-  if (sys.mem_total_mb) {
-    // Üst barda AYRILAN belleği (tavanları) gösteriyoruz, gerçek kullanımı
-    // değil: karar mekanizması tavanlara göre çalışır. Bir motorun limiti, o
-    // motorun büyüyebileceği üst sınırdır ve o kadarı ona söz verilmiştir.
-    // Gerçek kullanımı gösterip bütçeyi tavanlara göre reddetmek "14 GB boş
-    // ama açılmıyor" gibi çelişkili görünüyordu; ikisini birlikte veriyoruz.
-    //
-    // PAYDA, sunucunun TOPLAM RAM'i DEĞİL "dağıtılabilir" belleğidir
-    // (toplam − işletim sistemi payı − çekirdek servisler). Eskiden pay olarak
-    // tavanlara işletim sistemi payı da eklenip toplam RAM'e bölünüyordu ve
-    // ekranda "19 GB / 16 GB" gibi imkânsız görünen bir oran çıkıyordu —
-    // sayı doğruydu ama okuyan haklı olarak ürünü bozuk sanıyordu. Şimdi
-    // karşılaştırma anlamlı olan iki şey arasında: ne kadarını dağıtabilirim,
-    // ne kadarını dağıttım.
-    const alloc    = sys.stack_committed_mb || 0;
-    const reserved = (sys.os_reserve_mb || 0) + (sys.core_reserve_mb || 0);
-    const dagitilabilir = Math.max(0, (sys.mem_total_mb || 0) - reserved);
-    const real = sys.mem_total_mb - (sys.mem_available_mb || 0);
-    const pct  = dagitilabilir ? Math.round((alloc / dagitilabilir) * 100) : 0;
-    const asim = pct > 100;
+  if (!sys.mem_total_mb) return;
 
-    $('#sys-mem').textContent = mb(alloc) + ' / ' + mb(dagitilabilir);
-    const rel = $('#sys-mem-real');
-    if (rel) {
-      // Sunucunun TOPLAM RAM'i burada yazılı olmak zorunda. Payda artık
-      // "dağıtılabilir" bellek olduğu için (toplam − OS payı − çekirdek),
-      // üst barda tek başına "12 GB / 12 GB" görünüyordu ve okuyan haklı
-      // olarak "sunucunun belleği 16'dan 12'ye mi düştü?" diye soruyordu.
-      // Metin KISA: sütun sabit genişlikte, uzun cümle diğer sütunları
-      // kaydırıyordu. Tam açıklama title'da.
-      rel.textContent = (asim ? '⚠ %' + pct + ' aşım · ' : mb(sys.mem_total_mb) + ' RAM · ')
-                      + 'kullanım ' + mb(real);
-      rel.className = 'sys-sub' + (asim ? ' sys-sub-warn' : '');
-    }
-    // Tavan toplamının kapasiteyi aşması KENDİ BAŞINA arıza değildir: limitler
-    // birer üst sınırdır, rezervasyon değil — nitekim gerçek kullanım çok daha
-    // düşük. Riski hepsi aynı anda dolarsa doğar. Bu yüzden kırmızı gösterip
-    // sebebini yazıyoruz ama "bozuk" demiyoruz.
-    const item = document.querySelector('.sys-item-mem');
-    if (item) {
-      item.title = asim
-        ? 'Açık motorlara söz verilen bellek tavanlarının toplamı ('
-          + mb(alloc) + '), dağıtılabilir bellekten (' + mb(dagitilabilir)
-          + ') fazla. Şu anki gerçek kullanım ' + mb(real) + ' olduğu için '
-          + 'sorun görünmüyor; ama tüm motorlar aynı anda tavanına dayanırsa '
-          + 'işletim sistemi süreçleri öldürmeye başlar. Bu duruma genelde bir '
-          + 'motor panel dışından (docker start) elle başlatıldığında düşülür. '
-          + 'Kullanmadığınız bir motoru kapatmak oranı düşürür.'
-        : 'Toplam ' + mb(sys.mem_total_mb) + ' RAM\'in ' + mb(reserved)
-          + ' kadarı işletim sistemine ve çekirdek servislere ayrıldı; kalan '
-          + mb(dagitilabilir) + ' veritabanlarına dağıtılabilir.';
-    }
-    const bar = $('#sys-mem-bar');
-    bar.style.width = Math.min(100, pct) + '%';
-    bar.className = 'meter-fill' + (pct > 90 ? ' crit' : pct > 75 ? ' hot' : '');
+  // Üst barda AYRILAN belleği (tavanları) gösteriyoruz, gerçek kullanımı
+  // değil: karar mekanizması tavanlara göre çalışır. Bir motorun limiti, o
+  // motorun büyüyebileceği üst sınırdır ve o kadarı ona söz verilmiştir.
+  // Gerçek kullanımı gösterip bütçeyi tavanlara göre reddetmek "14 GB boş
+  // ama açılmıyor" gibi çelişkili görünüyordu; ikisini birlikte veriyoruz.
+  //
+  // PAYDA, sunucunun TOPLAM RAM'i DEĞİL "dağıtılabilir" belleğidir
+  // (toplam − işletim sistemi payı − çekirdek servisler). Eskiden pay olarak
+  // tavanlara işletim sistemi payı da eklenip toplam RAM'e bölünüyordu ve
+  // ekranda "19 GB / 16 GB" gibi imkânsız görünen bir oran çıkıyordu —
+  // sayı doğruydu ama okuyan haklı olarak ürünü bozuk sanıyordu. Şimdi
+  // karşılaştırma anlamlı olan iki şey arasında: ne kadarını dağıtabilirim,
+  // ne kadarını dağıttım.
+  const alloc    = sys.stack_committed_mb || 0;
+  const reserved = (sys.os_reserve_mb || 0) + (sys.core_reserve_mb || 0);
+  const dagitilabilir = Math.max(0, (sys.mem_total_mb || 0) - reserved);
+  const real = sys.mem_total_mb - (sys.mem_available_mb || 0);
+  const pct  = dagitilabilir ? Math.round((alloc / dagitilabilir) * 100) : 0;
+  const asim = pct > 100;
+
+  $('#sys-mem').textContent = mb(alloc) + ' / ' + mb(dagitilabilir);
+  const rel = $('#sys-mem-real');
+  if (rel) {
+    // Sunucunun TOPLAM RAM'i burada yazılı olmak zorunda. Payda artık
+    // "dağıtılabilir" bellek olduğu için (toplam − OS payı − çekirdek),
+    // üst barda tek başına "12 GB / 12 GB" görünüyordu ve okuyan haklı
+    // olarak "sunucunun belleği 16'dan 12'ye mi düştü?" diye soruyordu.
+    // Metin KISA: sütun sabit genişlikte, uzun cümle diğer sütunları
+    // kaydırıyordu. Tam açıklama title'da.
+    rel.textContent = (asim ? '⚠ %' + pct + ' aşım · ' : mb(sys.mem_total_mb) + ' RAM · ')
+                    + 'kullanım ' + mb(real);
+    rel.className = 'sys-sub' + (asim ? ' sys-sub-warn' : '');
   }
+  // Tavan toplamının kapasiteyi aşması KENDİ BAŞINA arıza değildir: limitler
+  // birer üst sınırdır, rezervasyon değil — nitekim gerçek kullanım çok daha
+  // düşük. Riski hepsi aynı anda dolarsa doğar. Bu yüzden kırmızı gösterip
+  // sebebini yazıyoruz ama "bozuk" demiyoruz.
+  const item = document.querySelector('.sys-item-mem');
+  if (item) {
+    item.title = asim
+      ? 'Açık motorlara söz verilen bellek tavanlarının toplamı ('
+        + mb(alloc) + '), dağıtılabilir bellekten (' + mb(dagitilabilir)
+        + ') fazla. Şu anki gerçek kullanım ' + mb(real) + ' olduğu için '
+        + 'sorun görünmüyor; ama tüm motorlar aynı anda tavanına dayanırsa '
+        + 'işletim sistemi süreçleri öldürmeye başlar. Bu duruma genelde bir '
+        + 'motor panel dışından (docker start) elle başlatıldığında düşülür. '
+        + 'Kullanmadığınız bir motoru kapatmak oranı düşürür.'
+      : 'Toplam ' + mb(sys.mem_total_mb) + ' RAM\'in ' + mb(reserved)
+        + ' kadarı işletim sistemine ve çekirdek servislere ayrıldı; kalan '
+        + mb(dagitilabilir) + ' veritabanlarına dağıtılabilir.';
+  }
+  const bar = $('#sys-mem-bar');
+  bar.style.width = Math.min(100, pct) + '%';
+  bar.className = 'meter-fill' + (pct > 90 ? ' crit' : pct > 75 ? ' hot' : '');
+}
+
+/* -------------------------- ızgaranın durumunu koruyarak yeniden yazma ---
+   #grid her 5 saniyede yeniden çiziliyor. Kullanıcının açtığı bir <details>
+   ya da odaklandığı bir düğme bu yüzden kaybolmamalı; ayrıca içerik
+   değişmediyse innerHTML'e hiç dokunmuyoruz (aria-live boşuna konuşmasın). */
+function snapshotGrid(grid) {
+  const open = [];
+  grid.querySelectorAll('details[data-key]').forEach((d) => {
+    if (d.open) open.push(d.dataset.key);
+  });
+  const a = document.activeElement;
+  let focus = null;
+  if (a && grid.contains(a)) {
+    if (a.dataset && a.dataset.act) focus = { act: a.dataset.act, id: a.dataset.id };
+    else if (a.tagName === 'SUMMARY' && a.parentElement && a.parentElement.dataset.key)
+      focus = { key: a.parentElement.dataset.key };
+  }
+  return { open: open, focus: focus };
+}
+
+function restoreGrid(grid, snap) {
+  grid.querySelectorAll('details[data-key]').forEach((d) => {
+    if (snap.open.indexOf(d.dataset.key) !== -1) d.open = true;
+  });
+  if (!snap.focus) return;
+  let el = null;
+  if (snap.focus.act) {
+    grid.querySelectorAll('[data-act]').forEach((n) => {
+      if (!el && n.dataset.act === snap.focus.act && n.dataset.id === snap.focus.id) el = n;
+    });
+  } else {
+    grid.querySelectorAll('details[data-key]').forEach((d) => {
+      if (!el && d.dataset.key === snap.focus.key) el = d.querySelector('summary');
+    });
+  }
+  if (el) el.focus({ preventScroll: true });
+}
+
+let lastGridHtml = '';
+
+/* -------------------------------------------------------------- render() */
+function render() {
+  renderSystem();
 
   const banner = $('#banner');
   if (STATE.preflight_error) {
@@ -382,38 +553,94 @@ function render() {
     const list = CATALOG.engines.filter((e) => e.category === cat);
     return list.length > 0 && list.every((e) => e.kind === 'tool');
   };
-  const keys = Object.keys(cats);
+  const keys  = Object.keys(cats);
   const order = keys.filter((c) => !isToolCat(c)).concat(keys.filter(isToolCat));
 
-  let html = '';
-  const toolLinks = [];
+  // Katalog sırası (kategori sırasına göre düzleştirilmiş)
+  const ordered = [];
   order.forEach((cat) => {
-    const list = CATALOG.engines.filter((e) => e.category === cat);
-    if (!list.length) return;
-    html += `<h2 class="cat-title" id="cat-${esc(cat)}">${esc(cats[cat])}</h2>`;
-    list.forEach((e) => {
-      if (e.kind === 'tool') {
-        // Araç AÇIKSA rozet doğrudan onu açar. Kartına kaydırmak, zaten
-        // çalışan bir aracı görmek isteyen kullanıcı için fazladan iki adım
-        // demekti — "izleme ekranı yok" denmesinin sebebi buydu: kart en
-        // altta duruyordu ve rozet oraya kaydırmakla yetiniyordu.
-        const aktif = (byId[e.id] || {}).active;
-        toolLinks.push(aktif && e.panel
-          ? `<button class="tool-link is-on" data-act="panel" data-id="${esc(e.id)}"
-               title="${esc(e.panel.name)} panelini yeni sekmede aç"
-             >${e.icon || ''} ${esc(e.name)} aç</button>`
-          : `<a class="tool-link" href="#cat-${esc(cat)}"
-               title="Kartına git">${e.icon || ''} ${esc(e.name)}</a>`);
-      }
-      html += cardHtml(e, byId[e.id] || { active: false }, STATE.plans[e.id]);
-    });
+    CATALOG.engines.filter((e) => e.category === cat).forEach((e) => ordered.push(e));
   });
-  $('#grid').innerHTML = html;
+
+  const isOn  = (e) => !!(byId[e.id] || {}).active;
+  const acik  = ordered.filter(isOn);
+  const kapal = ordered.filter((e) => !isOn(e));
+
+  // Dikkat isteyen motor en üstte. sort() ES2019'dan beri kararlıdır,
+  // dolayısıyla aynı gruptakiler katalog sırasını korur.
+  acik.sort((a, b) => stableAttention(a.id, byId[a.id] || {})
+                    - stableAttention(b.id, byId[b.id] || {}));
+  const sorunlu = acik.filter((e) => attention(byId[e.id] || {}) === 0).length;
+
+  let html = '';
+
+  /* --- BÖLGE 1: şu an açık olanlar --- */
+  html += '<section class="zone">' +
+    '<div class="zone-head">' +
+      '<h2 class="zone-title">Şu an açık</h2>' +
+      `<span class="zone-count">${acik.length}</span>` +
+      (sorunlu
+        ? `<p class="zone-note zone-note-err">${sorunlu} tanesi dikkat istiyor — en üstte.</p>`
+        : '<p class="zone-note">Bellek ve işlemci kullanan motorlar.</p>') +
+    '</div>';
+  html += '<div class="zone-body">';
+  html += acik.length
+    ? '<div class="cards">' + acik.map((e) => cardHtml(e, byId[e.id] || {})).join('') + '</div>'
+    : `<p class="empty">Henüz hiçbir veritabanı açık değil — sunucu boşta duruyor.
+        Aşağıdaki listeden ihtiyacınız olanı seçip “Aç” deyin.</p>`;
+  html += '</div></section>';
+
+  /* --- BÖLGE 2: kapalı olanlar, kategorilere göre, satır satır --- */
+  html += '<section class="zone">' +
+    '<div class="zone-head">' +
+      '<h2 class="zone-title">Kapalı</h2>' +
+      `<span class="zone-count">${kapal.length}</span>` +
+      '<p class="zone-note">Hiç kaynak harcamıyorlar. Ne işe yaradığını görmek için satıra tıklayın.</p>' +
+    '</div>';
+  html += '<div class="zone-body">';
+  if (!kapal.length) {
+    html += '<p class="empty">Katalogdaki her şey açık.</p>';
+  } else {
+    order.forEach((cat) => {
+      const list = kapal.filter((e) => e.category === cat);
+      if (!list.length) return;
+      html += `<h3 class="cat-title" id="cat-${esc(cat)}">${esc(cats[cat])}</h3>`;
+      html += `<ul class="rows" aria-labelledby="cat-${esc(cat)}">` +
+        list.map((e) => rowHtml(e, STATE.plans[e.id])).join('') + '</ul>';
+    });
+  }
+  html += '</div></section>';
+
+  const grid = $('#grid');
+  if (html !== lastGridHtml) {
+    const snap = snapshotGrid(grid);
+    grid.innerHTML = html;
+    lastGridHtml = html;
+    restoreGrid(grid, snap);
+  }
+
+  /* --- araçlar kısayolu --- */
+  const toolLinks = [];
+  ordered.forEach((e) => {
+    if (e.kind !== 'tool') return;
+    // Araç AÇIKSA rozet doğrudan panelini açar. Kartına kaydırmak, zaten
+    // çalışan bir aracı görmek isteyen kullanıcı için fazladan iki adım
+    // demekti — "izleme ekranı yok" denmesinin sebebi buydu: kart en
+    // altta duruyordu ve rozet oraya kaydırmakla yetiniyordu.
+    const aktif = (byId[e.id] || {}).active;
+    toolLinks.push(aktif && e.panel
+      ? `<button class="tool-link is-on" data-act="panel" data-id="${esc(e.id)}"
+           title="${esc(e.panel.name)} panelini yeni sekmede aç"
+         >${esc(e.icon || '')} ${esc(e.name)} aç</button>`
+      : `<a class="tool-link" href="#eng-${esc(e.id)}"
+           title="Satırına git">${esc(e.icon || '')} ${esc(e.name)}</a>`);
+  });
 
   const tl = $('#tool-links');
   if (tl) {
-    tl.innerHTML = toolLinks.length
+    const th = toolLinks.length
       ? '<span class="legend-label">Araçlar</span>' + toolLinks.join('') : '';
+    if (tl.innerHTML !== th) tl.innerHTML = th;
     tl.hidden = !toolLinks.length;
   }
 }

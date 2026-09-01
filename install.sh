@@ -308,7 +308,7 @@ cat <<EOF
 
   ${BOLD}Sırada ne var?${NC}
   Panele girin, ihtiyacınız olan veritabanının kartındaki
-  "Aktif Et" düğmesine basın. Sistem sunucunuzun belleğini ölçer,
+  "Aç" düğmesine basın. Sistem sunucunuzun belleğini ölçer,
   ayarları kendisi hesaplar. Hiçbir teknik değer girmenize gerek yok.
 
   Terminalden yönetmek isterseniz:

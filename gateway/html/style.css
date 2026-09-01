@@ -1,66 +1,79 @@
 /* ============================================================================
-   databases-stack — yönetim paneli teması
+   databases-stack — yönetim paneli teması · YÖN: “SAKİN”
    Tek dosya, sıfır bağımlılık: CDN'e çıkmaz, harici font/kütüphane çekmez.
    İç ağda, internet erişimi olmayan sunucularda birebir aynı görünür.
 
+   SAKİNLİĞİN ÜÇ KURALI (bütün dosya bunlara uyar)
+     1. RENK KITTIR. Renk yalnız bir şey söylemek zorundayken kullanılır:
+        çalışan yeşil nokta, başlatılıyor sarı nokta, sorunlu kırmızı şerit,
+        tek bir vurgu (odak + ana onay düğmesi). Geri kalan her şey gri.
+        13 kart varken kırmızı bir şey görüyorsanız gerçekten bir sorun vardır.
+     2. AĞIRLIĞI TİPOGRAFİ VE BOŞLUK TAŞIR. Kutu, gölge, çerçeve, dolgu rengi
+        değil; boyut, kalınlık ve aradaki boşluk hiyerarşiyi kurar.
+     3. AYRINTI İSTENDİĞİNDE AÇILIR. Kapalı bir motorun kartı yoktur, satırı
+        vardır; tehlikeli eylemler kartın altında kapalı bir açılırdadır.
+
    İçindekiler
      1. Tasarım değişkenleri (açık / koyu tema)
-     2. Temel sıfırlama ve tipografi
-     3. Üst bar + sistem ölçerleri
+     2. Temel sıfırlama, tipografi, açılır (details) davranışı
+     3. Üst bar — bellek ana ölçü, diğerleri künye
      4. Uyarı şeridi
-     5. Sayfa gövdesi, giriş bölümü, kategori başlıkları
-     6. Kart ızgarası ve kart bileşenleri
-     7. Rozetler, etiketler, lisans satırı
-     8. Düğmeler
-     9. Pencereler (modal, iş günlüğü)
-    10. Olay akışı
-    11. Alt bilgi
-    12. Kurulum sayfası (setup.html)
-    13. Duyarlılık ve erişilebilirlik
+     5. Gövde, giriş, araç çubuğu, durum okuması
+     6. Bölgeler: “Şu an açık” / “Kapalı”
+     7. Açık motor kartı
+     8. Kapalı motor satırı
+     9. Rozetler, etiketler, lisans
+    10. Düğmeler
+    11. Pencereler (modal, iş günlüğü)
+    12. Olay akışı
+    13. Alt bilgi
+    14. Kurulum sayfası (setup.html — ortak stil dosyası)
+    15. Duyarlılık ve erişilebilirlik
    ========================================================================== */
 
 /* ---------------------------------------------- 1. Tasarım değişkenleri --- */
 :root {
   color-scheme: light;
 
-  /* yüzeyler ve çizgiler */
-  --bg:            #f5f6f8;
+  /* yüzeyler ve çizgiler — ılık, düşük kontrastlı gri seti */
+  --bg:            #f6f6f5;
   --surface:       #ffffff;
-  --surface-2:     #f7f8fa;
-  --surface-3:     #eef0f4;
-  --border:        #e1e4ea;
-  --border-strong: #cdd2db;
+  --surface-2:     #f3f3f1;
+  --surface-3:     #eaeae7;
+  --border:        #e3e3df;
+  --border-strong: #cbcbc5;
 
   /* metin */
-  --text:   #111826;
-  --text-2: #39424f;
-  --muted:  #66707f;
+  --text:   #17171a;
+  --text-2: #3f3f43;
+  --muted:  #6b6b66;
 
-  /* tek vurgu rengi — kurumsal indigo-mavi */
-  --accent:        #2456d6;
-  --accent-hover:  #1b46b4;
+  /* tek vurgu rengi — sessiz mürekkep mavisi.
+     Yalnız: odak halkası, bağlantılar, pencerelerdeki ana onay düğmesi. */
+  --accent:        #2b52c4;
+  --accent-hover:  #1f43ac;
   --accent-ink:    #ffffff;
-  --accent-text:   #1d4ed8;
-  --accent-soft:   #eef3ff;
-  --accent-border: #c5d5fb;
+  --accent-text:   #24499f;
+  --accent-soft:   #f0f3fc;
+  --accent-border: #d3ddf6;
 
   /* durum renkleri: metin / yumuşak zemin / kenarlık / nokta */
-  --ok:   #066b45;  --ok-bg:   #e9f8f0;  --ok-border:   #b4e5cd;  --ok-dot:   #12a06a;
-  --warn: #8a5108;  --warn-bg: #fdf5e6;  --warn-border: #f4dfae;  --warn-dot: #e08c10;
-  --err:  #a5251b;  --err-bg:  #fdeeed;  --err-border:  #f6c9c5;  --err-dot:  #dc4038;
-  --off:  #4b5566;  --off-bg:  #f0f2f5;  --off-border:  #dde1e8;  --off-dot:  #98a1b0;
+  --ok:   #0a6141;  --ok-bg:   #ecf6f1;  --ok-border:   #c2e2d3;  --ok-dot:   #14935f;
+  --warn: #7d4a08;  --warn-bg: #fbf3e6;  --warn-border: #ecdcb6;  --warn-dot: #c9820f;
+  --err:  #99231b;  --err-bg:  #fbeeed;  --err-border:  #f0cac6;  --err-dot:  #cf3b32;
+  --off:  #55554f;  --off-bg:  #eeeeeb;  --off-border:  #dedad4;  --off-dot:  #a0a09a;
 
-  --focus: #2456d6;
-  --overlay: rgba(17, 24, 38, .45);
+  --focus: #2b52c4;
+  --overlay: rgba(23, 23, 26, .42);
 
-  /* biçim */
-  --radius-sm: 7px;
-  --radius:    10px;
-  --radius-lg: 14px;
+  /* biçim — köşeler yumuşak ama abartısız; gölge neredeyse yok */
+  --radius-sm: 6px;
+  --radius:    9px;
+  --radius-lg: 13px;
 
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, .05);
-  --shadow:    0 1px 2px rgba(16, 24, 40, .05), 0 4px 14px rgba(16, 24, 40, .05);
-  --shadow-lg: 0 12px 38px rgba(16, 24, 40, .18);
+  --shadow-sm: none;
+  --shadow:    0 1px 2px rgba(20, 20, 24, .05);
+  --shadow-lg: 0 14px 44px rgba(20, 20, 24, .20);
 
   /* tipografi */
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
@@ -68,59 +81,60 @@
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
           "Liberation Mono", monospace;
 
-  --fs-xs: 11.5px;   /* etiket, büyük harf başlıkçık */
+  --fs-xs: 11.5px;   /* rozet, büyük harf başlıkçık */
   --fs-sm: 12.5px;   /* yardımcı metin */
-  --fs-md: 13.5px;   /* kart gövdesi, düğme */
+  --fs-md: 13.5px;   /* gövde, düğme */
   --fs-lg: 15px;     /* paragraf */
-  --fs-xl: 17px;     /* kart başlığı */
+  --fs-xl: 16.5px;   /* kart başlığı */
   --h2:    20px;
-  --h1:    18px;
+  --h1:    16px;
 
   --ctl-h: 34px;     /* tüm düğmelerin ortak yüksekliği */
-  --page:  1280px;
+  --row-h: 46px;     /* kapalı motor satırının başlık yüksekliği */
+  --page:  1180px;   /* sakin ölçü: satır uzunluğu okunur kalsın */
 
-  /* kart ızgarası: taban genişlik ve tek kart kaldığında izin verilen en fazla */
-  --card-basis: 344px;
-  --card-max:   700px;
+  /* açık motor kartı: taban genişlik ve tek kart kaldığında izin verilen en fazla */
+  --card-basis: 360px;
+  --card-max:   560px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
 
-    --bg:            #0b0d11;
-    --surface:       #141821;
-    --surface-2:     #1a1f29;
-    --surface-3:     #222834;
-    --border:        #262d39;
-    --border-strong: #374050;
+    --bg:            #121213;
+    --surface:       #191a1c;
+    --surface-2:     #202124;
+    --surface-3:     #292a2e;
+    --border:        #2b2c30;
+    --border-strong: #3d3e44;
 
-    --text:   #e7eaf0;
-    --text-2: #c2c9d5;
-    --muted:  #97a1b1;
+    --text:   #e8e8e6;
+    --text-2: #c4c4c1;
+    --muted:  #9a9a94;
 
-    --accent:        #3a67e3;
-    --accent-hover:  #4d78f0;
+    --accent:        #4b6fdd;
+    --accent-hover:  #5f81ee;
     --accent-ink:    #ffffff;
-    --accent-text:   #8fb0ff;
-    --accent-soft:   #141d31;
-    --accent-border: #2b3f6b;
+    --accent-text:   #9db4f5;
+    --accent-soft:   #171b28;
+    --accent-border: #2c3757;
 
-    --ok:   #6fdca4;  --ok-bg:   #0e2a1e;  --ok-border:   #1f4c37;  --ok-dot:   #21b880;
-    --warn: #f0b95c;  --warn-bg: #2b2213;  --warn-border: #4b3a1c;  --warn-dot: #e0930f;
-    --err:  #f5a49d;  --err-bg:  #301715;  --err-border:  #5a2b26;  --err-dot:  #e2534a;
-    --off:  #9aa4b4;  --off-bg:  #1a1f29;  --off-border:  #2b323e;  --off-dot:  #6b7688;
+    --ok:   #74d6a5;  --ok-bg:   #10251b;  --ok-border:   #214936;  --ok-dot:   #23a873;
+    --warn: #e6b666;  --warn-bg: #251f13;  --warn-border: #44361d;  --warn-dot: #cd8c1c;
+    --err:  #f0a49d;  --err-bg:  #2a1614;  --err-border:  #522925;  --err-dot:  #d9564c;
+    --off:  #98988f;  --off-bg:  #202124;  --off-border:  #303136;  --off-dot:  #6a6a64;
 
-    --focus: #7aa2ff;
-    --overlay: rgba(3, 5, 9, .68);
+    --focus: #8aa8ff;
+    --overlay: rgba(0, 0, 0, .66);
 
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, .5);
-    --shadow:    0 1px 2px rgba(0, 0, 0, .5), 0 4px 14px rgba(0, 0, 0, .35);
-    --shadow-lg: 0 14px 44px rgba(0, 0, 0, .6);
+    --shadow-sm: none;
+    --shadow:    0 1px 2px rgba(0, 0, 0, .45);
+    --shadow-lg: 0 16px 48px rgba(0, 0, 0, .62);
   }
 }
 
-/* -------------------------------- 2. Temel sıfırlama ve tipografi -------- */
+/* ------------------------- 2. Temel sıfırlama ve tipografi --------------- */
 * { box-sizing: border-box; }
 
 html { -webkit-text-size-adjust: 100%; }
@@ -131,14 +145,14 @@ body {
   color: var(--text);
   font-family: var(--font);
   font-size: var(--fs-lg);
-  line-height: 1.55;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
 
 h1, h2, h3, h4 {
   color: var(--text);
-  font-weight: 650;
-  letter-spacing: -.011em;
+  font-weight: 620;
+  letter-spacing: -.012em;
   text-wrap: balance;
 }
 
@@ -147,12 +161,11 @@ p { text-wrap: pretty; }
 a {
   color: var(--accent-text);
   text-decoration-color: var(--border-strong);
-  text-decoration-color: color-mix(in srgb, var(--accent-text) 40%, transparent);
   text-underline-offset: 2px;
 }
 a:hover { text-decoration-color: currentColor; }
 
-b, strong { font-weight: 650; }
+b, strong { font-weight: 630; }
 
 code {
   font-family: var(--mono);
@@ -176,42 +189,72 @@ pre {
 }
 pre code { background: none; border: 0; padding: 0; font-size: inherit; }
 
-summary { cursor: pointer; }
-summary::marker { color: var(--muted); }
-
 hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 
 /* Odak halkası — klavyeyle gezinenler için her yerde görünür. */
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+  border-radius: 4px;
 }
 
-/* -------------------------------------- 3. Üst bar + sistem ölçerleri ---- */
+/* --- Açılır (details) davranışı --------------------------------------------
+   Sayfadaki bütün “ayrıntı istendiğinde açılsın” alanları yerli <details>
+   ile çalışıyor: JavaScript gerekmez, klavyeyle gezilir (summary odaklanır,
+   Enter/Space açar), ekran okuyucu genişletilebilir olduğunu söyler.
+   .sum sınıfı yalnız BİZİM açılırlarımıza uygulanır; setup.html'in kendi
+   <details> öğeleri varsayılan ok işaretini korur. */
+.sum { cursor: pointer; list-style: none; }
+.sum::-webkit-details-marker { display: none; }
+.sum::marker { content: ""; }
+
+.chev {
+  position: relative;
+  flex: none;
+  width: 11px;
+  height: 11px;
+}
+.chev::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 2px;
+  width: 6px;
+  height: 6px;
+  border-right: 1.6px solid var(--muted);
+  border-bottom: 1.6px solid var(--muted);
+  transform: rotate(-45deg);
+  transition: transform .16s ease;
+}
+details[open] > .sum .chev::before { transform: rotate(45deg); }
+
+/* ------------------------------------------------------ 3. Üst bar ------- */
+/* SORUN 5'in cevabı: dört eşit kutu yok. Bellek ana ölçü (büyük sayı, çubuk,
+   alt satır); sunucu/disk/işlemci ise kutusuz, küçük punto künye. */
 .topbar {
   position: sticky;
   top: 0;
   z-index: 30;
   display: flex;
   flex-wrap: wrap;
-  gap: 16px 28px;
+  gap: 14px 32px;
   align-items: center;
   justify-content: space-between;
-  padding: 12px clamp(16px, 3vw, 28px);
+  padding: 12px clamp(16px, 3vw, 26px);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  box-shadow: var(--shadow-sm);
 }
 
-.brand { display: flex; gap: 12px; align-items: center; min-width: 0; }
+.brand { display: flex; gap: 11px; align-items: center; min-width: 0; }
+.brand-txt { min-width: 0; }
 
 .brand-icon {
   display: grid;
   place-items: center;
   flex: none;
-  width: 38px;
-  height: 38px;
-  font-size: 20px;
+  width: 34px;
+  height: 34px;
+  font-size: 18px;
   line-height: 1;
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -221,67 +264,53 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 .topbar h1 {
   margin: 0;
   font-size: var(--h1);
-  line-height: 1.25;
+  line-height: 1.3;
+  font-weight: 600;
 }
 
 .sub {
-  margin: 1px 0 0;
+  margin: 0;
   color: var(--muted);
   font-size: var(--fs-sm);
   line-height: 1.4;
 }
 
-/* Sistem ölçerleri: etiket üstte, değer altta, hepsi aynı taban çizgisinde. */
 .sysbar {
   display: flex;
-  align-items: stretch;
-  gap: 0;
+  align-items: center;
+  gap: 22px;
   flex-wrap: wrap;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 6px 2px;
+  min-width: 0;
 }
 
-.sys-item {
-  min-width: 118px;
-  padding: 0 14px;
-  border-left: 1px solid var(--border);
+/* --- ana ölçü: ayrılan bellek --- */
+.sys-item-mem {
+  width: 264px;
+  flex: 0 0 auto;
+  min-width: 0;
 }
-
-/* Bellek sütunu SABİT genişlikte. Uyarı metni belirince sütun şişiyor ve
-   sağındaki Disk/İşlemci sütunlarını kaydırıyordu — üst bar her yenilemede
-   yerinden oynuyormuş gibi görünüyordu. Ayrıntı zaten title'da. */
-.sys-item-mem { width: 232px; flex: 0 0 auto; }
-.sys-item-mem .sys-sub {
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sys-item:first-child { border-left: 0; }
-
 .sys-label {
   display: block;
   font-size: var(--fs-xs);
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: .06em;
+  letter-spacing: .07em;
   color: var(--muted);
 }
-
-.sys-item b {
+.sys-item-mem #sys-mem {
   display: block;
-  font-size: var(--fs-md);
-  font-weight: 650;
-  line-height: 1.35;
+  margin-top: 1px;
+  font-size: 19px;
+  font-weight: 640;
+  line-height: 1.2;
+  letter-spacing: -.015em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 .meter {
-  height: 6px;
-  margin-top: 5px;
+  height: 5px;
+  margin-top: 6px;
   border-radius: 999px;
   background: var(--surface-3);
   border: 1px solid var(--border);
@@ -292,11 +321,49 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
   height: 100%;
   width: 0;
   border-radius: 999px;
-  background: var(--accent);
+  background: var(--text-2);          /* sakin: normalde renksiz, sadece koyu */
   transition: width .4s ease, background-color .3s ease;
 }
 .meter-fill.hot  { background: var(--warn-dot); }
 .meter-fill.crit { background: var(--err-dot); }
+
+/* Alt satır SABİT genişlikte kalır: uyarı metni belirdiğinde sütun şişip
+   yanındaki künyeyi kaydırıyordu, üst bar her yenilemede oynuyormuş gibi
+   görünüyordu. Tam açıklama app.js tarafından title'a yazılıyor. */
+.sys-sub {
+  display: block;
+  margin-top: 4px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sys-sub-warn { color: var(--err); font-weight: 600; }
+
+/* --- künye: sunucu / disk / işlemci --- */
+.sys-meta {
+  display: flex;
+  gap: 20px;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.sys-meta-item { min-width: 0; }
+.sys-meta dt { font-size: 10.5px; letter-spacing: .07em; }
+.sys-meta dd {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 550;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* --------------------------------------------------- 4. Uyarı şeridi ----- */
 .banner {
@@ -307,81 +374,181 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
   background: var(--err-bg);
   color: var(--err);
   border: 1px solid var(--err-border);
+  border-left: 3px solid var(--err-dot);
   font-size: var(--fs-md);
   font-weight: 550;
 }
 .banner[hidden] { display: none !important; }
 
-/* -------------------------- 5. Gövde, giriş, kategori başlıkları --------- */
+/* ------------------- 5. Gövde, giriş, araç çubuğu, durum okuması --------- */
 main {
   max-width: var(--page);
   margin: 0 auto;
-  padding: 24px clamp(16px, 3vw, 28px) 72px;
+  padding: 30px clamp(16px, 3vw, 26px) 80px;
 }
 
-.intro { max-width: 76ch; margin: 0 0 8px; }
-.intro h2 { margin: 0 0 6px; font-size: var(--h2); }
-.intro p { margin: 0 0 10px; color: var(--text-2); font-size: 14.5px; }
+.intro { max-width: 68ch; margin: 0 0 22px; }
+.intro h2 { margin: 0 0 8px; font-size: var(--h2); }
+.intro p { margin: 0 0 12px; color: var(--text-2); font-size: 14.5px; }
 
+/* Öneri kutusu renkli bir pano değil; sol çizgili sessiz bir not. */
 .intro .hint {
-  display: block;
   margin: 0;
-  padding: 10px 14px;
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-border);
-  border-left-width: 3px;
-  border-radius: var(--radius);
-  color: var(--text-2);
+  padding: 0 0 0 14px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--muted);
   font-size: var(--fs-md);
 }
+.intro .hint b { color: var(--text-2); }
 
-/* Durum rozetlerinin okuması — statik, index.html içinde. */
-.legend {
+.toolbar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 14px;
-  margin: 18px 0 4px;
+  gap: 10px 18px;
+  margin: 0 0 6px;
+}
+
+.legend { font-size: var(--fs-sm); }
+.legend > .sum {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 2px;
+  color: var(--muted);
+  font-weight: 550;
+}
+.legend > .sum:hover { color: var(--text-2); }
+.legend-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-top: 8px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.legend-note {
+  flex: 1 0 100%;
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+/* Araçlar kısayolu — izleme gibi veritabanı OLMAYAN kayıtlar listenin
+   sonunda durur; bu kısayol onları en üstte görünür kılar. */
+.legend-tools {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
   font-size: var(--fs-sm);
   color: var(--muted);
 }
+.legend-tools[hidden] { display: none !important; }
 .legend-label { font-weight: 600; letter-spacing: .02em; }
 
-.cat-title {
-  flex: 1 0 100%;
-  width: 100%;
-  grid-column: 1 / -1;
-  margin: 26px 0 0;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
-  font-size: var(--fs-sm);
-  font-weight: 700;
-  letter-spacing: .1em;
-  text-transform: uppercase;
+.tool-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  font-family: inherit;
+  line-height: 1.6;
   color: var(--text-2);
+  background: none;
+  text-decoration: none;
+  cursor: pointer;
 }
-.cat-title:first-child { margin-top: 4px; }
+.tool-link:hover { border-color: var(--border-strong); color: var(--text); }
+/* Araç ÇALIŞIYORSA rozet doğrudan panelini açar. */
+.tool-link.is-on { border-color: var(--accent-border); color: var(--accent-text); }
+.tool-link.is-on:hover { background: var(--accent-soft); }
 
 .loading {
-  flex: 1 0 100%;
-  width: 100%;
-  grid-column: 1 / -1;
   margin: 0;
-  padding: 28px 0;
+  padding: 32px 0;
   color: var(--muted);
   font-size: var(--fs-md);
 }
 
-/* ---------------------------------------- 6. Kart ızgarası ve kartlar ---- */
-/* Kategori başlıkları her satırı böldüğü için ızgara yerine esnek satır
-   kullanıyoruz: tek motorlu bir kategoride kart, boş sütun bırakmak yerine
-   satırı paylaşıp genişliyor. --card-max abartılı genişlemeyi engelliyor. */
-.grid {
+/* ---------------------------------------------------- 6. Bölgeler -------- */
+/* SORUN 2 ve 4'ün cevabı: sayfa artık 13 eşit karttan değil, iki bölgeden
+   oluşuyor. Üstte AÇIK olanlar (kart, geniş, ayrıntılı), altta KAPALI olanlar
+   (satır, tek çizgi, sessiz). Kullanıcı "hangisi benim işime yarar" sorusunu
+   tek sütunlu bir listeyi tarayarak cevaplıyor. */
+.grid { display: block; }
+
+.zone { margin-top: 34px; }
+.zone:first-child { margin-top: 18px; }
+
+.zone-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--border);
+}
+.zone-title {
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: 620;
+  letter-spacing: -.01em;
+}
+.zone-count {
+  color: var(--muted);
+  font-size: var(--fs-md);
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+.zone-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+/* SORUN 3: sorun varsa bölge başlığında tek bir kırmızı cümle. Sayfadaki
+   renk kıtlığı bunu görünmez olmaktan çıkarıyor. */
+.zone-note-err {
+  color: var(--err);
+  font-weight: 600;
+}
+
+.zone-body { padding-top: 16px; }
+
+.empty {
+  margin: 0;
+  padding: 22px 0 4px;
+  color: var(--muted);
+  font-size: var(--fs-md);
+  max-width: 62ch;
+}
+
+/* Kategori başlıkları yalnız KAPALI listede: sessiz, küçük, aralayıcı. */
+.cat-title {
+  margin: 24px 0 2px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.cat-title:first-child { margin-top: 4px; }
+
+/* --------------------------------------------- 7. Açık motor kartı ------- */
+.cards {
   display: flex;
   flex-wrap: wrap;
   align-items: stretch;
-  gap: 16px;
-  margin-top: 10px;
+  gap: 14px;
 }
 
 .card {
@@ -391,40 +558,36 @@ main {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 16px;
+  padding: 16px 17px;
   background: var(--surface);
   border: 1px solid var(--border);
+  border-left: 3px solid var(--ok-dot);   /* çalışıyor: ince yeşil şerit */
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  transition: border-color .18s ease, box-shadow .18s ease;
+  box-shadow: var(--shadow);
 }
-.card:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
-
-.card.is-active  { border-color: var(--ok-border); }
-.card.is-blocked { background: var(--surface-2); border-style: dashed; }
-
-.card-head {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
+.card.is-busy { border-left-color: var(--warn-dot); }
+/* SORUN 3: sorunlu motor kalın kırmızı şerit + koyu kenarlık alır ve
+   app.js onu bölgenin EN BAŞINA koyar. */
+.card.is-err {
+  border-left-width: 4px;
+  border-left-color: var(--err-dot);
+  border-color: var(--err-border);
 }
-.card-head > div { min-width: 0; flex: 1; }
+
+.card-head { display: flex; gap: 11px; align-items: flex-start; }
+.card-id { min-width: 0; flex: 1; }
 
 .card-icon {
   display: grid;
   place-items: center;
   flex: none;
-  width: 36px;
-  height: 36px;
-  font-size: 19px;
+  width: 32px;
+  height: 32px;
+  font-size: 17px;
   line-height: 1;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-}
-.card.is-active .card-icon {
-  background: var(--ok-bg);
-  border-color: var(--ok-border);
 }
 
 .card-head h3 {
@@ -434,77 +597,230 @@ main {
   overflow-wrap: anywhere;
 }
 
+/* Kartta TEK satır açıklama kalır: "ne işe yarar". Uzun anlatım kapalı
+   listedeki satırın ayrıntısında; açık bir motoru kullanan zaten biliyor. */
 .card-plain {
   margin: 2px 0 0;
   color: var(--muted);
   font-size: var(--fs-md);
   line-height: 1.45;
-  text-wrap: pretty;
 }
 
-.card-detail {
+/* Kutulu tanım listesi yerine nokta ile ayrılmış tek satır bilgi. */
+.card-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 0;
   margin: 0;
   color: var(--text-2);
   font-size: var(--fs-md);
-  line-height: 1.55;
-  text-wrap: pretty;
+  font-variant-numeric: tabular-nums;
+}
+.card-facts span { display: inline-flex; align-items: center; }
+.card-facts span + span::before {
+  content: "·";
+  margin: 0 8px;
+  color: var(--border-strong);
 }
 
-/* Kompakt bilgi şeridi */
-.facts {
-  display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: 3px 14px;
+/* Gerçekten dikkat isteyen tek şey: devir / sağlıksız durumu. */
+.card-notice {
   margin: 0;
   padding: 10px 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
+  background: var(--surface-2);
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-2);
   font-size: var(--fs-md);
+  line-height: 1.5;
 }
-.card.is-blocked .facts { background: var(--surface-3); }
-.facts dt { color: var(--muted); white-space: nowrap; }
-.facts dd {
-  margin: 0;
-  text-align: right;
+.card-notice.is-warn {
+  background: var(--warn-bg);
+  border-left-color: var(--warn-dot);
+  color: var(--warn);
+}
+.card-notice.is-err {
+  background: var(--err-bg);
+  border-left-color: var(--err-dot);
+  color: var(--err);
+}
+
+/* SORUN 1'in cevabı, birinci yarısı: bu satırda YALNIZ gündelik eylemler var
+   (panelini aç, bağlantı bilgisini al). En fazla iki düğme, ikisi de sessiz. */
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+/* SORUN 1'in cevabı, ikinci yarısı: kapatma ve diğer geri dönüşü zor
+   işlemler kapalı bir açılırın içinde, her biri ne yaptığını anlatan bir
+   satırla birlikte. Yanlışlıkla basılamaz; arayan bulur. */
+.more {
+  margin-top: 2px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.more > .sum {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 550;
+}
+.more > .sum:hover { color: var(--text-2); }
+
+.more-body { padding-top: 4px; }
+
+.act {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 0;
+  border-top: 1px solid var(--border);
+}
+.act:first-child { border-top: 0; }
+.act-txt { min-width: 0; }
+.act-txt b {
+  display: block;
+  color: var(--text);
+  font-size: var(--fs-md);
   font-weight: 600;
+  line-height: 1.35;
+}
+.act-txt span {
+  display: block;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+}
+.act .btn { flex: none; }
+
+.more-lic {
+  margin: 10px 0 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+/* ------------------------------------------ 8. Kapalı motor satırı ------- */
+/* SORUN 4'ün cevabı: kapalı bir motor kart değil, satırdır. Taşıdığı bilgi
+   az olduğu için kapladığı yer de az: ikon, ad, tek cümle, tahmini bellek,
+   tek düğme. Ayrıntısı satıra tıklayınca açılır. */
+.rows {
+  display: block;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  border-top: 1px solid var(--border);
+}
+.rows > .row:first-child { border-top: 0; }
+
+.row-info { flex: 1 1 auto; min-width: 0; }
+
+.row-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--row-h);
+  padding: 6px 0;
+  color: var(--text);
+}
+.row-head:hover .row-name { color: var(--accent-text); }
+
+.row-icon { flex: none; font-size: 16px; line-height: 1; width: 20px; text-align: center; }
+
+.row-name {
+  flex: none;
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+
+.row-what {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-detail {
+  padding: 2px 0 16px 30px;
+  max-width: 70ch;
+}
+.row-detail > p {
+  margin: 0 0 10px;
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  line-height: 1.55;
+}
+
+.mini {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  gap: 3px 16px;
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.mini dt { color: var(--muted); }
+.mini dd {
+  margin: 0;
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 
-.blocked-note {
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  background: var(--warn-bg);
-  border: 1px solid var(--warn-border);
-  color: var(--warn);
-  font-size: var(--fs-md);
-  line-height: 1.5;
-  text-wrap: pretty;
-}
-
-.card-actions {
+.row-side {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
+  gap: 12px;
+  flex: none;
+  min-height: var(--row-h);
+  padding: 6px 0;
 }
 
-/* --------------------------- 7. Rozetler, etiketler, lisans satırı ------- */
+.row-mem {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.row-mem-block { color: var(--warn); }
+
+/* Bellek yetmediği için şu an açılamayan motor: kırmızı bir pano değil,
+   solmuş bir satır. Sebebi "Aç"a basınca pencerede tam olarak yazıyor. */
+.row.is-blocked .row-name,
+.row.is-blocked .row-icon { opacity: .72; }
+
+/* ------------------------------- 9. Rozetler, etiketler, lisans --------- */
 .badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex: none;
-  padding: 3px 9px 3px 8px;
+  padding: 2px 9px 2px 8px;
   border-radius: 999px;
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
   font-size: var(--fs-xs);
-  font-weight: 650;
-  line-height: 1.5;
+  font-weight: 600;
+  line-height: 1.6;
   white-space: nowrap;
 }
 .badge::before {
@@ -515,34 +831,36 @@ main {
   background: currentColor;
   flex: none;
 }
-.card-head .badge { margin-left: auto; margin-top: 2px; }
+.card-head .badge { margin-left: auto; margin-top: 3px; }
 
-.badge.on   { background: var(--ok-bg);   border-color: var(--ok-border);   color: var(--ok); }
-.badge.off  { background: var(--off-bg);  border-color: var(--off-border);  color: var(--off); }
-.badge.busy { background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn); }
-.badge.err  { background: var(--err-bg);  border-color: var(--err-border);  color: var(--err); }
-
+/* Rozetin ZEMİNİ değil yalnız NOKTASI renkli — “Çalışıyor” 13 kez tekrar
+   eden bir bilgi; renkli zemin verilirse sayfa bayram yerine döner. */
 .badge.on::before   { background: var(--ok-dot); }
 .badge.off::before  { background: var(--off-dot); }
 .badge.busy::before { background: var(--warn-dot); }
 .badge.err::before  { background: var(--err-dot); }
 
-/* “Başlatılıyor” rozeti nazikçe nefes alsın — hareket tercihi kapalıysa durur. */
-.badge.busy::before { animation: pulse 1.6s ease-in-out infinite; }
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+/* Tek istisna: SORUNLU. Sayfadaki tek renkli rozet odur. */
+.badge.err {
+  background: var(--err-bg);
+  border-color: var(--err-border);
+  color: var(--err);
+}
 
-/* Etiket: düğme değil — ince, ikincil bir sınıflandırma işareti. */
+/* “Başlatılıyor” nazikçe nefes alsın — hareket tercihi kapalıysa durur. */
+.badge.busy::before { animation: pulse 1.8s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
 .tag {
   display: inline-block;
   padding: 1px 8px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   background: transparent;
   color: var(--muted);
   font-size: var(--fs-xs);
   font-weight: 600;
-  letter-spacing: .02em;
-  line-height: 1.65;
+  line-height: 1.7;
 }
 
 .lic {
@@ -558,7 +876,24 @@ main {
 .lic-note { border-color: var(--warn-border); background: var(--warn-bg); color: var(--warn); }
 .lic-warn { border-color: var(--err-border);  background: var(--err-bg);  color: var(--err); font-weight: 600; }
 
-/* ------------------------------------------------------- 8. Düğmeler ----- */
+/* Kartta lisans uyarısı — yalnız üretimde kullanılamayan lisanslarda çıkar. */
+.card-lic {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: var(--radius);
+  border: 1px solid var(--err-border);
+  background: var(--err-bg);
+  color: var(--err);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+/* ------------------------------------------------------ 10. Düğmeler ---- */
+/* Sakinlik burada da geçerli: sayfada aynı anda EN FAZLA BİR dolu renkli
+   düğme bulunur (o da pencerelerdeki onay düğmesidir). Listede 12 tane mavi
+   “Aç” düğmesi olsa sayfa yeniden gürültüye döner; onlar sessiz çerçeveli
+   durur, üzerine gelince vurgu rengini alır. */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -583,6 +918,14 @@ main {
 .btn:hover:not(:disabled) { background: var(--surface-2); border-color: var(--muted); }
 .btn:active:not(:disabled) { background: var(--surface-3); }
 .btn:disabled { cursor: not-allowed; opacity: .5; }
+
+/* Kapalı satırdaki tek eylem. Sessiz durur, ilgilenilince vurgulanır. */
+.btn-open { min-width: 66px; }
+.btn-open:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+}
 
 .btn-primary {
   background: var(--accent);
@@ -613,30 +956,17 @@ main {
 }
 .btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 
-.btn-link {
-  min-height: var(--ctl-h);
-  padding: 0 6px;
-  background: none;
-  border-color: transparent;
-  color: var(--accent-text);
-  font-weight: 600;
-}
-.btn-link:hover:not(:disabled) {
+.btn-quiet {
   background: transparent;
-  border-color: transparent;
-  color: var(--accent-hover);
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  border-color: var(--border);
+  color: var(--text-2);
+  font-weight: 550;
 }
+.btn-quiet:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
 
-.btn-lg {
-  min-height: 42px;
-  padding: 0 20px;
-  font-size: 14.5px;
-  border-radius: var(--radius);
-}
+.btn-sm { min-height: 30px; padding: 0 11px; font-size: var(--fs-sm); }
 
-/* --------------------------------------------------- 9. Pencereler ------- */
+/* ------------------------------------------------- 11. Pencereler ------- */
 .modal {
   position: fixed;
   inset: 0;
@@ -652,7 +982,7 @@ main {
 .modal-box {
   display: flex;
   flex-direction: column;
-  width: min(640px, 100%);
+  width: min(620px, 100%);
   max-height: 88vh;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -673,7 +1003,7 @@ main {
 .modal-box p { margin: 0 0 10px; color: var(--text-2); font-size: 14.5px; }
 .modal-box p:last-child { margin-bottom: 0; }
 .modal-box details { margin-top: 12px; }
-.modal-box summary { font-size: var(--fs-md); color: var(--muted); }
+.modal-box summary { font-size: var(--fs-md); color: var(--muted); cursor: pointer; }
 
 .modal-actions {
   display: flex;
@@ -698,7 +1028,7 @@ main {
 .plan-line b {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  font-weight: 650;
+  font-weight: 640;
 }
 
 .note {
@@ -706,10 +1036,23 @@ main {
   padding: 9px 12px;
   border-radius: var(--radius-sm);
   background: var(--surface-2);
-  border: 1px solid var(--border);
+  border-left: 2px solid var(--border-strong);
   color: var(--muted);
   font-size: var(--fs-md);
   line-height: 1.5;
+}
+
+/* Pencerelerde kullanılan uyarı bloğu (lisans / bellek yetersiz). */
+.blocked-note {
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
+  border-left-width: 3px;
+  color: var(--warn);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  text-wrap: pretty;
 }
 
 .copy-row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
@@ -751,59 +1094,56 @@ main {
   font-variant-numeric: tabular-nums;
 }
 
-/* ------------------------------------------------- 10. Olay akışı -------- */
-.events-section { margin-top: 44px; }
+/* ------------------------------------------------- 12. Olay akışı ------- */
+.events-section { margin-top: 52px; }
 .events-section h3 { margin: 0 0 4px; font-size: var(--fs-xl); }
-.events-section > .card-detail { max-width: 76ch; }
+.events-section > .card-detail { max-width: 68ch; }
+
+.card-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--fs-md);
+  line-height: 1.55;
+}
 
 #events {
-  margin-top: 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
 }
-#events > .card-detail { padding: 16px; color: var(--muted); }
+#events > .card-detail { padding: 16px 0; }
 
+/* Kutu yok, zebra yok, dolgu rengi yok: yalnız ince çizgiler. Uyarı ve
+   kritik olaylar sol şeritle ayrılır. */
 .event {
   display: flex;
-  gap: 14px;
+  gap: 16px;
   align-items: baseline;
-  padding: 8px 14px;
+  padding: 9px 0 9px 11px;
   border-bottom: 1px solid var(--border);
-  border-left: 3px solid transparent;
+  border-left: 2px solid transparent;
   font-size: var(--fs-md);
   color: var(--text-2);
 }
 .event:last-child { border-bottom: none; }
 .event > span:last-child { min-width: 0; overflow-wrap: anywhere; }
-.event b { color: var(--text); font-weight: 650; }
+.event b { color: var(--text); font-weight: 620; }
 
 .event-time {
   flex: none;
-  width: 150px;
+  width: 148px;
   color: var(--muted);
   font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.event-info { background: var(--surface); }
-.event-warning {
-  background: var(--warn-bg);
-  background: color-mix(in srgb, var(--warn-bg) 55%, var(--surface));
-  border-left-color: var(--warn-dot);
-}
-.event-critical {
-  background: var(--err-bg);
-  background: color-mix(in srgb, var(--err-bg) 60%, var(--surface));
-  border-left-color: var(--err-dot);
-}
+.event-warning  { border-left-color: var(--warn-dot); }
+.event-critical { border-left-color: var(--err-dot); }
 .event-critical b { color: var(--err); }
 
-/* ------------------------------------------------- 11. Alt bilgi --------- */
+/* ------------------------------------------------- 13. Alt bilgi -------- */
 .footer-note {
-  margin-top: 40px;
+  margin-top: 52px;
   padding-top: 20px;
   border-top: 1px solid var(--border);
   color: var(--muted);
@@ -811,16 +1151,17 @@ main {
 }
 .footer-note h3 {
   margin: 0 0 8px;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-xs);
   font-weight: 700;
-  letter-spacing: .1em;
+  letter-spacing: .11em;
   text-transform: uppercase;
   color: var(--muted);
 }
 .footer-note ul { margin: 0; padding-left: 18px; }
 .footer-note li { margin: 5px 0; }
 
-/* ------------------------------------ 12. Kurulum sayfası (setup.html) --- */
+/* ------------------------------------ 14. Kurulum sayfası (setup.html) --- */
+/* setup.html bu stil dosyasını paylaşır; sınıfları olduğu gibi korunuyor. */
 .setup-page { background: var(--bg); }
 
 .setup {
@@ -848,15 +1189,10 @@ main {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
 }
 .setup-head h1 { margin: 0; font-size: 22px; line-height: 1.25; }
 
-.lead {
-  margin: 3px 0 0;
-  color: var(--muted);
-  font-size: 14.5px;
-}
+.lead { margin: 3px 0 0; color: var(--muted); font-size: 14.5px; }
 
 .panel {
   margin: 0 0 16px;
@@ -864,7 +1200,6 @@ main {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
 }
 .panel:last-child { margin-bottom: 0; }
 .panel h2 {
@@ -887,7 +1222,6 @@ main {
 .panel-ok h2 { color: var(--ok); }
 .panel-ok p { color: var(--text-2); }
 
-/* Adım numarası — h2 içinde statik olarak eklenir. */
 .step-num {
   display: grid;
   place-items: center;
@@ -903,11 +1237,7 @@ main {
 }
 .panel-ok .step-num { background: var(--ok-dot); color: #fff; }
 
-.muted {
-  color: var(--muted);
-  font-size: var(--fs-md);
-  line-height: 1.55;
-}
+.muted { color: var(--muted); font-size: var(--fs-md); line-height: 1.55; }
 .panel .muted { color: var(--muted); }
 
 .setup details {
@@ -917,54 +1247,91 @@ main {
   border: 1px solid var(--border);
   border-radius: var(--radius);
 }
-.setup details[open] { background: var(--surface-2); }
 .setup details + details { margin-top: 8px; }
 .setup summary {
+  cursor: pointer;
   font-size: 14.5px;
   color: var(--text);
   font-weight: 600;
 }
+.setup summary::marker { color: var(--muted); }
 .setup details > *:last-child { margin-bottom: 0; }
 
-/* -------------------------------- 13. Duyarlılık ve erişilebilirlik ------ */
-@media (max-width: 1280px) {
+/* -------------------------------- 15. Duyarlılık ve erişilebilirlik ------ */
+@media (max-width: 1080px) {
   :root { --card-basis: 320px; }
+  .sys-item-mem { width: 240px; }
 }
 
 @media (max-width: 900px) {
   .topbar { align-items: flex-start; padding: 12px 16px; }
-  .sysbar { width: 100%; }
-  .sys-item { flex: 1 1 120px; min-width: 110px; }
-  main { padding: 20px 16px 56px; }
+  .sysbar { width: 100%; justify-content: space-between; gap: 16px; }
+  .sys-item-mem { flex: 1 1 240px; width: auto; }
+  main { padding: 24px 16px 60px; }
   .banner { margin-left: 16px; margin-right: 16px; }
-  :root { --card-basis: 300px; --card-max: 100%; }
-  .setup { padding: 24px 16px 56px; }
+  :root { --card-max: 100%; }
 }
 
-@media (max-width: 600px) {
-  :root { --h2: 18px; --fs-xl: 16px; }
-  .topbar { gap: 12px; }
-  .brand-icon { width: 34px; height: 34px; font-size: 18px; }
-  .sysbar { padding: 8px 0; }
-  .sys-item {
-    flex: 1 1 45%;
-    min-width: 0;
-    padding: 6px 12px;
-    border-left: 0;
+@media (max-width: 760px) {
+  /* Kapalı satır iki satıra dağılır; “ne işe yarar” cümlesi kırpılmaz. */
+  .row-head { flex-wrap: wrap; align-items: center; min-height: 0; }
+  .row-what {
+    flex: 1 1 100%;
+    margin-left: 31px;
+    white-space: normal;
+    overflow: visible;
+    line-height: 1.45;
   }
-  :root { --card-basis: 100%; }
-  .card { padding: 14px; }
+  .row-detail { padding-left: 31px; }
+}
+
+@media (max-width: 640px) {
+  :root { --h2: 18px; --fs-xl: 15.5px; --card-basis: 100%; }
+
+  .topbar { gap: 12px; }
+  .brand-icon { width: 32px; height: 32px; font-size: 17px; }
+  .sysbar { flex-direction: column; align-items: stretch; gap: 14px; }
+  .sys-item-mem { width: 100%; }
+  .sys-meta { justify-content: space-between; gap: 12px; }
+
+  .toolbar { align-items: flex-start; }
+  .legend-tools { margin-left: 0; }
+
+  /* Satır: üstte bilgi, altında sağa yaslı eylem. Yatay taşma olmaz. */
+  .row { flex-wrap: wrap; gap: 0; }
+  .row-info { flex: 1 1 100%; }
+  .row-side {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+    min-height: 0;
+    padding: 0 0 12px 31px;
+  }
+
+  .card { padding: 14px 15px; }
   .card-actions .btn { flex: 1 1 auto; }
+
+  .act { flex-direction: column; align-items: stretch; gap: 9px; }
+  .act .btn { width: 100%; }
+
   .modal { padding: 12px; align-items: flex-end; }
   .modal-box { max-height: 92vh; padding: 18px 16px; }
   .modal-actions { flex-direction: column-reverse; }
   .modal-actions .btn { width: 100%; }
+
   .event { flex-direction: column; gap: 2px; }
   .event-time { width: auto; }
+
+  .setup { padding: 24px 16px 56px; }
   .setup-head { flex-direction: column; align-items: flex-start; gap: 10px; }
   .panel { padding: 16px; }
   .copy-row { flex-wrap: wrap; }
   .copy-row input { flex: 1 1 100%; }
+}
+
+/* Dokunmatik cihazda hedefler küçülmesin. */
+@media (pointer: coarse) {
+  :root { --ctl-h: 40px; --row-h: 52px; }
+  .btn-sm { min-height: 36px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -978,57 +1345,70 @@ main {
 
 @media (prefers-contrast: more) {
   :root { --border: var(--border-strong); --muted: var(--text-2); }
+  .card { border-color: var(--border-strong); }
+  .btn { border-color: var(--text-2); }
 }
 
 @media print {
-  .topbar { position: static; box-shadow: none; }
+  .topbar { position: static; }
   .card, .panel { box-shadow: none; break-inside: avoid; }
-  .card-actions, .modal { display: none !important; }
+  .card-actions, .more, .modal, .toolbar, .row-side { display: none !important; }
+  .row-detail { display: block !important; }
 }
 
-/* Üst bardaki bellek kutusu: ayrılan (ana sayı) + gerçek kullanım (alt satır) */
-.sys-item-mem { min-width: 150px; }
-.sys-sub {
-  display: block; margin-top: 3px;
-  font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
+
+/* ------------------------------------------- jüri denetiminin düzeltmeleri */
+/* .btn-lg BU DOSYADAN DÜŞMÜŞTÜ. Aynı stil dosyasını setup.html de yüklüyor ve
+   iki ana düğmesinde (sertifika indirme, panele git) bu sınıfı kullanıyor —
+   kural düşünce o iki düğme 42px'ten normale iniyordu. Yeniden çizim yapan
+   tarama yalnız app.js'in ÜRETTİĞİ sınıflara bakmış, aynı CSS'i paylaşan
+   kardeş sayfayı hiç görmemişti. */
+.btn-lg {
+  min-height: 42px;
+  padding: 0 20px;
+  font-size: 14.5px;
+  border-radius: var(--radius);
 }
+.setup details[open] { background: var(--surface-2); }
 
-/* Ayrılan bellek tavanlarının toplamı dağıtılabilir belleği aştığında.
-   Kendi başına arıza değil (limitler üst sınırdır, rezervasyon değil) ama
-   kullanıcının görmesi gereken bir durum: hepsi aynı anda dolarsa yetmez. */
-.sys-sub-warn { color: var(--err); font-weight: 600; }
+/* Kapalı motor satırında ad ile sağdaki düğme arasında geniş ekranda 600px'e
+   varan boşluk oluyor; hangi satırın düğmesine basıldığı görünmüyordu. */
+.row:hover { background: var(--surface-2); }
+.row:focus-within { background: var(--surface-2); }
 
+/* Boşluksuz uzun bir motor adı dar ekranda satırı zorluyordu. Kart başlığında
+   bu koruma vardı, satırda yoktu. */
+.row-name { min-width: 0; overflow-wrap: anywhere; }
+.row-what { min-width: 0; overflow-wrap: anywhere; }
 
-/* --------------------------------------------- Araçlar kısayolu ---------- */
-/* Araç kartları (izleme gibi) listenin sonunda duruyor; oraya kadar kimse
-   kaydırmıyordu. Durum rozetlerinin yanındaki bu kısayol onları görünür
-   kılıyor. */
-.legend-tools {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: auto;
-  padding-left: 14px;
-  border-left: 1px solid var(--border);
+/* Üst bar yapışkan ve ~98px. Araç kısayolu bir satıra/karta çıpayla gidiyor;
+   bu kural olmadan hedef üst barın ALTINDA kalıp görünmez oluyordu. */
+.row, .card, .cat-title { scroll-margin-top: 110px; }
+
+/* Motor AÇIKKEN "ne işe yarar" metni: açılırın içinde, sessiz. Tasarımın
+   sadeleştirmesi bu bilgiyi tamamen silmişti; en görünür zararı izleme
+   aracındaydı (açıkken ne olduğunu anlatan hiçbir metin kalmıyordu). */
+.more-what {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-sm);
+  color: var(--muted);
+  line-height: 1.6;
 }
-.tool-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 10px;
-  border: 1px solid var(--border);
+.more-what b { color: var(--text); font-weight: 600; }
+
+/* Üretimde ayrı lisans gerektiren motor, KAPALI satırın yüzeyinde işaretli
+   olmalı: ayrıntının içine gömülü düz metin, katalogda gezerken görünmüyordu.
+   Yalnız renge dayanmıyor — metnin kendisi bilgiyi taşıyor. */
+.row-lic {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid var(--warn-border);
   border-radius: 999px;
+  background: var(--warn-bg);
+  color: var(--warn);
   font-size: var(--fs-xs);
   font-weight: 600;
-  font-family: inherit;
-  line-height: 1.6;
-  color: var(--text);
-  background: none;
-  text-decoration: none;
-  cursor: pointer;
+  white-space: nowrap;
 }
-.tool-link:hover { border-color: var(--accent); color: var(--accent); }
-/* Araç ÇALIŞIYORSA rozet doğrudan panelini açar; kartına kaydırmakla
-   yetinmiyor. Vurgulu görünmesi, tıklanabilir bir eylem olduğunu söylüyor. */
-.tool-link.is-on { border-color: var(--accent); color: var(--accent); }
-.tool-link.is-on:hover { background: var(--accent); color: var(--accent-ink); }

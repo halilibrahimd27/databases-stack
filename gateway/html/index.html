@@ -11,20 +11,26 @@
 </head>
 <body>
 
+<!-- ===========================================================================
+     ÜST BAR — tek soru, tek ölçü.
+     Dört eşit kutu yerine: BELLEK ana ölçü (büyük sayı + çubuk + alt satır),
+     Sunucu / Disk / İşlemci ise onun yanında ince, kutusuz bir künye satırı.
+     Bellek, "açabilir miyim" sorusunun tek belirleyicisi olduğu için sayfadaki
+     en ağır sayı odur; diğer üçü referans bilgisidir.
+     app.js'in okuduğu id'ler (#sys-host #sys-mem #sys-mem-bar #sys-mem-real
+     #sys-disk #sys-cpu) ve .sys-item-mem sınıfı aynen korunuyor.
+     =========================================================================== -->
 <header class="topbar">
   <div class="brand">
     <span class="brand-icon" aria-hidden="true">🗄️</span>
-    <div>
+    <div class="brand-txt">
       <h1>Veritabanı Yönetim Paneli</h1>
-      <p class="sub">İhtiyacınız olan veritabanını açın, kullanmadığınızı kapatın.</p>
+      <p class="sub">İhtiyacınız olanı açın, kullanmadığınızı kapatın.</p>
     </div>
   </div>
 
   <div class="sysbar" id="sysbar" role="group" aria-label="Sunucu durumu">
-    <div class="sys-item">
-      <span class="sys-label">Sunucu</span>
-      <b id="sys-host">—</b>
-    </div>
+
     <div class="sys-item sys-item-mem">
       <span class="sys-label">Ayrılan bellek</span>
       <b id="sys-mem">—</b>
@@ -33,27 +39,37 @@
       </div>
       <span class="sys-sub" id="sys-mem-real">—</span>
     </div>
-    <div class="sys-item">
-      <span class="sys-label">Disk</span>
-      <b id="sys-disk">—</b>
-    </div>
-    <div class="sys-item">
-      <span class="sys-label">İşlemci</span>
-      <b id="sys-cpu">—</b>
-    </div>
+
+    <dl class="sys-meta">
+      <div class="sys-meta-item">
+        <dt class="sys-label">Sunucu</dt>
+        <dd id="sys-host">—</dd>
+      </div>
+      <div class="sys-meta-item">
+        <dt class="sys-label">Disk</dt>
+        <dd id="sys-disk">—</dd>
+      </div>
+      <div class="sys-meta-item">
+        <dt class="sys-label">İşlemci</dt>
+        <dd id="sys-cpu">—</dd>
+      </div>
+    </dl>
+
   </div>
 </header>
 
 <div id="banner" class="banner" role="alert" hidden></div>
 
 <main>
+
   <section class="intro">
     <h2>Hangi veritabanına ihtiyacınız var?</h2>
     <p>
-      Aşağıdaki kartlarda her veritabanının <b>ne işe yaradığı</b> sade dille yazıyor.
-      <b>Aktif Et</b> dediğinizde sistem sunucunun boş belleğini ölçer, o veritabanına
-      ne kadar ayıracağını kendisi hesaplar ve ayarlarını buna göre yapar —
-      teknik bir değer girmeniz gerekmez. Sunucu yetmiyorsa açmaz, sebebini söyler.
+      Aşağıdaki listede her veritabanının <b>ne işe yaradığı</b> sade dille
+      yazıyor. <b>Aç</b> dediğinizde sistem sunucunun boş belleğini ölçer, o
+      veritabanına ne kadar ayıracağını ve ayarlarını kendisi hesaplar —
+      teknik bir değer girmeniz gerekmez. Sunucu yetmiyorsa açmaz, sebebini
+      söyler.
     </p>
     <p class="hint">
       <b>Nereden başlamalı?</b> İlk kurulumda çoğu proje için doğru başlangıç:
@@ -61,16 +77,25 @@
     </p>
   </section>
 
-  <div class="legend">
-    <span class="legend-label">Durumlar</span>
-    <span class="badge on">Çalışıyor</span>
-    <span class="badge busy">Başlatılıyor</span>
-    <span class="badge err">Sorunlu</span>
-    <span class="badge off">Kapalı</span>
-    <!-- Araçlar (izleme gibi) veritabanı olmadığı için listenin SONUNDA
-         duruyor; sayfanın sorusu "hangi veritabanı" ve araçları araya
-         sokmak o soruyu bulandırırdı. Ama en altta kalınca kimse görmüyordu
-         — buraya kısayol koyuyoruz. app.js dolduruyor, araç yoksa boş kalır. -->
+  <!-- Durum rozetlerinin okuması KAPALI bir açılırın içinde duruyor: sayfada
+       artık her satırda rozet yok (kapalı motorlar hiç rozet taşımıyor), bu
+       yüzden okuma sürekli ekranda durması gereken bir bilgi değil — ihtiyaç
+       duyulduğunda açılır. Araç kısayolunu app.js dolduruyor; araç yoksa
+       #tool-links gizli kalır. -->
+  <div class="toolbar">
+    <details class="legend">
+      <summary class="sum"><span class="chev" aria-hidden="true"></span>Durum işaretleri</summary>
+      <div class="legend-body">
+        <span class="badge on">Çalışıyor</span>
+        <span class="badge busy">Başlatılıyor</span>
+        <span class="badge err">Sorunlu</span>
+        <span class="badge off">Kapalı</span>
+        <p class="legend-note">
+          Kapalı motorlar aşağıdaki listede rozet taşımaz — hepsi kapalıdır.
+          Rozetler yalnızca “Şu an açık” bölümünde görünür.
+        </p>
+      </div>
+    </details>
     <span class="legend-tools" id="tool-links" hidden></span>
   </div>
 
@@ -81,8 +106,8 @@
   <section class="events-section">
     <h3>Son olaylar</h3>
     <p class="card-detail">
-      Aktivasyonlar, devirler ve uyarılar. Otomatik devir gerçekleştiğinde
-      burada ve (tanımlıysa) webhook bildiriminde görürsünüz.
+      Açma, kapama, otomatik devir ve uyarılar. Otomatik devir gerçekleştiğinde
+      burada — tanımlıysa webhook bildiriminde de — görünür.
     </p>
     <div id="events"><p class="card-detail">Yükleniyor…</p></div>
   </section>
