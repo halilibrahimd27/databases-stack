@@ -38,9 +38,12 @@ attach)
   echo "[pg] replika bağlantısı bekleniyor…"
   i=0
   while [ $i -lt 60 ]; do
-      n=$(psql_ -tAc "SELECT count(*) FROM pg_stat_replication;" 2>/dev/null || echo 0)
+      # state='streaming' ŞART. Sadece satır saymak yetmez: ilk klonlama
+      # sırasında pg_basebackup'ın kendi bağlantısı da burada görünür
+      # (state='backup') ve "hazır" sanılıp erken dönülürdü.
+      n=$(psql_ -tAc "SELECT count(*) FROM pg_stat_replication WHERE state='streaming';" 2>/dev/null || echo 0)
       if [ "${n:-0}" -ge 1 ]; then
-          echo "[pg] ✓ replika akışta"
+          echo "[pg] ✓ replika akışta (streaming)"
           psql_ -c "SELECT application_name, state, sync_state FROM pg_stat_replication;"
           exit 0
       fi

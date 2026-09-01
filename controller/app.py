@@ -1164,6 +1164,25 @@ def do_replication(jid, eid, enable):
         if enable:
             if engine["profile"] not in load_state().get("profiles", []):
                 return job_done(jid, False, "Önce %s motorunu aktif edin." % engine["name"])
+
+            # Replika, devirden sonra AYNI yükü taşıyacağı için primary kadar
+            # bellek ister. Yer yoksa yarıda kalmış bir kurulum bırakmak yerine
+            # baştan reddediyoruz.
+            prim_mb = 0
+            for c in docker_containers():
+                if c["service"] == engine["primary_service"] and c["status"] == "running":
+                    prim_mb = c["memory_mb"]
+            if prim_mb:
+                p = plan_engine(eid)
+                free = p.get("budget_mb", 0)
+                if free < prim_mb:
+                    return job_done(jid, False, (
+                        "Replika ana kopya kadar bellek ister (%d MB) çünkü devirden "
+                        "sonra aynı yükü taşıyacak; kullanılabilir bütçe %d MB. "
+                        "Başka bir motoru durdurun ya da sunucuya RAM ekleyin."
+                        % (prim_mb, max(free, 0))))
+                job_log(jid, "bütçe uygun: replika %d MB alacak, %d MB kullanılabilir"
+                        % (prim_mb, free))
             st = load_state()
             if os.path.exists(os.path.join(OVERRIDE_DIR, override + ".yml")):
                 st["overrides"] = list(set(st.get("overrides", [])) | {override})

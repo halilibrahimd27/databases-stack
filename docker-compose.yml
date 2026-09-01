@@ -298,6 +298,9 @@ services:
       --log-bin=mysql-bin
       --binlog-format=ROW
       --gtid-strict-mode=ON
+      --innodb-buffer-pool-size=${MARIADB_BUFFER_POOL:-1G}
+      --innodb-log-file-size=${MARIADB_LOG_FILE_SIZE:-256M}
+      --max-connections=${MARIADB_MAX_CONNECTIONS:-200}
     volumes:
       - mariadb_replica_data:/var/lib/mysql
     healthcheck:
@@ -309,7 +312,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${MARIADB_REPLICA_MEM_LIMIT:-2G}
+          memory: ${MARIADB_REPLICA_MEM_LIMIT:-${MARIADB_MEM_LIMIT:-8G}}
 
   # ===========================================================================
   # POSTGRESQL   —   profile: postgresql
@@ -333,6 +336,8 @@ services:
       -c shared_buffers=${POSTGRES_SHARED_BUFFERS:-512MB}
       -c effective_cache_size=${POSTGRES_EFFECTIVE_CACHE:-1536MB}
       -c max_connections=${POSTGRES_MAX_CONNECTIONS:-200}
+      -c max_worker_processes=${POSTGRES_MAX_WORKERS:-8}
+      -c max_locks_per_transaction=${POSTGRES_MAX_LOCKS:-64}
       -c work_mem=${POSTGRES_WORK_MEM:-4MB}
       -c log_min_duration_statement=2000
       -c wal_level=replica
@@ -430,7 +435,12 @@ services:
             -D "$$PGDATA" -Fp -Xs -P -R -S ${POSTGRES_REPLICATION_SLOT:-replica_1} -C
           echo "[replica] klon tamam"
         fi
-        exec docker-entrypoint.sh postgres -c hot_standby=on
+        # KRİTİK: standby'ın max_connections / max_worker_processes /
+        # max_locks_per_transaction değerleri primary'den KÜÇÜK OLAMAZ.
+        # Küçükse PostgreSQL kurtarmayı reddeder:
+        #   FATAL: recovery aborted because of insufficient parameter settings
+        # Bu yüzden primary ile AYNI env değişkenleri kullanılıyor.
+        exec docker-entrypoint.sh postgres           -c hot_standby=on           -c max_connections=${POSTGRES_MAX_CONNECTIONS:-200}           -c max_worker_processes=${POSTGRES_MAX_WORKERS:-8}           -c max_locks_per_transaction=${POSTGRES_MAX_LOCKS:-64}           -c max_wal_senders=10           -c max_replication_slots=10           -c shared_buffers=${POSTGRES_SHARED_BUFFERS:-512MB}           -c work_mem=${POSTGRES_WORK_MEM:-4MB}
     depends_on:
       postgresql:
         condition: service_healthy
@@ -443,7 +453,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${POSTGRES_REPLICA_MEM_LIMIT:-1G}
+          memory: ${POSTGRES_REPLICA_MEM_LIMIT:-${POSTGRES_MEM_LIMIT:-2G}}
 
   # ===========================================================================
   # MONGODB   —   profile: mongodb
@@ -548,7 +558,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${MONGO_REPLICA_MEM_LIMIT:-1G}
+          memory: ${MONGO_REPLICA_MEM_LIMIT:-${MONGO_MEM_LIMIT:-2G}}
 
   # MongoDB'de otomatik failover ÇOĞUNLUK ister. İki üyeyle biri düşünce
   # çoğunluk (2/2 → 1/2) kaybolur ve seçim yapılamaz; kalan üye SECONDARY'de
@@ -664,6 +674,8 @@ services:
       --masterauth ${REDIS_PASSWORD:-${DB_PASSWORD}}
       --appendonly ${REDIS_APPENDONLY:-yes}
       --replica-read-only yes
+      --maxmemory ${REDIS_MAXMEMORY:-384mb}
+      --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
     volumes:
       - redis_replica_data:/data
     environment:
@@ -680,7 +692,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${REDIS_REPLICA_MEM_LIMIT:-400M}
+          memory: ${REDIS_REPLICA_MEM_LIMIT:-${REDIS_MEM_LIMIT:-600M}}
 
   # ===========================================================================
   # MSSQL   —   profile: mssql
