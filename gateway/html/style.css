@@ -219,3 +219,11 @@ main { padding: 24px 28px 64px; max-width: 1440px; margin: 0 auto; }
   .event { flex-direction: column; gap: 2px; }
   .event-time { width: auto; }
 }
+
+/* ---------- lisans rozeti ---------- */
+.lic {
+  font-size: 12px; padding: 5px 9px; border-radius: 7px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--muted);
+}
+.lic-note { border-color: var(--warn); color: var(--warn); }
+.lic-warn { border-color: var(--err);  color: var(--err); font-weight: 600; }

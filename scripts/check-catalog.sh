@@ -84,6 +84,14 @@ for e in cat["engines"]:
     if fo.get("supported") and not fo.get("note"):
         warnings.append("%s: failover notu yok" % eid)
 
+    lic = e.get("license") or {}
+    if not lic.get("name"):
+        errors.append("%s: lisans bilgisi yok" % eid)
+    if lic.get("free_for_production") not in (True, False, "copyleft"):
+        errors.append("%s: license.free_for_production geçersiz" % eid)
+    if lic.get("free_for_production") is not True and not lic.get("note"):
+        errors.append("%s: kısıtlı lisans ama açıklaması yok" % eid)
+
     r = e.get("resources")
     if not r:
         errors.append("%s: resources bloğu yok — boyutlandırma çalışmaz" % eid)

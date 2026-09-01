@@ -94,7 +94,15 @@ async function activate(engine) {
     .map((k) => `<div class="plan-line"><span>${esc(k)}</span><b>${esc(t[k])}</b></div>`)
     .join('');
 
+  const lic = engine.license || {};
+  const licWarn = lic.free_for_production === false
+    ? `<div class="blocked-note" style="margin-bottom:12px">
+         <b>⚠️ Lisans uyarısı — ${esc(lic.name)}</b><br>${esc(lic.note)}
+         ${lic.alternative ? '<br><b>Alternatif:</b> ' + esc(lic.alternative) : ''}
+       </div>` : '';
+
   const ok = await confirmBox(engine.name + ' açılsın mı?', `
+    ${licWarn}
     <p>Sistem sunucunuzu ölçtü ve bu veritabanı için aşağıdaki ayarları seçti.
        Elle bir şey girmeniz gerekmiyor.</p>
     <div class="plan-line"><span>Ayrılacak bellek</span><b>${mb(plan.limit_mb)}</b></div>
@@ -249,6 +257,15 @@ function cardHtml(engine, st, plan) {
     ? `<button class="btn btn-danger" data-act="off" data-id="${engine.id}">Kapat</button>`
     : `<button class="btn btn-primary" data-act="on" data-id="${engine.id}"
          ${blocked ? 'title="Sunucuda yeterli bellek yok"' : ''}>Aktif Et</button>`;
+
+  const lic = engine.license || {};
+  const licClass = lic.free_for_production === false ? 'lic-warn'
+                 : lic.free_for_production === 'copyleft' ? 'lic-note' : 'lic-ok';
+  const licLine = lic.name
+    ? `<div class="lic ${licClass}" title="${esc(lic.note || '')}">
+         ${lic.free_for_production === false ? '⚠️' : '⚖️'} ${esc(lic.name)}
+         ${lic.free_for_production === false ? ' — üretimde lisans gerekir' : ''}
+       </div>` : '';
 
   return `
   <article class="card ${st.active ? 'is-active' : ''} ${blocked ? 'is-blocked' : ''}">

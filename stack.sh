@@ -242,6 +242,32 @@ print()
 '
 }
 
+cmd_licenses() {
+    PYTHONIOENCODING=utf-8 python3 - "$CATALOG" <<'PY'
+import json, sys
+cat = json.load(open(sys.argv[1], encoding="utf-8"))
+sym = {True: "  serbest", "copyleft": "! copyleft", False: "X LISANS GEREKIR"}
+print()
+print("  %-14s %-34s %s" % ("MOTOR", "LISANS", "URETIMDE"))
+print("  " + "-"*72)
+for e in cat["engines"]:
+    l = e.get("license", {})
+    print("  %-14s %-34s %s" % (e["id"], l.get("name","?"),
+          sym.get(l.get("free_for_production"), "?")))
+print()
+for e in cat["engines"]:
+    l = e.get("license", {})
+    if l.get("free_for_production") is not True:
+        print("  %s (%s)" % (e["name"], l.get("name")))
+        print("    " + (l.get("note") or ""))
+        if l.get("alternative"):
+            print("    Alternatif: " + l["alternative"])
+        print()
+print("  Ayrinti: docs/LICENSING.md")
+print()
+PY
+}
+
 cmd_doctor() {
     heading "Sistem kontrolü"
     require_docker && ok "Docker çalışıyor"
@@ -293,6 +319,7 @@ ${BOLD}Bakım${NC}
   ./stack.sh sync                 Yedekleri uzak depoya gönder
   ./stack.sh app-user             Uygulama için kısıtlı kullanıcı oluştur
   ./stack.sh logs <servis>        Son 200 satır log
+  ./stack.sh licenses             Motorların lisansları ve kısıtları
   ./stack.sh doctor               Kurulum sağlık kontrolü
   ./stack.sh selftest             Boyutlandırma + API + nginx testleri (docker gerekmez)
 
@@ -324,6 +351,7 @@ case "${1:-help}" in
     failover)        shift; [ $# -ge 1 ] || die "Kullanım: ./stack.sh failover status|on|off|now|rebuild [motor]"
                      cmd_failover "$1" "${2:-}" ;;
     events)          cmd_events ;;
+    licenses|lisans) cmd_licenses ;;
     doctor)          cmd_doctor ;;
     selftest|test)   PYTHONIOENCODING=utf-8 python3 scripts/selftest.py ;;
     up)              compose up -d gateway controller adminer ;;

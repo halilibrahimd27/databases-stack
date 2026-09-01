@@ -311,6 +311,39 @@ Bilmeniz gerekenler:
 
 ---
 
+## Lisanslar
+
+Bu proje MIT'tir ve motorları **yeniden dağıtmaz** — resmi kayıt defterlerinden
+çeker. Yani her motorun lisansı doğrudan sizinle motorun sahibi arasındadır.
+Panelde her kartın altında lisans görünür, kısıtlı olanlarda aktivasyon
+onayında uyarı çıkar.
+
+```bash
+./stack.sh licenses
+```
+
+Çoğu motor iç kullanımda sorunsuzdur. İki başlık dikkat ister:
+
+- **SQL Server** varsayılan `Developer` sürümüyle gelir — **yalnız geliştirme
+  ve test için** ücretsizdir, üretimde kullanmak lisans ihlalidir. Üretim için
+  `MSSQL_PID=Express` (ücretsiz, DB başına 10 GB) ya da satın alınmış lisans.
+- **MongoDB (SSPL), Elasticsearch (ELv2/SSPL), Redis, Neo4j, MinIO (AGPL)**
+  copyleft lisanslıdır. Kendi uygulamanız için kullanmak serbesttir; bu
+  motorları üçüncü taraflara **yönetilen servis olarak satarsanız** kaynak açma
+  yükümlülüğü doğabilir.
+
+Copyleft istemiyorsanız imajlar değiştirilebilir — Redis yerine BSD-3 lisanslı
+**Valkey** birebir geçer:
+
+```bash
+REDIS_IMAGE=valkey/valkey:8-alpine    # .env
+```
+
+Aynı mekanizma kapalı ağda kendi registry aynanız için de kullanılır.
+Ayrıntı: [docs/LICENSING.md](docs/LICENSING.md)
+
+---
+
 ## Lisans
 
 MIT — [LICENSE](LICENSE)

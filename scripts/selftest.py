@@ -310,9 +310,28 @@ ck("standby_of devirden sonra rolleri ters çeviriyor",
    app.standby_of(app.CATALOG.engine("mariadb")) == "mariadb")
 
 # =============================================================================
-# 4. NGINX YAPILANDIRMASI
+# 4. LİSANS BİLGİSİ
 # =============================================================================
-head("4. nginx gateway yapılandırması")
+head("4. Lisans bilgisi")
+ck("her motorda lisans tanımlı",
+   all(e.get("license", {}).get("name") for e in cat["engines"]))
+ck("kısıtlı lisansların açıklaması var",
+   all(e["license"].get("note") for e in cat["engines"]
+       if e["license"].get("free_for_production") is not True))
+mssql_lic = [e for e in cat["engines"] if e["id"] == "mssql"][0]["license"]
+ck("SQL Server üretimde kullanılamaz olarak işaretli",
+   mssql_lic["free_for_production"] is False, mssql_lic["name"])
+ck("Redis için copyleft'siz alternatif belirtilmiş",
+   "Valkey" in ([e for e in cat["engines"] if e["id"] == "redis"][0]["license"].get("alternative") or ""))
+compose_txt = open("docker-compose.yml", encoding="utf-8").read()
+ck("motor imajları <MOTOR>_IMAGE ile değiştirilebilir",
+   all(("${%s_IMAGE:-" % k) in compose_txt
+       for k in ("MARIADB", "POSTGRES", "MONGO", "REDIS", "MSSQL", "MINIO", "ELASTIC")))
+
+# =============================================================================
+# 5. NGINX YAPILANDIRMASI
+# =============================================================================
+head("5. nginx gateway yapılandırması")
 tpl = open("gateway/templates/stack.conf.template", encoding="utf-8").read()
 
 

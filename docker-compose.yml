@@ -200,7 +200,7 @@ services:
   mariadb:
     <<: *svc
     profiles: [mariadb]
-    image: mariadb:${MARIADB_VERSION:-11.4}
+    image: ${MARIADB_IMAGE:-mariadb:${MARIADB_VERSION:-11.4}}
     container_name: mariadb
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_PASSWORD:-${DB_PASSWORD}}
@@ -279,7 +279,7 @@ services:
   mariadb-replica:
     <<: *svc
     profiles: [mariadb-replica]
-    image: mariadb:${MARIADB_VERSION:-11.4}
+    image: ${MARIADB_IMAGE:-mariadb:${MARIADB_VERSION:-11.4}}
     container_name: mariadb-replica
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_PASSWORD:-${DB_PASSWORD}}
@@ -310,7 +310,7 @@ services:
   postgresql:
     <<: *svc
     profiles: [postgresql]
-    image: postgres:${POSTGRES_VERSION:-16}
+    image: ${POSTGRES_IMAGE:-postgres:${POSTGRES_VERSION:-16}}
     container_name: postgresql
     environment:
       POSTGRES_DB: ${DEFAULT_DATABASE:-defaultdb}
@@ -399,7 +399,7 @@ services:
   postgresql-replica:
     <<: *svc
     profiles: [postgresql-replica]
-    image: postgres:${POSTGRES_VERSION:-16}
+    image: ${POSTGRES_IMAGE:-postgres:${POSTGRES_VERSION:-16}}
     container_name: postgresql-replica
     user: postgres
     environment:
@@ -444,7 +444,7 @@ services:
   mongodb:
     <<: *svc
     profiles: [mongodb]
-    image: mongo:${MONGO_VERSION:-7.0}
+    image: ${MONGO_IMAGE:-mongo:${MONGO_VERSION:-7.0}}
     container_name: mongodb
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-root}
@@ -520,7 +520,7 @@ services:
   mongodb-replica-1:
     <<: *svc
     profiles: [mongodb-replica]
-    image: mongo:${MONGO_VERSION:-7.0}
+    image: ${MONGO_IMAGE:-mongo:${MONGO_VERSION:-7.0}}
     container_name: mongodb-replica-1
     volumes:
       - mongodb_replica_data:/data/db
@@ -551,7 +551,7 @@ services:
   mongodb-arbiter:
     <<: *svc
     profiles: [mongodb-replica]
-    image: mongo:${MONGO_VERSION:-7.0}
+    image: ${MONGO_IMAGE:-mongo:${MONGO_VERSION:-7.0}}
     container_name: mongodb-arbiter
     volumes:
       - mongodb_arbiter_data:/data/db
@@ -580,7 +580,7 @@ services:
   redis:
     <<: *svc
     profiles: [redis]
-    image: redis:${REDIS_VERSION:-8-alpine}
+    image: ${REDIS_IMAGE:-redis:${REDIS_VERSION:-8-alpine}}
     container_name: redis
     command: >
       redis-server
@@ -648,7 +648,7 @@ services:
   redis-replica:
     <<: *svc
     profiles: [redis-replica]
-    image: redis:${REDIS_VERSION:-8-alpine}
+    image: ${REDIS_IMAGE:-redis:${REDIS_VERSION:-8-alpine}}
     container_name: redis-replica
     command: >
       redis-server
@@ -683,7 +683,7 @@ services:
   mssql:
     <<: *svc
     profiles: [mssql]
-    image: mcr.microsoft.com/mssql/server:${MSSQL_VERSION:-2022-latest}
+    image: ${MSSQL_IMAGE:-mcr.microsoft.com/mssql/server:${MSSQL_VERSION:-2022-latest}}
     container_name: mssql
     environment:
       ACCEPT_EULA: "Y"
@@ -711,7 +711,7 @@ services:
   cassandra:
     <<: *svc
     profiles: [cassandra]
-    image: cassandra:${CASSANDRA_VERSION:-5.0}
+    image: ${CASSANDRA_IMAGE:-cassandra:${CASSANDRA_VERSION:-5.0}}
     container_name: cassandra
     environment:
       CASSANDRA_CLUSTER_NAME: ${CASSANDRA_CLUSTER_NAME:-databases-stack}
@@ -764,7 +764,7 @@ services:
   elasticsearch:
     <<: *svc
     profiles: [elasticsearch]
-    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.15.3}
+    image: ${ELASTIC_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.15.3}}
     container_name: elasticsearch
     environment:
       discovery.type: single-node
@@ -799,7 +799,7 @@ services:
   # ayarlar. Kibana `elastic` superuser'ı ile bağlanmayı REDDEDER, bu yüzden şart.
   elasticsearch-init:
     profiles: [elasticsearch]
-    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.15.3}
+    image: ${ELASTIC_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.15.3}}
     container_name: elasticsearch-init
     restart: "no"
     networks: [dbnet]
@@ -872,7 +872,7 @@ services:
   kafka:
     <<: *svc
     profiles: [kafka]
-    image: apache/kafka:${KAFKA_VERSION:-3.9.0}
+    image: ${KAFKA_IMAGE:-apache/kafka:${KAFKA_VERSION:-3.9.0}}
     container_name: kafka
     environment:
       KAFKA_NODE_ID: 1
@@ -948,7 +948,7 @@ services:
   rabbitmq:
     <<: *svc
     profiles: [rabbitmq]
-    image: rabbitmq:${RABBITMQ_VERSION:-3.13-management-alpine}
+    image: ${RABBITMQ_IMAGE:-rabbitmq:${RABBITMQ_VERSION:-3.13-management-alpine}}
     container_name: rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
@@ -974,7 +974,7 @@ services:
   clickhouse:
     <<: *svc
     profiles: [clickhouse]
-    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-24.8}
+    image: ${CLICKHOUSE_IMAGE:-clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-24.8}}
     container_name: clickhouse
     environment:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
@@ -1006,7 +1006,7 @@ services:
   neo4j:
     <<: *svc
     profiles: [neo4j]
-    image: neo4j:${NEO4J_VERSION:-5-community}
+    image: ${NEO4J_IMAGE:-neo4j:${NEO4J_VERSION:-5-community}}
     container_name: neo4j
     environment:
       # Neo4j parolası en az 8 karakter olmalı.
@@ -1036,7 +1036,7 @@ services:
   minio:
     <<: *svc
     profiles: [minio]
-    image: minio/minio:${MINIO_VERSION:-RELEASE.2024-10-13T13-34-11Z}
+    image: ${MINIO_IMAGE:-minio/minio:${MINIO_VERSION:-RELEASE.2024-10-13T13-34-11Z}}
     container_name: minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
