@@ -280,6 +280,16 @@ cmd_doctor() {
     container_running gateway    && ok "gateway ayakta"    || warn "gateway kapalı"
     container_running controller && ok "controller ayakta" || warn "controller kapalı"
     compose config -q && ok "docker-compose.yml geçerli"
+    # nginx yapılandırmasını GERÇEK nginx ile doğrula. Statik denetim
+    # "duplicate directive" gibi hataları yakalayamaz; bu yakalar.
+    if container_running gateway; then
+        if docker exec gateway nginx -t >/dev/null 2>&1; then
+            ok "nginx yapılandırması geçerli"
+        else
+            err "nginx yapılandırması HATALI:"
+            docker exec gateway nginx -t 2>&1 | sed "s/^/    /"
+        fi
+    fi
     ./scripts/check-catalog.sh || true
     if container_running controller; then
         _api GET /api/status | python3 -c '

@@ -383,6 +383,27 @@ ck("katalogdaki her panel portu dinleniyor", not missing, str(missing))
 for f in ("index.html", "app.js", "style.css", "inactive.html"):
     ck("statik dosya: %s" % f, os.path.exists("gateway/html/" + f))
 
+# nginx aynı blokta yinelenen direktifi REDDEDER ve hiç açılmaz. Snippet bir
+# location'ın içine include edildiği için, snippet'teki bir direktifi aynı
+# location'da tekrar yazmak gateway'i tamamen çökertir.
+snip_directives = set()
+for line in open("gateway/snippets/proxy.conf", encoding="utf-8"):
+    line = line.strip()
+    if line and not line.startswith("#") and line.endswith(";"):
+        snip_directives.add(line.split()[0])
+dupes = []
+for blk in re.findall(r"location[^{]*\{([^}]*)\}", tpl):
+    if "snippets/proxy.conf" not in blk:
+        continue
+    for line in blk.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and line.endswith(";"):
+            d = line.split()[0]
+            if d in snip_directives:
+                dupes.append(d)
+ck("snippet direktifleri location'da tekrar edilmiyor (nginx duplicate hatası)",
+   not dupes, ", ".join(sorted(set(dupes))))
+
 # =============================================================================
 print()
 if FAILS:
