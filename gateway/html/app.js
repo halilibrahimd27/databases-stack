@@ -331,11 +331,14 @@ function render() {
     $('#sys-mem').textContent = mb(alloc) + ' / ' + mb(dagitilabilir);
     const rel = $('#sys-mem-real');
     if (rel) {
-      // Metin KISA tutuluyor: üst bar sabit genişlikli sütunlardan oluşuyor ve
-      // uzun bir uyarı cümlesi bu sütunu şişirip diğerlerini (Disk, İşlemci)
-      // kaydırıyordu. Ayrıntı title'da; burada yalnız oran ve gerçek kullanım.
-      rel.textContent = (asim ? '⚠ %' + pct + ' · ' : '')
-                      + 'gerçek kullanım ' + mb(real);
+      // Sunucunun TOPLAM RAM'i burada yazılı olmak zorunda. Payda artık
+      // "dağıtılabilir" bellek olduğu için (toplam − OS payı − çekirdek),
+      // üst barda tek başına "12 GB / 12 GB" görünüyordu ve okuyan haklı
+      // olarak "sunucunun belleği 16'dan 12'ye mi düştü?" diye soruyordu.
+      // Metin KISA: sütun sabit genişlikte, uzun cümle diğer sütunları
+      // kaydırıyordu. Tam açıklama title'da.
+      rel.textContent = (asim ? '⚠ %' + pct + ' aşım · ' : mb(sys.mem_total_mb) + ' RAM · ')
+                      + 'kullanım ' + mb(real);
       rel.className = 'sys-sub' + (asim ? ' sys-sub-warn' : '');
     }
     // Tavan toplamının kapasiteyi aşması KENDİ BAŞINA arıza değildir: limitler
@@ -390,8 +393,17 @@ function render() {
     html += `<h2 class="cat-title" id="cat-${esc(cat)}">${esc(cats[cat])}</h2>`;
     list.forEach((e) => {
       if (e.kind === 'tool') {
-        toolLinks.push(`<a class="tool-link" href="#cat-${esc(cat)}"
-          >${e.icon || ''} ${esc(e.name)}</a>`);
+        // Araç AÇIKSA rozet doğrudan onu açar. Kartına kaydırmak, zaten
+        // çalışan bir aracı görmek isteyen kullanıcı için fazladan iki adım
+        // demekti — "izleme ekranı yok" denmesinin sebebi buydu: kart en
+        // altta duruyordu ve rozet oraya kaydırmakla yetiniyordu.
+        const aktif = (byId[e.id] || {}).active;
+        toolLinks.push(aktif && e.panel
+          ? `<button class="tool-link is-on" data-act="panel" data-id="${esc(e.id)}"
+               title="${esc(e.panel.name)} panelini yeni sekmede aç"
+             >${e.icon || ''} ${esc(e.name)} aç</button>`
+          : `<a class="tool-link" href="#cat-${esc(cat)}"
+               title="Kartına git">${e.icon || ''} ${esc(e.name)}</a>`);
       }
       html += cardHtml(e, byId[e.id] || { active: false }, STATE.plans[e.id]);
     });

@@ -252,7 +252,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 /* Bellek sütunu SABİT genişlikte. Uyarı metni belirince sütun şişiyor ve
    sağındaki Disk/İşlemci sütunlarını kaydırıyordu — üst bar her yenilemede
    yerinden oynuyormuş gibi görünüyordu. Ayrıntı zaten title'da. */
-.sys-item-mem { width: 196px; flex: 0 0 auto; }
+.sys-item-mem { width: 232px; flex: 0 0 auto; }
 .sys-item-mem .sys-sub {
   display: block;
   white-space: nowrap;
@@ -1020,7 +1020,15 @@ main {
   border-radius: 999px;
   font-size: var(--fs-xs);
   font-weight: 600;
+  font-family: inherit;
+  line-height: 1.6;
   color: var(--text);
+  background: none;
   text-decoration: none;
+  cursor: pointer;
 }
 .tool-link:hover { border-color: var(--accent); color: var(--accent); }
+/* Araç ÇALIŞIYORSA rozet doğrudan panelini açar; kartına kaydırmakla
+   yetinmiyor. Vurgulu görünmesi, tıklanabilir bir eylem olduğunu söylüyor. */
+.tool-link.is-on { border-color: var(--accent); color: var(--accent); }
+.tool-link.is-on:hover { background: var(--accent); color: var(--accent-ink); }
