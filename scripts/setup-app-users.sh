@@ -67,10 +67,12 @@ SQL
 
 # =========================================================== PostgreSQL =====
 setup_postgresql() {
-    container_running postgresql || { log "postgresql kapalı, atlanıyor"; return 0; }
+    # Devirden sonra ana kopya yedek düğüm olabilir — topolojiden çöz.
+    local C; C="$(primary_of postgresql)"
+    container_running "$C" || { log "postgresql kapalı, atlanıyor"; return 0; }
     heading "PostgreSQL — $APP_USER"
     local su="${POSTGRES_USER:-root}" db="${DEFAULT_DATABASE:-defaultdb}"
-    p() { docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" -i postgresql \
+    p() { docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" -i "$C" \
           psql -U "$su" -v ON_ERROR_STOP=1 "$@"; }
 
     p -d postgres <<SQL

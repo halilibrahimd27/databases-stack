@@ -190,7 +190,7 @@ backup_mssql() {
     sq() { SQLCMDPASSWORD="${MSSQL_PASSWORD:-$DB_PASSWORD}" \
            docker exec -e SQLCMDPASSWORD mssql "$SQLCMD" -S localhost -U sa -C "$@"; }
 
-    docker exec mssql sh -c 'mkdir -p /var/opt/mssql/backup && rm -f /var/opt/mssql/backup/*.bak' 2>/dev/null
+    docker exec "$C" sh -c 'mkdir -p /var/opt/mssql/backup && rm -f /var/opt/mssql/backup/*.bak' 2>/dev/null
 
     # database_id>4 → master/tempdb/model/msdb hariç. msdb ve master ayrıca
     # alınıyor: SQL login'leri ve agent job'ları oradadır, yoksa geri yüklemede
@@ -206,12 +206,12 @@ backup_mssql() {
         sq -b -Q "BACKUP DATABASE [$db] TO DISK=N'/var/opt/mssql/backup/${db}.bak' WITH FORMAT, INIT;" \
             >>"$LOG_FILE" 2>&1 || { failed=1; berr "  BACKUP başarısız: $db"; }
     done <<< "$dbs"
-    [ "$failed" -eq 0 ] || { docker exec mssql sh -c 'rm -f /var/opt/mssql/backup/*.bak'; return 1; }
+    [ "$failed" -eq 0 ] || { docker exec "$C" sh -c 'rm -f /var/opt/mssql/backup/*.bak'; return 1; }
 
     "${IO_NICE[@]}" docker exec mssql tar -cf - -C /var/opt/mssql/backup . 2>>"$LOG_FILE" \
         | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
     local rc="${PIPESTATUS[0]}"
-    docker exec mssql sh -c 'rm -f /var/opt/mssql/backup/*.bak' 2>/dev/null
+    docker exec "$C" sh -c 'rm -f /var/opt/mssql/backup/*.bak' 2>/dev/null
     [ "$rc" -eq 0 ] || { berr "MSSQL arşivi alınamadı"; rm -f "$f"; return 1; }
     verify_backup "$f"
 }
@@ -366,14 +366,16 @@ confirm_restore() {
 }
 
 restore_mariadb() {
+    local C; C="$(primary_of mariadb)"
     local f="$1"; [ -f "$f" ] || die "Dosya yok: $f"
     confirm_restore "MariaDB" || return 1
     gzip -dc "$f" | MYSQL_PWD="${MARIADB_PASSWORD:-$DB_PASSWORD}" \
-        docker exec -e MYSQL_PWD -i mariadb mariadb -u root
+        docker exec -e MYSQL_PWD -i "$C" mariadb -u root
     [ "${PIPESTATUS[1]}" -eq 0 ] && bok "MariaDB geri yüklendi" || { berr "başarısız"; return 1; }
 }
 
 restore_postgresql() {
+    local C; C="$(primary_of postgresql)"
     local f="$1"; [ -f "$f" ] || die "Dosya yok: $f"
     confirm_restore "PostgreSQL" || return 1
     gzip -dc "$f" | docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" -i postgresql \
@@ -382,9 +384,10 @@ restore_postgresql() {
 }
 
 restore_mongodb() {
+    local C; C="$(primary_of mongodb)"
     local f="$1"; [ -f "$f" ] || die "Dosya yok: $f"
     confirm_restore "MongoDB" || return 1
-    docker exec -i mongodb mongorestore \
+    docker exec -i "$C" mongorestore \
         --username "${MONGO_USER:-root}" --password "${MONGO_PASSWORD:-$DB_PASSWORD}" \
         --authenticationDatabase admin --archive --gzip --drop < "$f" \
         && bok "MongoDB geri yüklendi" || { berr "başarısız"; return 1; }
@@ -398,6 +401,8 @@ restore_redis() {
     # yazıp hiçbir şey geri yüklemiyordu. Doğru sıra: AOF'u kapat, RDB'yi koy,
     # AOF'u yeniden üret (BGREWRITEAOF), sonra tekrar aç.
     local pw="${REDIS_PASSWORD:-$DB_PASSWORD}"
+    # Geri yükleme her zaman O ANKİ ana kopyaya yapılır (devir olmuşsa yedek düğüm).
+    local C; C="$(primary_of redis)"
     rcli() { docker exec -e REDISCLI_AUTH="$pw" "$C" redis-cli --no-auth-warning "$@"; }
 
     local aof; aof="$(rcli CONFIG GET appendonly | tail -1 | tr -d '[:space:]')"
@@ -408,12 +413,12 @@ restore_redis() {
     rcli SHUTDOWN NOSAVE >/dev/null 2>&1 || true
 
     blog "Container'ın yeniden başlaması bekleniyor…"
-    local i=0; while [ $i -lt 30 ] && ! container_running redis; do sleep 1; i=$((i+1)); done
+    local i=0; while [ $i -lt 30 ] && ! container_running "$C"; do sleep 1; i=$((i+1)); done
     sleep 2
 
-    gzip -dc "$f" | docker exec -i redis sh -c 'cat > /data/dump.rdb'
-    docker exec redis sh -c 'rm -rf /data/appendonlydir /data/appendonly.aof*' 2>/dev/null
-    docker restart redis >/dev/null
+    gzip -dc "$f" | docker exec -i "$C" sh -c 'cat > /data/dump.rdb'
+    docker exec "$C" sh -c 'rm -rf /data/appendonlydir /data/appendonly.aof*' 2>/dev/null
+    docker restart "$C" >/dev/null
     blog "Redis yeniden başlatıldı, RDB yükleniyor…"
     i=0; while [ $i -lt 60 ]; do rcli PING 2>/dev/null | grep -q PONG && break; sleep 2; i=$((i+1)); done
 
@@ -428,12 +433,13 @@ restore_redis() {
 }
 
 restore_mssql() {
+    local C; C="$(primary_of mssql)"
     local f="$1"; [ -f "$f" ] || die "Dosya yok: $f"
     confirm_restore "MSSQL" || return 1
     local SQLCMD=/opt/mssql-tools18/bin/sqlcmd rc=0
-    docker exec mssql sh -c 'mkdir -p /var/opt/mssql/backup && rm -f /var/opt/mssql/backup/*.bak'
-    gzip -dc "$f" | docker exec -i mssql tar -xf - -C /var/opt/mssql/backup
-    for bak in $(docker exec mssql sh -c 'ls /var/opt/mssql/backup/*.bak 2>/dev/null'); do
+    docker exec "$C" sh -c 'mkdir -p /var/opt/mssql/backup && rm -f /var/opt/mssql/backup/*.bak'
+    gzip -dc "$f" | docker exec -i "$C" tar -xf - -C /var/opt/mssql/backup
+    for bak in $(docker exec "$C" sh -c 'ls /var/opt/mssql/backup/*.bak 2>/dev/null'); do
         local db; db="$(basename "$bak" .bak)"
         case "$db" in master|msdb) blog "  $db atlandı (sistem DB'si elle geri yüklenir)"; continue ;; esac
         blog "  geri yükleniyor: $db"
@@ -441,7 +447,7 @@ restore_mssql() {
             "$SQLCMD" -S localhost -U sa -C -b \
             -Q "RESTORE DATABASE [$db] FROM DISK=N'$bak' WITH REPLACE;" >>"$LOG_FILE" 2>&1 || rc=1
     done
-    docker exec mssql sh -c 'rm -f /var/opt/mssql/backup/*.bak'
+    docker exec "$C" sh -c 'rm -f /var/opt/mssql/backup/*.bak'
     [ "$rc" -eq 0 ] && bok "MSSQL geri yüklendi" || { berr "başarısız"; return 1; }
 }
 
