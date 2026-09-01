@@ -227,6 +227,37 @@ Uzak depo (Google Drive / S3 / SFTP): [docs/GOOGLE-DRIVE.md](docs/GOOGLE-DRIVE.m
 
 ---
 
+## İzleme
+
+Açtığınız veritabanlarının nasıl çalıştığını grafiklerle gösterir. Kurulum ya
+da yapılandırma gerektirmez:
+
+```bash
+./stack.sh enable monitoring     # ya da panelden "İzleme" kartındaki Aktif Et
+./stack.sh panel monitoring      # adresi yazar
+```
+
+Motor başına hazır panolar gelir: kaç bağlantı var, saniyede kaç işlem
+düşüyor, önbellek işe yarıyor mu, yedek kopya geride mi. Her panelin altında
+**ne anlama geldiği ve ne zaman endişelenmeniz gerektiği** yazar — veritabanı
+yönetmeyi bilmeden de okunabilsin diye.
+
+Genel Bakış panosu bu ürün için ayrıca önemli: yığın belleği otomatik
+hesaplayıp dağıtıyor, bu panoda her container'ın *gerçekte* ne kadar
+kullandığını ayrılan limitle yan yana görürsünüz — yani hesabın doğru olup
+olmadığını gözünüzle doğrularsınız.
+
+Hedef listesi elle yazılmaz: bir motoru açıp kapattığınızda liste kendiliğinden
+güncellenir. Kapalı motor listede olmadığı için "erişilemiyor" uyarısı da
+yağmaz — kapalı olmak arıza değildir.
+
+Kapalıyken hiçbir container çalışmaz. Açıkken ~1 GB RAM ister; sunucuda yer
+yoksa diğer motorlar gibi **açılmaz ve sebebini söyler**.
+
+Ayrıntı: [docs/MONITORING.md](docs/MONITORING.md).
+
+---
+
 ## Yedek kopya (master-slave)
 
 Panelde ilgili kartın altındaki **Replika kur** düğmesi, ya da:
@@ -394,6 +425,12 @@ onayında uyarı çıkar.
   copyleft lisanslıdır. Kendi uygulamanız için kullanmak serbesttir; bu
   motorları üçüncü taraflara **yönetilen servis olarak satarsanız** kaynak açma
   yükümlülüğü doğabilir.
+
+İzleme modülü için: **Prometheus, cAdvisor ve node-exporter Apache-2.0**
+(kısıtsız), **Grafana OSS ise AGPL-3.0**'dır. Grafana'yı olduğu gibi
+çalıştırmak serbesttir; AGPL yükümlülüğü ancak Grafana'yı DEĞİŞTİRİP ağ
+üzerinden üçüncü taraflara sunarsanız doğar. İç ağda kendi panolarınızı
+kullanmak bu kapsama girmez.
 
 Copyleft istemiyorsanız imajlar değiştirilebilir — Redis yerine BSD-3 lisanslı
 **Valkey** birebir geçer:
