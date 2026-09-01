@@ -67,6 +67,11 @@
     <span class="badge busy">Başlatılıyor</span>
     <span class="badge err">Sorunlu</span>
     <span class="badge off">Kapalı</span>
+    <!-- Araçlar (izleme gibi) veritabanı olmadığı için listenin SONUNDA
+         duruyor; sayfanın sorusu "hangi veritabanı" ve araçları araya
+         sokmak o soruyu bulandırırdı. Ama en altta kalınca kimse görmüyordu
+         — buraya kısayol koyuyoruz. app.js dolduruyor, araç yoksa boş kalır. -->
+    <span class="legend-tools" id="tool-links" hidden></span>
   </div>
 
   <div id="grid" class="grid" aria-live="polite">

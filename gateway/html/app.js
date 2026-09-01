@@ -293,8 +293,9 @@ function cardHtml(engine, st, plan) {
     <p class="card-detail">${esc(p.detail || '')}</p>
     ${facts}
     ${st.failed_over ? `<div class="blocked-note">⚠ Devir yapıldı — şu an
-        <b>${esc(st.primary_service || '')}</b> ana kopya. Eski kopya durduruldu;
-        yeniden yedek olarak kurabilirsiniz.</div>` : ''}
+        <b>${esc(st.primary_service || '')}</b> ana kopya. Uygulamanız aynı
+        adrese bağlanmaya devam eder. Rolleri normale döndürmek için
+        "Eski kopyayı yeniden kur" deyin.</div>` : ''}
     ${st.auto_failover ? '<div><span class="tag">Otomatik devir açık</span></div>' : ''}
     <div class="card-actions">${main}${panelBtn}${connBtn}${rebuildBtn}${repBtn}${foBtn}</div>
   </article>`;
@@ -330,7 +331,10 @@ function render() {
     $('#sys-mem').textContent = mb(alloc) + ' / ' + mb(dagitilabilir);
     const rel = $('#sys-mem-real');
     if (rel) {
-      rel.textContent = (asim ? '⚠ tavanlar kapasiteyi aşıyor · ' : '')
+      // Metin KISA tutuluyor: üst bar sabit genişlikli sütunlardan oluşuyor ve
+      // uzun bir uyarı cümlesi bu sütunu şişirip diğerlerini (Disk, İşlemci)
+      // kaydırıyordu. Ayrıntı title'da; burada yalnız oran ve gerçek kullanım.
+      rel.textContent = (asim ? '⚠ %' + pct + ' · ' : '')
                       + 'gerçek kullanım ' + mb(real);
       rel.className = 'sys-sub' + (asim ? ' sys-sub-warn' : '');
     }
@@ -367,17 +371,39 @@ function render() {
   (STATE.engines || []).forEach((e) => { byId[e.id] = e; });
 
   const cats = CATALOG.categories || {};
-  const order = Object.keys(cats);
+  // Araç kategorileri (izleme gibi) her zaman EN SONA. Sayfanın sorusu
+  // "hangi veritabanına ihtiyacınız var" — araya veritabanı olmayan bir kart
+  // sokmak o soruyu bulandırır. Buna karşılık en altta kaldığında kimsenin
+  // görmediği de ortaya çıktı; onun için yukarıya kısayol koyuyoruz.
+  const isToolCat = (cat) => {
+    const list = CATALOG.engines.filter((e) => e.category === cat);
+    return list.length > 0 && list.every((e) => e.kind === 'tool');
+  };
+  const keys = Object.keys(cats);
+  const order = keys.filter((c) => !isToolCat(c)).concat(keys.filter(isToolCat));
+
   let html = '';
+  const toolLinks = [];
   order.forEach((cat) => {
     const list = CATALOG.engines.filter((e) => e.category === cat);
     if (!list.length) return;
-    html += `<h2 class="cat-title">${esc(cats[cat])}</h2>`;
+    html += `<h2 class="cat-title" id="cat-${esc(cat)}">${esc(cats[cat])}</h2>`;
     list.forEach((e) => {
+      if (e.kind === 'tool') {
+        toolLinks.push(`<a class="tool-link" href="#cat-${esc(cat)}"
+          >${e.icon || ''} ${esc(e.name)}</a>`);
+      }
       html += cardHtml(e, byId[e.id] || { active: false }, STATE.plans[e.id]);
     });
   });
   $('#grid').innerHTML = html;
+
+  const tl = $('#tool-links');
+  if (tl) {
+    tl.innerHTML = toolLinks.length
+      ? '<span class="legend-label">Araçlar</span>' + toolLinks.join('') : '';
+    tl.hidden = !toolLinks.length;
+  }
 }
 
 /* ------------------------------------------------------------------ döngü */
@@ -411,23 +437,28 @@ document.addEventListener('click', (ev) => {
   if (!b) return;
   const engine = CATALOG.engines.find((e) => e.id === b.dataset.id);
   const st = (STATE.engines || []).find((e) => e.id === b.dataset.id) || {};
+  let p;
   switch (b.dataset.act) {
-    case 'on':      return activate(engine);
-    case 'off':     return deactivate(engine);
-    case 'conn':    return showConnection(engine);
-    case 'rep-on':  return toggleReplication(engine, true);
-    case 'rep-off': return toggleReplication(engine, false);
-    case 'fo-on':   return toggleAutoFailover(engine, true);
-    case 'fo-off':  return toggleAutoFailover(engine, false);
-    case 'rebuild': return rebuildStandby(engine);
+    case 'on':      p = activate(engine); break;
+    case 'off':     p = deactivate(engine); break;
+    case 'conn':    p = showConnection(engine); break;
+    case 'rep-on':  p = toggleReplication(engine, true); break;
+    case 'rep-off': p = toggleReplication(engine, false); break;
+    case 'fo-on':   p = toggleAutoFailover(engine, true); break;
+    case 'fo-off':  p = toggleAutoFailover(engine, false); break;
+    case 'rebuild': p = rebuildStandby(engine); break;
     case 'panel': {
       // Paneller gateway üzerinde kendi HTTPS portlarında durur.
       const url = 'https://' + location.hostname + ':' + engine.panel.port +
                   (engine.panel.path || '/');
-      return window.open(url, '_blank', 'noopener');
+      window.open(url, '_blank', 'noopener');
+      return;
     }
   }
-});
+  /* Hatalar BURADA yakalanır — düğme işleyicilerinin tek çıkışı burası.
+     Bu dinleyici async değil; dallar eskiden "return activate(engine)" diyordu
+     ve activate/deactivate/toggle*/
+
 
 (async function init() {
   try {

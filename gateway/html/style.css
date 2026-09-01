@@ -248,6 +248,17 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
   padding: 0 14px;
   border-left: 1px solid var(--border);
 }
+
+/* Bellek sütunu SABİT genişlikte. Uyarı metni belirince sütun şişiyor ve
+   sağındaki Disk/İşlemci sütunlarını kaydırıyordu — üst bar her yenilemede
+   yerinden oynuyormuş gibi görünüyordu. Ayrıntı zaten title'da. */
+.sys-item-mem { width: 196px; flex: 0 0 auto; }
+.sys-item-mem .sys-sub {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .sys-item:first-child { border-left: 0; }
 
 .sys-label {
@@ -986,3 +997,30 @@ main {
    Kendi başına arıza değil (limitler üst sınırdır, rezervasyon değil) ama
    kullanıcının görmesi gereken bir durum: hepsi aynı anda dolarsa yetmez. */
 .sys-sub-warn { color: var(--err); font-weight: 600; }
+
+
+/* --------------------------------------------- Araçlar kısayolu ---------- */
+/* Araç kartları (izleme gibi) listenin sonunda duruyor; oraya kadar kimse
+   kaydırmıyordu. Durum rozetlerinin yanındaki bu kısayol onları görünür
+   kılıyor. */
+.legend-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  padding-left: 14px;
+  border-left: 1px solid var(--border);
+}
+.tool-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text);
+  text-decoration: none;
+}
+.tool-link:hover { border-color: var(--accent); color: var(--accent); }
