@@ -160,7 +160,28 @@ container_running() {
 
 # Motorun aktif olup olmadığı (kataloğa göre birincil servis)
 engine_active() {
-    container_running "$1"
+    container_running "$(primary_of "$1")"
+}
+
+# Bir motorun ŞU ANKİ ana kopya container'ı.
+# Devirden sonra bu, kataloğun varsayılan servisi DEĞİLDİR: eski ana kopya
+# fence edilip durdurulmuş, yedek kopya ana kopya olmuştur. Sabit adı kullanan
+# betikler devirden sonra durdurulmuş container'a bakıp "kapalı" sanar ve
+# sessizce hiçbir şey yapmaz — yedekleme için bu veri kaybı riskidir.
+primary_of() {
+    local eid="$1"
+    local topo="$STACK_ROOT/state/topology.json"
+    if [ -f "$topo" ] && command -v python3 >/dev/null 2>&1; then
+        python3 -c '
+import json, sys
+try:
+    t = json.load(open(sys.argv[1], encoding="utf-8"))
+    print(t.get(sys.argv[2], {}).get("primary") or sys.argv[2])
+except Exception:
+    print(sys.argv[2])' "$topo" "$eid" 2>/dev/null || printf '%s' "$eid"
+    else
+        printf '%s' "$eid"
+    fi
 }
 
 rand_secret() {

@@ -93,6 +93,8 @@ verify_backup() {
 # =============================================================================
 
 backup_mariadb() {
+    # Devirden sonra ana kopya yedek düğüm olabilir — topolojiden çöz.
+    local C; C="$(primary_of mariadb)"
     local f; f="$(out_path mariadb full sql.gz)"
     blog "MariaDB yedekleniyor…"
 
@@ -104,7 +106,7 @@ backup_mariadb() {
             [ -n "$where" ] && where+=" OR "
             where+="TABLE_NAME LIKE '$p'"
         done
-        ignore="$(MYSQL_PWD="${MARIADB_PASSWORD:-$DB_PASSWORD}" docker exec -e MYSQL_PWD mariadb \
+        ignore="$(MYSQL_PWD="${MARIADB_PASSWORD:-$DB_PASSWORD}" docker exec -e MYSQL_PWD "$C" \
             mariadb -u root -N -e "SELECT CONCAT('--ignore-table=',TABLE_SCHEMA,'.',TABLE_NAME)
             FROM information_schema.TABLES WHERE TABLE_SCHEMA NOT IN
             ('information_schema','performance_schema','mysql','sys') AND ($where);" \
@@ -115,7 +117,7 @@ backup_mariadb() {
     # --master-data=2: dump'a binlog konumunu YORUM olarak yazar → bu yedekten
     # sonra biriken binlog'larla point-in-time recovery yapılabilir.
     MYSQL_PWD="${MARIADB_PASSWORD:-$DB_PASSWORD}" "${IO_NICE[@]}" \
-        docker exec -e MYSQL_PWD mariadb mariadb-dump -u root \
+        docker exec -e MYSQL_PWD "$C" mariadb-dump -u root \
             --all-databases --single-transaction --quick --routines --triggers \
             --events --hex-blob --add-drop-database --add-drop-table \
             --master-data=2 --skip-comments $ignore \
@@ -125,11 +127,13 @@ backup_mariadb() {
 }
 
 backup_postgresql() {
+    # Devirden sonra ana kopya yedek düğüm olabilir — topolojiden çöz.
+    local C; C="$(primary_of postgresql)"
     local f; f="$(out_path postgresql full sql.gz)"
     blog "PostgreSQL yedekleniyor…"
     # pg_dumpall roller/parolalar dahil TÜM cluster'ı alır — tek DB'lik
     # pg_dump'ın aksine geri yüklemede kullanıcılar da geri gelir.
-    "${IO_NICE[@]}" docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" postgresql \
+    "${IO_NICE[@]}" docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" "$C" \
         pg_dumpall -U "${POSTGRES_USER:-root}" --clean --if-exists --quote-all-identifiers \
         2>>"$LOG_FILE" | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "PostgreSQL dump başarısız"; rm -f "$f"; return 1; }
@@ -137,12 +141,14 @@ backup_postgresql() {
 }
 
 backup_mongodb() {
+    # Devirden sonra ana kopya yedek düğüm olabilir — topolojiden çöz.
+    local C; C="$(primary_of mongodb)"
     local f; f="$(out_path mongodb full archive.gz)"
     blog "MongoDB yedekleniyor…"
     # --archive ile doğrudan stdout'a yazıyoruz: eski sürüm önce container
     # içinde /tmp/backup dizinine döküp sonra tar'lıyordu; bu, container'ın
     # diskini ve belleğini iki kez zorluyordu.
-    "${IO_NICE[@]}" docker exec mongodb mongodump \
+    "${IO_NICE[@]}" docker exec "$C" mongodump \
         --username "${MONGO_USER:-root}" --password "${MONGO_PASSWORD:-$DB_PASSWORD}" \
         --authenticationDatabase admin --archive --gzip --quiet \
         2>>"$LOG_FILE" > "$f"
@@ -151,10 +157,12 @@ backup_mongodb() {
 }
 
 backup_redis() {
+    # Devirden sonra ana kopya yedek düğüm olabilir — topolojiden çöz.
+    local C; C="$(primary_of redis)"
     local f; f="$(out_path redis full rdb.gz)"
     blog "Redis yedekleniyor…"
     local pw="${REDIS_PASSWORD:-$DB_PASSWORD}"
-    rcli() { docker exec -e REDISCLI_AUTH="$pw" redis redis-cli --no-auth-warning "$@"; }
+    rcli() { docker exec -e REDISCLI_AUTH="$pw" "$C" redis-cli --no-auth-warning "$@"; }
 
     local before; before="$(rcli LASTSAVE 2>/dev/null | tr -d '[:space:]')"
     rcli BGSAVE >>"$LOG_FILE" 2>&1 || { berr "BGSAVE reddedildi"; return 1; }
@@ -169,7 +177,7 @@ backup_redis() {
     done
     [ $i -lt 120 ] || warn "BGSAVE 120 sn'de bitmedi; mevcut dump.rdb kopyalanıyor"
 
-    "${IO_NICE[@]}" docker exec redis cat /data/dump.rdb 2>>"$LOG_FILE" \
+    "${IO_NICE[@]}" docker exec "$C" cat /data/dump.rdb 2>>"$LOG_FILE" \
         | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "Redis dump kopyalanamadı"; rm -f "$f"; return 1; }
     verify_backup "$f"
@@ -328,7 +336,7 @@ backup_all() {
     local okc=0 failc=0 skipc=0 eid primary
 
     for eid in $(backupable_engines); do
-        primary="$(engine_field "$eid" 'e["primary_service"]')"
+        primary="$(primary_of "$eid")"
         if ! container_running "$primary"; then
             printf '  %-14s %s\n' "$eid" "atlandı (kapalı)"
             skipc=$((skipc+1)); continue
@@ -390,7 +398,7 @@ restore_redis() {
     # yazıp hiçbir şey geri yüklemiyordu. Doğru sıra: AOF'u kapat, RDB'yi koy,
     # AOF'u yeniden üret (BGREWRITEAOF), sonra tekrar aç.
     local pw="${REDIS_PASSWORD:-$DB_PASSWORD}"
-    rcli() { docker exec -e REDISCLI_AUTH="$pw" redis redis-cli --no-auth-warning "$@"; }
+    rcli() { docker exec -e REDISCLI_AUTH="$pw" "$C" redis-cli --no-auth-warning "$@"; }
 
     local aof; aof="$(rcli CONFIG GET appendonly | tail -1 | tr -d '[:space:]')"
     blog "Mevcut appendonly=$aof"
@@ -492,7 +500,7 @@ case "${1:-help}" in
     all)        backup_all ;;
     mariadb|postgresql|mongodb|redis|mssql|cassandra|elasticsearch|clickhouse|rabbitmq|minio|neo4j)
                 acquire_lock /tmp/databases-stack-backup.lock
-                primary="$(engine_field "$1" 'e["primary_service"]')"
+                primary="$(primary_of "$1")"
                 container_running "$primary" || die "$1 çalışmıyor. Önce: ./stack.sh enable $1"
                 check_disk || exit 1
                 "backup_$1" ;;

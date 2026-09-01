@@ -26,10 +26,12 @@ APP_PASSWORD="${APP_PASSWORD:-}"
 
 # ============================================================== MariaDB =====
 setup_mariadb() {
-    container_running mariadb || { log "mariadb kapalı, atlanıyor"; return 0; }
+    # Devirden sonra ana kopya yedek düğüm olabilir — topolojiden çöz.
+    local C; C="$(primary_of mariadb)"
+    container_running "$C" || { log "mariadb kapalı, atlanıyor"; return 0; }
     heading "MariaDB — $APP_USER"
     local pw="${MARIADB_PASSWORD:-$DB_PASSWORD}"
-    m() { MYSQL_PWD="$pw" docker exec -e MYSQL_PWD -i mariadb mariadb -u root "$@"; }
+    m() { MYSQL_PWD="$pw" docker exec -e MYSQL_PWD -i "$C" mariadb -u root "$@"; }
 
     # Yetkiler *.* ÜZERİNDE DEĞİL, kullanıcı veritabanları üzerinde veriliyor.
     # *.* demek appuser'ın `mysql` şemasını (parola hash'leri!) okuyabilmesi
@@ -102,11 +104,12 @@ SQL
 
 # =============================================================== MongoDB ====
 setup_mongodb() {
-    container_running mongodb || { log "mongodb kapalı, atlanıyor"; return 0; }
+    local C; C="$(primary_of mongodb)"
+    container_running "$C" || { log "mongodb kapalı, atlanıyor"; return 0; }
     heading "MongoDB — $APP_USER"
     local sh_bin="${MONGO_SHELL:-mongosh}"
     docker exec -e M_ROOT_PW="${MONGO_PASSWORD:-$DB_PASSWORD}" -e M_APP_PW="$APP_PASSWORD" \
-        -i mongodb "$sh_bin" --quiet \
+        -i "$C" "$sh_bin" --quiet \
         -u "${MONGO_USER:-root}" -p "${MONGO_PASSWORD:-$DB_PASSWORD}" \
         --authenticationDatabase admin <<JS
 use admin
@@ -132,10 +135,11 @@ JS
 
 # ================================================================= Redis ====
 setup_redis() {
-    container_running redis || { log "redis kapalı, atlanıyor"; return 0; }
+    local C; C="$(primary_of redis)"
+    container_running "$C" || { log "redis kapalı, atlanıyor"; return 0; }
     heading "Redis — $APP_USER"
     local pw="${REDIS_PASSWORD:-$DB_PASSWORD}"
-    r() { docker exec -e REDISCLI_AUTH="$pw" -i redis redis-cli --no-auth-warning "$@"; }
+    r() { docker exec -e REDISCLI_AUTH="$pw" -i "$C" redis-cli --no-auth-warning "$@"; }
 
     # ~*   → tüm anahtarlara erişim
     # &*   → tüm pub/sub kanallarına erişim. Redis 7'den beri kanallar
