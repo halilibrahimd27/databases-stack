@@ -686,20 +686,43 @@ def write_routes():
                     "    proxy_pass $%s;" % var,
                     "}", ""]
     os.makedirs(os.path.dirname(ROUTES_FILE), exist_ok=True)
-    tmp = ROUTES_FILE + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+    # ⚠️ YERİNDE YAZILIYOR — geçici dosya + rename KULLANILMAZ.
+    # Bu dosya gateway'e TEK DOSYA olarak bind-mount edilir ve Docker dosya
+    # mount'unu INODE'a bağlar, yola değil. os.replace() yeni inode üretir;
+    # container eski inode'u görmeye devam eder. Sonuç: host'ta yeni hedef
+    # yazılıdır ama nginx hâlâ ölü sunucuyu çözmeye çalışır ve devirden sonra
+    # bütün bağlantılar kopar. Truncate + write inode'u korur.
+    with open(ROUTES_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(out))
-    os.replace(tmp, ROUTES_FILE)
+        f.flush()
+        os.fsync(f.fileno())
     return ROUTES_FILE
 
 
 def reload_gateway():
     """Yönlendirme değişince nginx'i tazele. `reload` mevcut bağlantıları
     KOPARMAZ — eski worker'lar boşalana kadar çalışmaya devam eder."""
+    # Container GERÇEKTEN güncel dosyayı görüyor mu? Bind-mount inode'a bağlı
+    # olduğu için bu sessizce eskimiş olabilir — devirdeki en pahalı hata budur,
+    # çünkü her şey başarılı görünürken uygulamalar bağlanamaz.
+    try:
+        import hashlib
+        with open(ROUTES_FILE, "rb") as f:
+            want = hashlib.md5(f.read()).hexdigest()
+        rc0, seen, _ = run(["docker", "exec", "gateway", "md5sum",
+                            "/etc/nginx/stream.d/routes.conf"], timeout=30)
+        if rc0 == 0 and want not in seen:
+            log("UYARI: gateway ESKİMİŞ yönlendirme tablosu görüyor — "
+                "bind-mount inode'u kopmuş olabilir, gateway yeniden yaratılmalı")
+    except Exception:
+        pass
+
     rc, out, err = run(["docker", "exec", "gateway", "nginx", "-s", "reload"], timeout=60)
     if rc != 0:
-        log("gateway reload başarısız:", (err or out).strip()[:300])
-    return rc == 0
+        log("gateway reload BAŞARISIZ:", (err or out).strip()[:300])
+        return False
+    log("gateway yönlendirmesi tazelendi")
+    return True
 
 
 # =============================================================================
