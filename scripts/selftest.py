@@ -234,6 +234,26 @@ ck("reddedilen aktivasyon uyarı olarak kaydedildi",
 p = app.plan_engine("mssql")
 ck("işletim sistemi payı toplam RAM'i aşmaz", p["os_reserve_mb"] <= p["host_total_mb"],
    "os=%s total=%s" % (mb(p["os_reserve_mb"]), mb(p["host_total_mb"])))
+
+# Otomatik devir, ancak yükseltilecek bir yedek varsa bir işe yarar. Replikası
+# hiç kurulmamış bir motorda düğmenin açılması, dashboard'da "Otomatik devir
+# açık" rozeti gösterip kullanıcıya sahte bir güven veriyordu.
+HOST["total"] = 16384
+app.save_state({"profiles": ["postgresql"], "overrides": []})
+s, b = call("/api/engines/postgresql/failover-auto", method="POST",
+            body='{"enabled": true}')
+ck("replikası olmayan motorda otomatik devir AÇILMAZ",
+   s == 400 and "yedek kopya" in (b.get("error") or ""), (b.get("error") or "")[:60])
+app.save_state({"profiles": ["postgresql", "postgresql-replica"], "overrides": []})
+s, b = call("/api/engines/postgresql/failover-auto", method="POST",
+            body='{"enabled": true}')
+ck("replika kuruluysa otomatik devir açılır",
+   s == 200 and "postgresql" in b.get("auto_failover", []))
+call("/api/engines/postgresql/failover-auto", method="POST", body='{"enabled": false}')
+# MongoDB seçimini kendi yapar; controller'ın denetleyicisi orada hiç devreye
+# girmez — açılmasına izin vermek yine sahte güven olurdu.
+s, b = call("/api/engines/mongodb/failover-auto", method="POST", body='{"enabled": true}')
+ck("kendi seçimini yapan motorda otomatik devir AÇILMAZ", s == 400)
 srv.shutdown()
 
 # =============================================================================
@@ -241,6 +261,15 @@ srv.shutdown()
 # =============================================================================
 cat = json.load(open("catalog.json", encoding="utf-8"))
 head("3. Otomatik devir (failover)")
+
+# Zaman aşımına uğrayan komut İSTİSNA fırlatmamalı. Eskiden fırlatıyordu:
+# yükseltme betiği takılınca devir thread'i sessizce ölüyor, job_done hiç
+# çağrılmıyor ve dashboard işi sonsuza dek "devam ediyor" gösteriyordu.
+_t0 = time.time()
+_rc, _out, _err = app.run([sys.executable, "-c", "import time; time.sleep(30)"], timeout=2)
+ck("zaman aşımı istisna değil, sonuç olarak dönüyor",
+   _rc == app.RC_TIMEOUT and "zaman aşımı" in _err and (time.time() - _t0) < 20,
+   "rc=%s" % _rc)
 HOST["total"] = 16384
 app.STATE_DIR = "/tmp/dbstack-selftest"
 app.TOPOLOGY_FILE = "/tmp/dbstack-selftest/topology.json"
@@ -406,6 +435,29 @@ ck("MariaDB tohumlaması hesapları SHOW CREATE USER ile taşıyor",
    "SHOW CREATE USER" in _mdb_rep and "SHOW GRANTS FOR" in _mdb_rep)
 ck("MariaDB tohumlaması bozuk sistem şemasını onarıyor",
    "mariadb-upgrade" in _mdb_rep)
+# Yön SABİT YAZILAMAZ. Devirden sonra roller yer değiştirir: canlı primary
+# `mariadb-replica`, yeniden kurulacak yedek `mariadb` olur. Betik yönü kendi
+# bildiğinde rebuild sırasında dökümü AZ ÖNCE SİLİNMİŞ boş düğümden alıp CANLI
+# primary'nin üzerine basıyor, üstüne onu boş düğümün slave'i yapıyordu — yani
+# kurtarma işlemi elde kalan tek sağlam kopyayı siliyordu.
+ck("MariaDB tohumlaması yönü controller'dan (env) okuyor",
+   "REPLICATION_PRIMARY" in _mdb_rep_code and "REPLICATION_STANDBY" in _mdb_rep_code)
+_mdb_execs = [ln.strip() for ln in _mdb_rep_code.splitlines() if "docker exec" in ln]
+ck("MariaDB tohumlamasında docker exec hedefleri sabit yazılmamış",
+   bool(_mdb_execs) and all("$PRIMARY" in ln or "$STANDBY" in ln for ln in _mdb_execs),
+   "; ".join(ln for ln in _mdb_execs
+             if "$PRIMARY" not in ln and "$STANDBY" not in ln))
+ck("MariaDB CHANGE MASTER hedefi de env'den geliyor",
+   "MASTER_HOST='$PRIMARY'" in _mdb_rep_code
+   and "MASTER_HOST='mariadb'" not in _mdb_rep_code)
+# Yön yine de ters verilebilir (controller'daki bir hata, betiği elle
+# çalıştırma). Betik bu yüzden iş yapmadan önce kendi kendini denetler:
+# kaynak yazılabilir primary mi, hedef ondan farklı mı, kaynak boşken hedefte
+# veri var mı — sonuncusu "ters yön" demektir ve durmak zorundadır.
+ck("MariaDB tohumlaması ters yöne karşı kendini koruyor",
+   "@@read_only" in _mdb_rep_code
+   and '"$PRIMARY" = "$STANDBY"' in _mdb_rep_code
+   and "user_dbs m_replica" in _mdb_rep_code)
 _ready_blk = _mdb_fo.split(chr(10) + "ready)", 1)[1].split(chr(10) + "promote)", 1)[0]
 _ready_blk = chr(10).join(ln for ln in _ready_blk.splitlines()
                           if not ln.lstrip().startswith("#"))
@@ -460,6 +512,144 @@ ck("devir kritik olay olarak kaydedildi",
    any(e["kind"] == "failover" and e["level"] == "critical" for e in evs))
 ck("standby_of devirden sonra rolleri ters çeviriyor",
    app.standby_of(app.CATALOG.engine("mariadb")) == "mariadb")
+
+# --- Sağlık yorumu: "açılıyor" hata değildir ---------------------------------
+# Sıradan bir sunucu reboot'unda healthcheck start_period boyunca "starting"
+# der. Bunu sağlıksızlık sayan sürüm, 30 saniyede 3 vuruşu doldurup açılışını
+# yapan ana kopyayı ortasından kesiyor ve daha kendisi de açılmamış yedeği
+# yükseltmeye çalışıyordu; sonuç dakikalarca tam kesintiydi.
+ck("açılmakta olan (starting) ana kopya sağlıksız SAYILMAZ",
+   app.health_verdict("t-start", "running", "starting") == "starting")
+ck("gerçekten sağlıksız ana kopya sayaca girer",
+   app.health_verdict("t-bad", "running", "unhealthy") == "bad")
+ck("durmuş ana kopya sayaca girer", app.health_verdict("t-dead", "exited", "none") == "bad")
+ck("sağlıklı ana kopya sayacı sıfırlar",
+   app.health_verdict("t-ok", "running", "healthy") == "ok")
+app._STARTING_SINCE["t-hung"] = time.time() - (app.FAILOVER_STARTING_GRACE + 10)
+ck("sonsuza dek 'açılıyor' kalan motor arıza sayılır (devir yine de mümkün)",
+   app.health_verdict("t-hung", "running", "starting") == "bad")
+
+# Devir bekleme süresi diske yazılmalı: devir çoğu zaman controller'ın da
+# yeniden başladığı bir olayda (reboot) yaşanır; bellekteki sayaç sıfırlanınca
+# "5 dakika bekle" kuralı fiilen hiç işlemiyordu.
+app._mark_failover_attempt("mariadb")
+app._LAST_FAILOVER.clear()      # controller yeniden başlamış gibi
+ck("devir bekleme süresi controller yeniden başlayınca sıfırlanmıyor",
+   time.time() - app._last_failover_at("mariadb") < 120)
+
+# --- Yedeği yeniden kurma: YÖN ve ÖNKOŞULLAR --------------------------------
+# Bu işlem bir VERİ HACMİNİ SİLER. Yönü şaşarsa (dump'ı yeni kurulan boş
+# düğümden alıp canlı ana kopyanın üzerine basmak) elde kalan tek sağlam kopya
+# yok olur; önkoşulları atlarsa ana kopya ölüyken son yedeği siler.
+_rb = []
+
+
+def _rebuild_run(rc_map=None, writable="mariadb-replica"):
+    """Sahte run(): 'check' yalnız CANLI ana kopya için 0 döner."""
+    rc_map = rc_map or {}
+
+    def _r(cmd, timeout=900, env=None):
+        _rb.append({"cmd": cmd, "env": dict(env or {})})
+        for key, rc in rc_map.items():
+            if key in cmd:
+                return (rc, "", "sahte hata: " + key)
+        if "check" in cmd:
+            return (0, "", "") if cmd[-1] == writable else (1, "", "")
+        if "ready" in cmd:
+            return (0, "yedek akışta", "")
+        return (0, "", "")
+    return _r
+
+
+app.run = _rebuild_run()
+_rb[:] = []
+okk, reason = app.rebuild_standby("mariadb")
+ck("devir sonrası yedeği yeniden kurma tamamlanıyor", okk, reason or "")
+_attach = [c for c in _rb if c["cmd"][0] == "sh" and "attach" in c["cmd"]]
+ck("tohumlama YÖNÜ betiğe env ile veriliyor (kaynak: canlı ana kopya)",
+   bool(_attach)
+   and _attach[0]["env"].get("REPLICATION_PRIMARY") == "mariadb-replica"
+   and _attach[0]["env"].get("REPLICATION_STANDBY") == "mariadb",
+   ("%s → %s" % (_attach[0]["env"].get("REPLICATION_PRIMARY"),
+                 _attach[0]["env"].get("REPLICATION_STANDBY"))) if _attach else "attach yok")
+
+app.run = _rebuild_run(writable="hicbiri")   # ana kopya yazma kabul etmiyor
+_rb[:] = []
+okk, reason = app.rebuild_standby("mariadb")
+ck("kopya kaynağı yazılabilir ana kopya değilse yeniden kurma YAPILMAZ",
+   not okk and "yazma kabul etmiyor" in (reason or ""))
+ck("reddedilince hiçbir veri hacmi silinmiyor",
+   not any("volume" in c["cmd"] for c in _rb))
+
+app.run = _rebuild_run({"volume": 1})        # hacmi başka bir işlem tutuyor
+_rb[:] = []
+okk, reason = app.rebuild_standby("mariadb")
+ck("eski veri hacmi silinemezse işlem DURUR (ikinci yazılabilir düğüm olmaz)",
+   not okk and "hacmi silinemedi" in (reason or ""))
+ck("hacim silinemeyince container hiç başlatılmaz",
+   not any("up" in c["cmd"] for c in _rb))
+
+_verify_to = app.STANDBY_VERIFY_TIMEOUT
+app.STANDBY_VERIFY_TIMEOUT = 0
+app.run = _rebuild_run({"ready": 1})         # düğüm yedek konumuna geçmedi
+_rb[:] = []
+okk, reason = app.rebuild_standby("mariadb")
+ck("yedek olduğu DOĞRULANAMAYAN düğüm başarı sayılmaz", not okk)
+ck("doğrulanamayan düğüm ayakta bırakılmaz (eski veriyi sunmasın)",
+   any(c["cmd"][:2] == ["docker", "stop"] and c["cmd"][-1] == "mariadb" for c in _rb))
+app.STANDBY_VERIFY_TIMEOUT = _verify_to
+
+app.save_state({"profiles": ["mariadb"], "overrides": []})
+app.run = _rebuild_run()
+_rb[:] = []
+okk, reason = app.rebuild_standby("mariadb")
+ck("replikasyon hiç kurulmamışken yeniden kurma REDDEDİLİR",
+   not okk and "replikasyon kurulu değil" in (reason or ""))
+ck("önkoşul sağlanmayınca hiçbir komut çalıştırılmaz", not _rb)
+app.save_state({"profiles": ["mariadb", "mariadb-replica"], "overrides": []})
+
+# Devir ile yeniden kurma AYNI ANDA çalışamaz: rebuild, o an primary'ye
+# yükseltilmekte olan düğümü "eski primary" sanıp hacmini siliyordu.
+_lk = app.engine_lock("mariadb")
+_lk.acquire()
+try:
+    app.run = _rebuild_run()
+    _rb[:] = []
+    okk, reason = app.rebuild_standby("mariadb")
+    ck("devir sürerken yeniden kurma REDDEDİLİR", not okk and "sürüyor" in (reason or ""))
+    okk, reason = app.perform_failover("mariadb", "test: kilit")
+    ck("aynı motorda ikinci bir devir REDDEDİLİR", not okk and "sürüyor" in (reason or ""))
+    ck("kilit meşgulken hiçbir komut çalıştırılmaz", not _rb)
+finally:
+    _lk.release()
+
+# Devir sonrası "replikayı kapat", kataloğa bakıp CANLI ANA KOPYAYI siliyordu.
+_jid = app.new_job("replication-disable", "mariadb")
+app.run = _rebuild_run()
+_rb[:] = []
+app.do_replication(_jid, "mariadb", False)
+ck("devir sonrası 'replikayı kapat' canlı ana kopyayı SİLMEZ",
+   app.JOBS[_jid]["state"] == "failed"
+   and "ANA KOPYA" in (app.JOBS[_jid].get("reason") or ""))
+ck("reddedilen replikasyon işlemi hiçbir container'a dokunmuyor", not _rb)
+
+# Devir sonrası "Aktif Et", kataloğun ilk servisini (eskimiş, fence edilmiş
+# düğümü) açıyordu: hem eski veriyle ikinci bir yazılabilir kopya oluyor hem de
+# gateway gerçek ana kopyayı gösterdiği için kullanıcı hiçbir yere bağlanamıyordu.
+_jid = app.new_job("activate", "mariadb")
+app.run = _rebuild_run()
+_rb[:] = []
+app.do_activate(_jid, "mariadb")
+_up = [c["cmd"] for c in _rb if "up" in c["cmd"]]
+_svcs = _up[0][_up[0].index("--remove-orphans") + 1:] if _up else []
+ck("devir sonrası 'Aktif Et' eskimiş kopyayı değil güncel ana kopyayı açar",
+   "mariadb-replica" in _svcs and "mariadb" not in _svcs, " ".join(_svcs))
+
+_evs = app.read_events()
+ck("devir reddedildiğinde kritik olay yazılıyor (sessiz kalınmıyor)",
+   any(e["kind"] == "failover_blocked" and e["level"] == "critical" for e in _evs))
+ck("yeniden kurma reddedildiğinde de olay yazılıyor",
+   any(e["kind"] == "rebuild_blocked" for e in _evs))
 
 # =============================================================================
 # 4. LİSANS BİLGİSİ
@@ -606,6 +796,179 @@ for blk in re.findall(r"location[^{]*\{([^}]*)\}", tpl):
                 dupes.append(d)
 ck("snippet direktifleri location'da tekrar edilmiyor (nginx duplicate hatası)",
    not dupes, ", ".join(sorted(set(dupes))))
+
+# nginx imajı yalnız access.log/error.log'u /dev/stdout'a symlink eder. stream
+# logları gerçek dosyaya yazılıyordu: docker'ın rotasyonu (json-file 10m x 3)
+# sadece stdout/stderr'i kapsadığı için dosya sınırsız büyüyüp diski dolduruyor,
+# container yeniden yaratılınca da kayboluyordu.
+_ngx = open("gateway/nginx.conf", encoding="utf-8").read()
+_stream = _ngx[_ngx.index("stream {"):]
+ck("stream logları stdout/stderr'e gidiyor (docker rotasyonuna girsin)",
+   "/dev/stdout" in _stream and "/dev/stderr" in _stream
+   and "/var/log/nginx/stream" not in _stream)
+
+# 502 (container yok) ile 504 (cevap gecikti) aynı sayfaya bağlıyken, ÇALIŞAN
+# bir motorda uzun süren import kullanıcıya "bu veritabanı kapalı" gibi
+# görünüyor, o da import'u baştan başlatıyordu.
+_px = open("gateway/snippets/proxy.conf", encoding="utf-8").read()
+_inact = open("gateway/snippets/inactive.conf", encoding="utf-8").read()
+ck("zaman aşımı (504) 'pasif' sayfasına DEĞİL kendi sayfasına bağlı",
+   "error_page 502 503 =503 /_inactive.html;" in _px
+   and "error_page 504 /_timeout.html;" in _px
+   and "location = /_timeout.html" in _inact and "auth_basic off" in _inact)
+
+_slow_panels = {"8081": "phpMyAdmin", "8082": "pgAdmin", "8085": "Adminer"}
+_short = []
+for b in blocks:
+    m = re.search(r"listen\s+(\d+)", b)
+    if not m or m.group(1) not in _slow_panels:
+        continue
+    t = re.search(r"proxy_read_timeout\s+(\d+)s", b)
+    if not t or int(t.group(1)) < 3600:
+        _short.append(_slow_panels[m.group(1)])
+ck("veri aktaran panellerde okuma zaman aşımı en az 1 saat", not _short,
+   ", ".join(_short))
+
+# ÇAPRAZ-SİTE (CSRF): ayrıcalıklı X-Api-Token'ı gateway'in kendisi ekliyor ve
+# kimlik doğrulama tarayıcının önbelleğindeki Basic auth'tan geliyor. Bu kontrol
+# olmadan, panele girmiş bir yöneticinin tarayıcısındaki HERHANGİ bir sayfa
+# gizli bir form POST'u ile motorları kapatabilir, replika diskini sildirebilir.
+_api = tpl[tpl.index("location /api/ {"):tpl.index("location = /_api_crosssite.txt")]
+_m = re.search(r"map \$http_sec_fetch_site \$csrf_site_ok \{([^}]*)\}", tpl)
+_rows = dict(re.findall(r"^\s*(\S+)\s+([01]);", _m.group(1), re.M)) if _m else {}
+ck("/api/ çapraz-site isteği reddediyor (CSRF)",
+   "if ($csrf_site_ok = 0)" in _api
+   and 'if ($csrf_origin_host != "$host")' in _api
+   and _rows.get("default") == "0")
+# Panelin kendi çağrıları ve curl ile çalışan bakım betikleri etkilenmemeli:
+# tarayıcı same-origin/none der, curl hiçbir başlık göndermez.
+ck("panelin kendi sayfası ve başlıksız istemciler geçiyor",
+   _rows.get('"same-origin"') == "1" and _rows.get('"none"') == "1"
+   and _rows.get("''") == "1")
+
+# Dashboard hata gövdesini kullanıcıya OLDUĞU GİBİ gösteriyor (app.js: r.text()).
+# Ortak HTML sayfaları döndüğünde kullanıcı hata penceresinde koca bir HTML
+# kaynağı görüyordu — üstelik "veritabanı kapalı" diyerek, oysa kapalı olan
+# controller'dı. nginx aynı kod için İLK error_page'i kullandığı için bu
+# tanımlar proxy.conf include'undan önce gelmek zorunda.
+_pa = open("gateway/snippets/proxy-api.conf", encoding="utf-8").read()
+_apitxt = re.findall(r"location = (/_api_\w+\.txt) \{([^}]*)\}", tpl)
+ck("/api/ hata gövdeleri düz metin (dashboard'a HTML dönmüyor)",
+   "snippets/proxy-api.conf" in _api
+   and _pa.index("error_page 504") < _pa.index("include /etc/nginx/snippets/proxy.conf")
+   and len(_apitxt) == 3
+   and all("internal;" in b and "text/plain" in b and "auth_basic off" in b
+           for _, b in _apitxt),
+   "%d hata ucu" % len(_apitxt))
+
+# =============================================================================
+# 6. YEDEKLEME BETİĞİ
+# =============================================================================
+# Bu bölümün tek derdi şu: bir yedekleme ürününde en pahalı hata, felaket günü
+# dosyayı açıp İÇİNİ BOŞ bulmaktır. Betik boş yedek üretip ona "Bütünlük
+# doğrulandı" dediği sürece kullanıcı yedeği olduğunu sanır.
+head("6. Yedekleme — boş yedek 'doğrulandı' geçmemeli")
+_bk = open("scripts/backup.sh", encoding="utf-8").read()
+
+# backup_mssql'de $C tanımsız kalmıştı: `set -u` yüzünden bash tüm betikten
+# çıkıyor, mssql'den sonraki motorların hiçbiri yedeklenmiyordu. Aynı hata
+# tekrarlanmasın diye $C kullanan her fonksiyon C'yi kendisi çözmeli.
+_fn = re.findall(r"\n((?:backup|restore)_\w+)\(\) \{(.*?)\n\}", _bk, re.S)
+_undef = [n for n, body in _fn if '"$C"' in body and 'C="$(primary_of' not in body]
+ck("yedek/geri yükleme fonksiyonlarında $C tanımsız kalmıyor", not _undef, ", ".join(_undef))
+ck("bir motorun kabuk hatası tüm turu öldürmüyor (alt kabukta çalışıyor)",
+   'if ( "backup_$eid" ); then' in _bk)
+
+# Parola HOST'ta genişlerse (çift tırnak) değişken host'ta yoktur; set -u alt
+# kabuğu öldürür, motor listesi boş kalır ve BOŞ arşiv "doğrulandı" damgası yer.
+ck("ClickHouse parolası container'da çözülüyor (host'ta değil)",
+   "sh -c 'exec clickhouse-client" in _bk)
+ck("ClickHouse/MSSQL boş veritabanı listesiyle yedek üretmiyor",
+   '[ -n "$dbs" ] ||' in _bk and _bk.count('[ -n "$dbs" ] ||') >= 2)
+ck("Cassandra şema dökümü kontrol ediliyor (şemasız snapshot geri yüklenemez)",
+   "Cassandra şeması alınamadı" in _bk)
+ck("RabbitMQ tanım borusunun iki ucu da kontrol ediliyor",
+   "RabbitMQ tanım dosyası okunamadı" in _bk)
+ck("Elasticsearch snapshot deposu budanıyor (volume ve arşiv sınırsız büyümesin)",
+   '-X DELETE "http://localhost:9200/_snapshot/backup_repo/$s"' in _bk)
+# PostgreSQL geri yüklemesinde ON_ERROR_STOP KULLANILMAMALI. Kullanıldığında
+# geri yükleme HER SEFERİNDE yarıda kalıp veri kaybettiriyor: `pg_dumpall
+# --clean` çıktısı bağlı olunan rolü ve veritabanını da düşürmeye çalışır,
+# bunlar zararsızca hata verir, ama psql tam o noktada — diğer veritabanları
+# çoktan düşürülmüşken — durur. postgres:16 üzerinde birebir üretildi:
+# geri yükleme sonrası `database "defaultdb" does not exist`.
+_pg_restore = _bk.split("restore_postgresql()")[1].split(chr(10) + "restore_")[0]
+# Yorumda geçmesi serbest (neden kullanılmadığını anlatıyor); asıl kural
+# psql'in bu bayrakla ÇAĞRILMAMASI.
+ck("PostgreSQL geri yüklemesi ON_ERROR_STOP KULLANMIYOR (veri kaybettiriyordu)",
+   "psql -v ON_ERROR_STOP" not in _pg_restore)
+# Yerine: hatalar toplanır, BEKLENENLER elenir, kalan varsa başarısız denir.
+ck("PostgreSQL geri yüklemesi hataları topluyor ve eliyor",
+   "current user cannot be dropped" in _pg_restore
+   and "cannot drop the currently open database" in _pg_restore)
+ck("PostgreSQL geri yüklemesi eleme sonrası kalan hatada BAŞARISIZ diyor",
+   "cluster YARIM kalmış olabilir" in _pg_restore and "return 1" in _pg_restore)
+ck("doğrulamayı geçemeyen dosya kurtarma noktası sayılmıyor",
+   "finalize_backup" in _bk and ".bozuk" in _bk)
+
+# Kapalı kalan bir motorun TÜM yedekleri silinmemeli: kapalıyken yeni yedek
+# üretilmediği için hepsi tarih eşiğini geçer ve son kurtarma noktası da gider.
+ck("clean, her motorda en yeni kopyaları her hâlükârda koruyor",
+   "BACKUP_KEEP_MIN" in _bk and 'sort -rn | head -n "$keep"' in _bk)
+ck("clean, sayısal olmayan gün argümanını sessizce yutmuyor",
+   re.search(r"case \"\$days\" in\s*\n\s*''\|\*\[!0-9\]\*\)", _bk) is not None)
+_case = _bk[_bk.index('case "${1:-help}" in'):]
+_restore_branch = _case[_case.index("restore-mariadb"):]
+ck("restore-* yolları da yedekleme kilidini alıyor (cron yarım veriyi yedeklemesin)",
+   "acquire_lock" in _restore_branch[:_restore_branch.index(";;")])
+
+# Statik denetim yetmez: boş bir tar.gz gzip ve tar açısından KUSURSUZDUR
+# (115 bayt), boş girdinin gzip'i de öyle (20 bayt). Betiği gerçekten çalıştırıp
+# bu dosyalara ne dediğine bakıyoruz. (bash yoksa bu kısım atlanır.)
+import shutil as _shutil  # noqa: E402
+_bash = _shutil.which("bash")
+if _bash:
+    import gzip as _gzip          # noqa: E402
+    import subprocess as _sub     # noqa: E402
+    import tarfile as _tar        # noqa: E402
+    import tempfile as _tf        # noqa: E402
+    _tmp = _tf.mkdtemp(prefix="dbstack-bk-")
+    _p = _tmp.replace("\\", "/")
+    if len(_p) > 1 and _p[1] == ":":
+        # Yalnızca Windows'ta geliştirirken: GNU tar "C:/yol" gördüğünde bunu
+        # UZAK SUNUCU (host:yol) sanıp arşivi açamıyor. Git Bash'in /c/... yolu
+        # bu karışıklığı ortadan kaldırır. Üretimde (Linux) fark etmez.
+        _p = "/" + _p[0].lower() + _p[2:]
+
+    def _verify(name):
+        r = _sub.run([_bash, "scripts/backup.sh", "verify", _p + "/" + name],
+                     capture_output=True,
+                     env=dict(os.environ, LOG_DIR=_p, BACKUP_DIR=_p))
+        return r.returncode
+
+    _bos_d = os.path.join(_tmp, "bos")
+    _dolu_d = os.path.join(_tmp, "dolu")
+    os.makedirs(_bos_d, exist_ok=True)
+    os.makedirs(_dolu_d, exist_ok=True)
+    with open(os.path.join(_dolu_d, "app.bak"), "wb") as _fh:
+        _fh.write(b"x" * 4096)
+    with _tar.open(os.path.join(_tmp, "mssql_full_bos.tar.gz"), "w:gz") as _t:
+        _t.add(_bos_d, arcname=".")
+    with _tar.open(os.path.join(_tmp, "mssql_full_dolu.tar.gz"), "w:gz") as _t:
+        _t.add(_dolu_d, arcname=".")
+    with _gzip.open(os.path.join(_tmp, "mariadb_full_bos.sql.gz"), "wb") as _g:
+        _g.write(b"")
+    with _gzip.open(os.path.join(_tmp, "mariadb_full_dolu.sql.gz"), "wb") as _g:
+        _g.write(b"CREATE DATABASE app;\nINSERT INTO t VALUES (1);\n")
+    with _gzip.open(os.path.join(_tmp, "redis_full_yanlis.rdb.gz"), "wb") as _g:
+        _g.write(b"bu bir RDB dosyasi degil")
+
+    ck("boş arşiv 'doğrulandı' demiyor", _verify("mssql_full_bos.tar.gz") != 0)
+    ck("dolu arşiv doğrulanıyor", _verify("mssql_full_dolu.tar.gz") == 0)
+    ck("boş dump 'doğrulandı' demiyor", _verify("mariadb_full_bos.sql.gz") != 0)
+    ck("dolu dump doğrulanıyor", _verify("mariadb_full_dolu.sql.gz") == 0)
+    ck("RDB olmayan dosya Redis yedeği sayılmıyor", _verify("redis_full_yanlis.rdb.gz") != 0)
+    _shutil.rmtree(_tmp, ignore_errors=True)
 
 # =============================================================================
 print()

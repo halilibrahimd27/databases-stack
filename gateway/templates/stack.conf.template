@@ -26,6 +26,40 @@ map $http_upgrade $connection_upgrade {
     ''      close;
 }
 
+# -----------------------------------------------------------------------------
+# ÇAPRAZ-SİTE (CSRF) KONTROLÜ — yalnız /api/ için kullanılır
+# -----------------------------------------------------------------------------
+# Buradaki açık şuydu: kimlik doğrulaması Basic auth ile yapılıyor ve tarayıcı,
+# panele bir kez girildikten sonra o kimlik bilgisini bu adrese giden HER
+# isteğe kendiliğinden ekliyor — isteği başlatan sayfa hangi siteye ait olursa
+# olsun (SameSite kuralları çerezler içindir, HTTP auth'a işlemez). Ayrıcalıklı
+# X-Api-Token'ı da aşağıda gateway'in kendisi ekliyor. Yani kötü niyetli bir
+# sayfanın token'ı bilmesine gerek yoktu: yönetici o sekmeyi açtığı anda gizli
+# bir form POST'u /api/engines/<motor>/deactivate ile bütün veritabanlarını
+# kapatabilir, rebuild-standby ile replika diskini sildirebilirdi.
+#
+# İsteği kimin başlattığını iki başlıktan anlıyoruz. İkisini de sayfadaki
+# JavaScript DEĞİŞTİREMEZ; tarayıcı doldurur (yasaklı başlıklar).
+
+# 1) Sec-Fetch-Site — güncel tarayıcıların hepsi gönderir.
+map $http_sec_fetch_site $csrf_site_ok {
+    default         0;   # cross-site / same-site → isteği BAŞKA bir sayfa başlatmış
+    ''              1;   # başlık yok: tarayıcı değil (curl, betik) ya da çok eski tarayıcı
+    "same-origin"   1;   # panelin kendi sayfası
+    "none"          1;   # adres çubuğuna yazılmış ya da yer iminden açılmış
+}
+
+# 2) Origin — Sec-Fetch-* göndermeyen eski tarayıcılar bile çapraz-site
+#    POST'ta bunu gönderir. Yalnız adres kısmını alıyoruz: panel 443 yerine
+#    başka bir porta bağlanmış olabilir (GATEWAY_HTTPS_PORT), o yüzden port
+#    karşılaştırmaya girmiyor. Origin yoksa karşılaştırma bilerek geçilir
+#    (curl ile /api/ çağıran bakım betikleri çalışmaya devam etsin).
+map $http_origin $csrf_origin_host {
+    default                       $http_origin;   # tanımadığımız biçim → eşleşmez, reddedilir
+    ''                            $host;
+    "~^https?://(.+?)(:[0-9]+)?$" $1;
+}
+
 ssl_session_cache   shared:SSL:10m;
 ssl_session_timeout 1d;
 ssl_session_tickets off;
@@ -39,7 +73,11 @@ client_max_body_size 512m;
 server_tokens off;
 
 # Proxy zaman aşımı varsayılanları. Buradan miras alınır; uzun süren uçlar
-# (Kibana araması, motor aktivasyonu) kendi location'ında büyüğünü verir.
+# (veri aktaran paneller, Kibana araması, motor aktivasyonu) kendi
+# location'ında büyüğünü verir. Süre dolduğunda nginx 504 üretir; 504 artık
+# "pasif" sayfasına DEĞİL, zaman aşımını anlatan ayrı bir sayfaya bağlı
+# (bkz. snippets/proxy.conf) — ikisi aynı sayfaya bağlıyken çalışan bir
+# motorda uzun süren import kullanıcıya "veritabanı kapalı" diye görünüyordu.
 proxy_read_timeout  300s;
 proxy_send_timeout  300s;
 proxy_connect_timeout 10s;
@@ -125,11 +163,55 @@ server {
     # token olmadığı için 401 alır.
     location /api/ {
         set $up_controller controller;
-        include /etc/nginx/snippets/proxy.conf;
+
+        # ÇAPRAZ-SİTE KONTROLÜ (bkz. dosyanın başındaki $csrf_* map'leri).
+        # Yalnız BU location'da: /health ve /setup bilerek dışarıda kaldı —
+        # kurulum rehberi onları düz http sayfasından, yani başka bir origin'den
+        # çağırıyor ve buraya da uygulasaydık sertifika kurulumu kırılırdı.
+        # Hata metni /_api_crosssite.txt'te (error_page ile, proxy-api.conf).
+        if ($csrf_site_ok = 0)            { return 403; }
+        if ($csrf_origin_host != "$host") { return 403; }
+
+        include /etc/nginx/snippets/proxy-api.conf;
         proxy_set_header X-Api-Token "${STACK_CONTROLLER_TOKEN}";
         # Motor aktivasyonu imaj çekmeyi gerektirebilir; dakikalar sürebilir.
         proxy_read_timeout 1800s;
         proxy_pass http://$up_controller:8000;
+    }
+
+    # /api/ hata metinleri. Dashboard bu ucu fetch() ile çağırıyor ve hata
+    # gövdesini kullanıcıya OLDUĞU GİBİ gösteriyor (app.js: r.text()); HTML
+    # sayfası döndüğünde kullanıcı hata penceresinde koca bir HTML kaynağı
+    # görüyordu. Bu yüzden düz metin, tek cümlelik ve ne yapılacağını söyleyen.
+    # Hepsi `internal` — dışarıdan istenemez; auth_basic kapalı, yoksa hata
+    # sayfası kullanıcıdan ikinci kez parola isterdi.
+    location = /_api_crosssite.txt {
+        internal;
+        auth_basic off;
+        default_type text/plain;
+        charset      utf-8;
+        return 403 "Bu istek panelin kendi sayfasından gelmediği için güvenlik gereği durduruldu. Hiçbir şey yapılmadı.
+
+Bir işlem yapmak istiyorsanız panelin adresini tarayıcınızın adres çubuğuna kendiniz yazıp açın ve düğmeleri oradan kullanın.
+
+Bu uyarıyı bir bağlantıya tıkladıktan sonra gördüyseniz, o sayfa sizin adınıza veritabanlarınıza komut göndermeye çalışmış olabilir.
+";
+    }
+    location = /_api_down.txt {
+        internal;
+        auth_basic off;
+        default_type text/plain;
+        charset      utf-8;
+        return 503 "Kontrol servisine şu anda ulaşılamıyor; büyük olasılıkla yeniden başlıyor. Veritabanlarınız bundan etkilenmez, yalnız buradaki düğmeler geçici olarak çalışmaz. Birkaç saniye sonra sayfayı yenileyip tekrar deneyin.
+";
+    }
+    location = /_api_timeout.txt {
+        internal;
+        auth_basic off;
+        default_type text/plain;
+        charset      utf-8;
+        return 504 "İşlem başlatıldı ama sonucu beklerken süre doldu. Sunucuda büyük olasılıkla hâlâ sürüyor: aynı işlemi tekrar başlatmayın. Birkaç dakika bekleyip sayfayı yenileyin, durumu listede göreceksiniz.
+";
     }
 
     # Motor kataloğu. Dashboard normalde /api/catalog'u kullanır; controller
@@ -172,6 +254,11 @@ server {
     location / {
         set $up phpmyadmin;
         include /etc/nginx/snippets/proxy-panel.conf;
+        # Import/export panelidir: 400 MB'lık bir dump'ın çalışması dakikalar
+        # sürer ve o sürede panel tek bayt bile göndermez. Varsayılan 300s ile
+        # nginx 5. dakikada bağlantıyı kesiyor, kullanıcı işlemin durduğunu
+        # sanıyordu — oysa import sunucuda devam ediyordu.
+        proxy_read_timeout 3600s;
         proxy_pass http://$up:80;
     }
     include /etc/nginx/snippets/inactive.conf;
@@ -185,6 +272,7 @@ server {
     location / {
         set $up pgadmin;
         include /etc/nginx/snippets/proxy-panel.conf;
+        proxy_read_timeout 3600s;   # yedek yükleme / uzun süren sorgu (bkz. 8081)
         proxy_pass http://$up:80;
     }
     include /etc/nginx/snippets/inactive.conf;
@@ -227,6 +315,7 @@ server {
     location / {
         set $up adminer;
         include /etc/nginx/snippets/proxy-panel.conf;
+        proxy_read_timeout 3600s;   # uzun ALTER TABLE / import (bkz. 8081)
         proxy_pass http://$up:8080;
     }
     include /etc/nginx/snippets/inactive.conf;

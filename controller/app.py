@@ -247,13 +247,35 @@ def disk_free_mb(path=PROJECT_DIR):
 # =============================================================================
 # DOCKER YARDIMCILARI
 # =============================================================================
+RC_TIMEOUT = 124   # kabuk geleneği: `timeout` komutu da 124 döndürür
+
+
+def _as_text(v):
+    """TimeoutExpired'ın stdout/stderr'i bazen bytes, bazen None gelir."""
+    if v is None:
+        return ""
+    return v if isinstance(v, str) else v.decode("utf-8", "replace")
+
+
 def run(cmd, timeout=900, env=None):
     """Kabuk YOK (shell=False) — argümanlar liste olarak geçer, enjeksiyon olamaz."""
     e = dict(os.environ)
     if env:
         e.update(env)
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=e)
-    return p.returncode, p.stdout, p.stderr
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=e)
+        return p.returncode, p.stdout, p.stderr
+    except subprocess.TimeoutExpired as ex:
+        # Zaman aşımı bir SONUÇTUR, istisna değil. Eskiden bu istisna hiçbir
+        # yerde yakalanmıyordu: yükseltme betiği takılınca devir thread'i
+        # sessizce ölüyor, job_done hiç çağrılmıyordu — dashboard işi sonsuza
+        # dek "devam ediyor" gösterirken eski primary fence edilmiş, yeni
+        # primary belirsiz durumda kalıyordu. Artık hata gibi davranıyoruz:
+        # çağıran yer rc'yi görüp geri alma/uyarı yollarını çalıştırabilsin.
+        log("komut %d sn'de bitmedi:" % timeout, " ".join(str(c) for c in cmd)[:200])
+        return (RC_TIMEOUT, _as_text(ex.stdout),
+                (_as_text(ex.stderr) + "\n[controller] komut %d saniyede bitmedi "
+                 "(zaman aşımı) — işlem yarıda kalmış olabilir." % timeout))
 
 
 _CC_LOCK = threading.Lock()
@@ -276,6 +298,170 @@ def docker_containers(force=False):
         _CC_CACHE["at"] = time.time()
         _CC_CACHE["data"] = data
     return data
+
+
+# =============================================================================
+# METRİKLER (/metrics — Prometheus)
+# =============================================================================
+# Container başına GERÇEK kullanım için önce cAdvisor kullanılmıştı; modern
+# Docker'da (29.x, containerd snapshotter, "overlayfs") cAdvisor'ın docker
+# entegrasyonu /var/lib/docker/image/overlay2/layerdb düzenini arıyor, o düzen
+# artık yok ve container başına HİÇ metrik üretmiyor — hedef "up" görünüyor
+# ama seriler boş. Grafikler görünür, içleri boştur.
+#
+# Bunu controller'ın kendisi yayınlaması hem daha sağlam hem daha dürüst:
+#   • Her Docker sürümünde ve depolama sürücüsünde çalışır.
+#   • privileged bir container ve /var/lib/docker bağlaması gerektirmez.
+#   • ~190 MB tasarruf.
+#   • En önemlisi: sayılar, belleği DAĞITAN kodun kullandığı kaynaktan gelir.
+#     "Otomatik hesap tuttu mu?" sorusunun cevabı, hesabı yapanın kendi
+#     defterinden okunur; ayrı bir aracın farklı sayması kafa karıştırırdı.
+_STATS_LOCK = threading.Lock()
+_STATS_CACHE = {"at": 0.0, "data": {}}
+_STATS_TTL = 20.0     # metrik ucu 30 sn'de bir toplanıyor; bu yeterli
+
+_SIZE_UNITS = {"b": 1, "kb": 10**3, "mb": 10**6, "gb": 10**9, "tb": 10**12,
+               "kib": 1024, "mib": 1024**2, "gib": 1024**3, "tib": 1024**4}
+
+
+def _parse_size(text):
+    """'123.4MiB' → bayt. Anlaşılmazsa None (metriği hiç yayınlamayız —
+    uydurma bir sayı yayınlamak, eksik veriden kötüdür)."""
+    m = re.match(r"^\s*([0-9.]+)\s*([A-Za-z]+)\s*$", text or "")
+    if not m:
+        return None
+    try:
+        return int(float(m.group(1)) * _SIZE_UNITS[m.group(2).lower()])
+    except (ValueError, KeyError):
+        return None
+
+
+def container_stats(force=False):
+    """Container başına anlık bellek kullanımı ve CPU yüzdesi.
+
+    `docker stats` her çağrıda tüm container'ları örnekler ve saniyeler
+    sürebilir; bu yüzden önbellekli. Ayrı bir alan olarak tutuluyor çünkü
+    docker_containers() LİMİTİ okur (boyutlandırma için), burası ise GERÇEK
+    KULLANIMI (izleme için) — ikisinin yan yana görülmesi bu ürünün can alıcı
+    sorusunu cevaplıyor: ayrılan bellek doğru muydu?
+    """
+    with _STATS_LOCK:
+        if not force and (time.time() - _STATS_CACHE["at"]) < _STATS_TTL:
+            return _STATS_CACHE["data"]
+    out = {}
+    rc, sout, _ = run(["docker", "stats", "--no-stream", "--format",
+                       "{{.Name}}|{{.MemUsage}}|{{.CPUPerc}}"], timeout=60)
+    if rc == 0:
+        for line in sout.splitlines():
+            parts = line.split("|")
+            if len(parts) < 3:
+                continue
+            name = parts[0].strip()
+            used = _parse_size((parts[1].split("/")[0]).strip())
+            cpu = parts[2].strip().rstrip("%")
+            try:
+                cpu = float(cpu)
+            except ValueError:
+                cpu = None
+            out[name] = {"used_bytes": used, "cpu_percent": cpu}
+    with _STATS_LOCK:
+        _STATS_CACHE["at"] = time.time()
+        _STATS_CACHE["data"] = out
+    return out
+
+
+def _esc(v):
+    """Prometheus etiket değeri kaçışı."""
+    return str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+
+
+def render_metrics():
+    """Prometheus metin biçimi. Kimlik doğrulaması istemez: controller portu
+    host'a açılmaz, yalnız Docker ağından erişilir (/healthz ile aynı ilke)."""
+    L = []
+
+    def add(name, help_, typ, samples):
+        if not samples:
+            return
+        L.append("# HELP %s %s" % (name, help_))
+        L.append("# TYPE %s %s" % (name, typ))
+        for labels, value in samples:
+            lbl = ",".join('%s="%s"' % (k, _esc(v)) for k, v in labels)
+            L.append("%s{%s} %s" % (name, lbl, value) if lbl else "%s %s" % (name, value))
+
+    # Servis → motor eşlemesi: grafiklerde container'ın hangi veritabanına ait
+    # olduğu görünsün (kullanıcı "postgres-exporter" değil "PostgreSQL" arar).
+    svc2eng = {}
+    for e in CATALOG.engines:
+        for s in e.get("services", []):
+            svc2eng[s] = e
+        rep = e.get("replication") or {}
+        if rep.get("replica_service"):
+            svc2eng[rep["replica_service"]] = e
+
+    conts = docker_containers()
+    stats = container_stats()
+
+    used_s, limit_s, cpu_s, up_s = [], [], [], []
+    for c in conts:
+        eng = svc2eng.get(c["service"])
+        lbl = [("service", c["service"]),
+               ("engine", eng["id"] if eng else ""),
+               ("engine_name", eng["name"] if eng else "")]
+        up_s.append((lbl, 1 if c["status"] == "running" else 0))
+        if c["status"] != "running":
+            continue
+        st = stats.get(c["name"]) or {}
+        if st.get("used_bytes") is not None:
+            used_s.append((lbl, st["used_bytes"]))
+        if st.get("cpu_percent") is not None:
+            cpu_s.append((lbl, st["cpu_percent"]))
+        if c.get("memory_mb"):
+            limit_s.append((lbl, int(c["memory_mb"]) * 1024 * 1024))
+
+    add("dbstack_container_up", "Container calisiyor mu (1/0)", "gauge", up_s)
+    add("dbstack_container_memory_bytes", "Container'in su anki bellek kullanimi",
+        "gauge", used_s)
+    add("dbstack_container_memory_limit_bytes",
+        "Container'a AYRILAN bellek limiti (otomatik hesaplanan)", "gauge", limit_s)
+    add("dbstack_container_cpu_percent", "Container'in islemci kullanimi (%)",
+        "gauge", cpu_s)
+
+    # Motor düzeyi: kullanıcı "PostgreSQL açık mı" diye bakar, "postgresql
+    # container'ı running mi" diye değil.
+    eng_s = []
+    running = {c["service"] for c in conts if c["status"] == "running"}
+    for e in CATALOG.engines:
+        eng_s.append(([("engine", e["id"]), ("engine_name", e["name"])],
+                      1 if e["primary_service"] in running else 0))
+    add("dbstack_engine_active", "Motor acik mi (1/0)", "gauge", eng_s)
+
+    # Bütçe defteri — boyutlandırma motorunun gördüğü sayıların ta kendisi.
+    total, avail = host_memory_mb()
+    committed = sum(c["memory_mb"] for c in conts if c["status"] == "running")
+    os_reserve = min(max(OS_RESERVE_MIN_MB, int(total * OS_RESERVE_RATIO)),
+                     int(total * 0.6)) if total > 0 else 0
+    MB = 1024 * 1024
+    add("dbstack_host_memory_total_bytes", "Sunucunun toplam RAM'i", "gauge",
+        [([], total * MB)])
+    add("dbstack_host_memory_available_bytes", "Sunucuda kullanilabilir RAM",
+        "gauge", [([], avail * MB)])
+    add("dbstack_memory_committed_bytes",
+        "Calisan container'lara AYRILMIS toplam bellek", "gauge",
+        [([], committed * MB)])
+    add("dbstack_memory_budget_bytes",
+        "Yeni bir motora verilebilecek bellek (toplam - OS payi - cekirdek - ayrilmis)",
+        "gauge", [([], max(0, total - os_reserve - CORE_RESERVE_MB - committed) * MB)])
+    add("dbstack_disk_free_bytes", "Veri diskinde bos alan", "gauge",
+        [([], disk_free_mb() * MB)])
+
+    # Devir sayacı: "gece 3'te ne oldu" sorusunun cevabı grafikte görünsün.
+    topo = load_topology()
+    fo_s = [([("engine", eid)], int(v.get("failovers", 0)))
+            for eid, v in topo.items()]
+    add("dbstack_failover_total", "Bu motorda kac kez devir yapildi", "counter", fo_s)
+
+    return "\n".join(L) + "\n"
 
 
 def _k8s_workloads():
@@ -665,7 +851,19 @@ ROLES_ENV = os.path.join(STATE_DIR, "roles.env")
 FAILOVER_INTERVAL = int(os.environ.get("FAILOVER_INTERVAL", "10"))     # saniye
 FAILOVER_STRIKES = int(os.environ.get("FAILOVER_STRIKES", "3"))        # üst üste hata
 FAILOVER_COOLDOWN = int(os.environ.get("FAILOVER_COOLDOWN", "300"))    # saniye
+# Controller açıldıktan sonra hiçbir devir kararı verilmeyen süre. Sunucu
+# yeniden başladığında controller ile veritabanları BİRLİKTE kalkar; bu
+# pencerede "ana kopya yanıt vermiyor" demek yanlış olur.
+FAILOVER_STARTUP_GRACE = int(os.environ.get("FAILOVER_STARTUP_GRACE", "120"))
+# Bir motorun "açılıyor" (health=starting) kalabileceği makul süre. Docker
+# healthcheck'lerinin start_period'u en fazla 60 sn; 5 dakikayı aşan bir açılış
+# artık açılış değil arızadır.
+FAILOVER_STARTING_GRACE = int(os.environ.get("FAILOVER_STARTING_GRACE", "300"))
 NOTIFY_WEBHOOK = os.environ.get("NOTIFY_WEBHOOK", "").strip()
+
+_STARTED_AT = time.time()
+_STARTING_SINCE = {}   # eid → healthcheck'in "starting" demeye başladığı an
+_ALERTED = {}          # (eid, konu) → son bildirim zamanı (aynı uyarıyı susturur)
 
 
 def load_topology():
@@ -790,12 +988,19 @@ def write_roles():
     return ROLES_ENV
 
 
-def reload_gateway():
+def reload_gateway(attempts=3):
     """Yönlendirme değişince nginx'i tazele. `reload` mevcut bağlantıları
-    KOPARMAZ — eski worker'lar boşalana kadar çalışmaya devam eder."""
+    KOPARMAZ — eski worker'lar boşalana kadar çalışmaya devam eder.
+
+    Dönüş: True = gateway ARTIK yeni tabloyu uyguluyor. False dönerse trafik
+    hâlâ ESKİ hedefe (devirde: fence edilmiş ölü düğüme) gidiyor demektir;
+    çağıran yer bunu kullanıcıya söylemek zorundadır."""
     # Container GERÇEKTEN güncel dosyayı görüyor mu? Bind-mount inode'a bağlı
     # olduğu için bu sessizce eskimiş olabilir — devirdeki en pahalı hata budur,
-    # çünkü her şey başarılı görünürken uygulamalar bağlanamaz.
+    # çünkü her şey başarılı görünürken uygulamalar bağlanamaz. Eskiden burada
+    # yalnız log'a bir uyarı düşüyordu ve devir "başarılı" ilan ediliyordu;
+    # oysa bu durumda reload'ın başarılı olması hiçbir şey ifade etmez —
+    # nginx eski dosyayı yeniden okur. O yüzden artık BAŞARISIZLIK sayılıyor.
     try:
         import hashlib
         with open(ROUTES_FILE, "rb") as f:
@@ -803,17 +1008,39 @@ def reload_gateway():
         rc0, seen, _ = run(["docker", "exec", "gateway", "md5sum",
                             "/etc/nginx/stream.d/routes.conf"], timeout=30)
         if rc0 == 0 and want not in seen:
-            log("UYARI: gateway ESKİMİŞ yönlendirme tablosu görüyor — "
-                "bind-mount inode'u kopmuş olabilir, gateway yeniden yaratılmalı")
+            log("gateway ESKİMİŞ yönlendirme tablosu görüyor — bind-mount "
+                "inode'u kopmuş, reload işe yaramaz; gateway yeniden yaratılmalı")
+            return False
     except Exception:
         pass
 
-    rc, out, err = run(["docker", "exec", "gateway", "nginx", "-s", "reload"], timeout=60)
-    if rc != 0:
-        log("gateway reload BAŞARISIZ:", (err or out).strip()[:300])
-        return False
-    log("gateway yönlendirmesi tazelendi")
-    return True
+    for i in range(max(1, attempts)):
+        rc, out, err = run(["docker", "exec", "gateway", "nginx", "-s", "reload"], timeout=60)
+        if rc == 0:
+            log("gateway yönlendirmesi tazelendi")
+            return True
+        log("gateway reload BAŞARISIZ (%d/%d):" % (i + 1, attempts),
+            (err or out).strip()[:300])
+        # Gateway o an yeniden başlıyor olabilir (compose up sırası); birkaç
+        # saniyelik bir pencere için bütün devri kaybetmek istemiyoruz.
+        if i + 1 < attempts:
+            time.sleep(3)
+    return False
+
+
+def gateway_reload_or_alert(eid, what):
+    """reload_gateway()'i çalıştırır; başarısızsa KULLANICIYA SÖYLER.
+
+    Yönlendirme güncellenmeden yapılan devir, yapılmamış devirden farksızdır:
+    uygulamalar durdurulmuş eski düğüme bağlanmaya devam eder. Bu sessiz
+    kalınacak bir hata değil; olay akışına kritik olarak düşüyor."""
+    if reload_gateway():
+        return True, None
+    msg = ("Yönlendirme tablosu gateway'e uygulanamadı — uygulamalar hâlâ ESKİ "
+           "adrese gidiyor. Sunucuda `docker restart gateway` çalıştırın; "
+           "veritabanı tarafında yapılacak bir şey yok (%s)." % what)
+    record_event("gateway_reload_failed", eid, msg, level="critical")
+    return False, msg
 
 
 # =============================================================================
@@ -889,26 +1116,115 @@ def _health_of(service):
     return "absent", "none"
 
 
+# --- Devir/kurtarma işlemleri motor başına TEK SIRADA yürür ------------------
+# Eskiden ACTION_LOCK yalnız compose çağrısını sarıyordu; devrin kendisi kilitsizdi.
+# Gerçek riski şuydu: denetleyici mariadb-replica'yı yükseltirken (topology
+# henüz YAZILMAMIŞ) operatör dashboard'dan "eski kopyayı yeniden kur" derse,
+# rebuild o an primary'ye yükseltilmekte olan düğümü "eski primary" sanıp
+# container'ını ve VOLUME'unu siliyordu — eski primary zaten fence edilmiş
+# olduğu için elde tek bir sağlam kopya bile kalmıyordu.
+_ENGINE_LOCKS = {}
+_ENGINE_LOCKS_GUARD = threading.Lock()
+BUSY_MSG = ("%s için zaten bir devir/kurtarma işlemi sürüyor. Bitmesini bekleyin; "
+            "aynı anda ikisini birden çalıştırmak veri kaybına yol açabilir.")
+
+
+def engine_lock(eid):
+    with _ENGINE_LOCKS_GUARD:
+        return _ENGINE_LOCKS.setdefault(eid, threading.Lock())
+
+
+# Devir bekleme süresi (cooldown) yalnız bellekte tutuluyordu; controller her
+# yeniden başladığında sıfırlanıyordu. Devir çoğunlukla controller'ın da
+# yeniden başladığı bir olayda (sunucu reboot'u) yaşandığı için bu kural fiilen
+# hiç işlemiyordu: aynı motor peş peşe devredebiliyordu. Artık diske yazılıyor.
+FAILOVER_GUARD_FILE = os.path.join(STATE_DIR, "failover-guard.json")
+_STRIKES = {}
+_LAST_FAILOVER = {}
+
+
+def _last_failover_at(eid):
+    if eid not in _LAST_FAILOVER:
+        try:
+            _LAST_FAILOVER[eid] = float(_read_json(FAILOVER_GUARD_FILE, {}).get(eid, 0))
+        except (TypeError, ValueError):
+            _LAST_FAILOVER[eid] = 0.0
+    return _LAST_FAILOVER.get(eid, 0.0)
+
+
+def _mark_failover_attempt(eid):
+    _LAST_FAILOVER[eid] = time.time()
+    try:
+        g = _read_json(FAILOVER_GUARD_FILE, {})
+        g[eid] = int(_LAST_FAILOVER[eid])
+        _write_json(FAILOVER_GUARD_FILE, g)
+    except OSError as e:  # disk doluysa bile devri engellemeyiz, sadece uyarırız
+        log("devir bekleme süresi diske yazılamadı:", e)
+
+
+def node_is_writable_primary(engine, service, jl=None):
+    """Bu düğüm GERÇEKTEN yazılabilir ana kopya mı? (failover betiğinin 'check'i)
+
+    True  = evet, ölçtük.   False = hayır (replika, read-only ya da erişilemez).
+    None  = soramadık (betik yok / motor desteklemiyor).
+    """
+    fo = engine.get("failover", {})
+    script = script_path("failover", fo.get("promote_script") or engine["id"])
+    if not fo.get("supported") or not os.path.exists(script):
+        return None
+    rc, out, err = run(["sh", script, "check", service], timeout=60, env=script_env())
+    if jl and (out or err):
+        jl(("check %s: " % service) + (out + err).strip()[-300:])
+    return rc == 0
+
+
 def perform_failover(eid, reason, jid=None):
     """Replikayı primary'ye yükseltir. Sıra kritiktir."""
     engine = CATALOG.engine(eid)
     fo = engine.get("failover", {})
-    if not fo.get("supported"):
-        return False, "Bu motorda failover desteklenmiyor: " + fo.get("note", "")
-    if fo.get("mode") == "native":
-        return False, ("%s kendi seçimini yapar; controller müdahale etmez. "
-                       "Replica set üyelerini kontrol edin." % engine["name"])
 
+    # Devrin REDDEDİLDİĞİ her yol da bir olaydır. Eskiden bu yollarda hiçbir
+    # olay yazılmıyordu: gece 03:00'te ana kopya ölüyor, otomatik devir
+    # "yedek yok" diye sessizce vazgeçiyor, webhook'a hiçbir bildirim gitmiyor
+    # ve operatör durumu ancak uygulama şikâyetiyle öğreniyordu. Tam olarak
+    # bildirim gerektiren an, sistemin en sessiz kaldığı an oluyordu.
+    def refuse(msg, level="critical", kind="failover_blocked"):
+        record_event(kind, eid, "Devir YAPILMADI: " + msg, level=level)
+        return False, msg
+
+    if not fo.get("supported"):
+        return refuse("Bu motorda failover desteklenmiyor: " + fo.get("note", ""),
+                      level="warning")
+    if fo.get("mode") == "native":
+        return refuse("%s kendi seçimini yapar; controller müdahale etmez. "
+                      "Replica set üyelerini kontrol edin." % engine["name"],
+                      level="warning")
+
+    # Aynı motorda ikinci bir devir/kurtarma işi varsa BEKLEMİYORUZ, reddediyoruz:
+    # sıraya alınmış bir devir, aradaki topology değişikliğini görmediği için
+    # yanlış düğümü fence eder.
+    lock = engine_lock(eid)
+    if not lock.acquire(blocking=False):
+        return refuse(BUSY_MSG % engine["name"], level="warning")
+    try:
+        return _perform_failover_locked(engine, eid, fo, reason, jid, refuse)
+    finally:
+        lock.release()
+
+
+def _perform_failover_locked(engine, eid, fo, reason, jid, refuse):
     old = current_primary(engine)
     new = standby_of(engine)
     if not new:
-        return False, "Replika yok — önce replikasyonu açın."
+        return refuse("%s için yedek kopya yok — yükseltilecek bir düğüm "
+                      "bulunmadığı için devir yapılamadı. Ana kopya erişilemez "
+                      "durumdaysa elle müdahale gerekiyor." % engine["name"])
 
     ostat, ohealth = _health_of(old)
     nstat, nhealth = _health_of(new)
     if nstat != "running":
-        return False, ("Yedek kopya (%s) çalışmıyor — yükseltilecek sağlam bir "
-                       "kopya yok. Failover yapılmadı." % new)
+        return refuse("Yedek kopya (%s) çalışmıyor — yükseltilecek sağlam bir "
+                      "kopya yok. Ana kopyaya dokunulmadı." % new)
 
     def jl(*m):
         if jid:
@@ -918,15 +1234,15 @@ def perform_failover(eid, reason, jid=None):
 
     script = script_path("failover", fo.get("promote_script") or eid)
     if not os.path.exists(script):
-        return False, "Yükseltme betiği yok: " + script
+        return refuse("Yükseltme betiği yok: " + script)
 
     # Replikasyon hiç BAŞARIYLA kurulmadıysa ortada yükseltilecek bir yedek de
     # yoktur. Container'ın ayakta olması yetmez: kurulumu yarıda kalmış bir
     # düğüm, primary'nin verisini değil kendi eski verisini taşır.
     rep_profile = (engine.get("replication") or {}).get("profile")
     if rep_profile and rep_profile not in load_state().get("profiles", []):
-        return False, ("%s için replikasyon kurulu değil — yükseltilecek geçerli "
-                       "bir yedek kopya yok. Devir yapılmadı." % engine["name"])
+        return refuse("%s için replikasyon kurulu değil — yükseltilecek geçerli "
+                      "bir yedek kopya yok." % engine["name"])
 
     # 0) ÖN KONTROL — yedek gerçekten yükseltilebilir durumda mı?
     #    Bu adım FENCE'TEN ÖNCE gelir ve iki ayrı felaketi engeller:
@@ -946,6 +1262,10 @@ def perform_failover(eid, reason, jid=None):
                        "akmıyor. Devir yapılmadı. %s" % (new, detail))
 
     jl("FAILOVER: %s → %s  (sebep: %s)" % (old, new, reason))
+    # Bekleme süresi (cooldown) TAM BURADA, ana kopyaya dokunmadan hemen önce
+    # başlar ve diske yazılır. Elle tetiklenen devir de sayılır: denetleyici,
+    # controller yeniden başlasa bile aynı motoru hemen ikinci kez devretmesin.
+    _mark_failover_attempt(eid)
 
     # 1) FENCE — eski primary'yi durdur. Bu adım ATLANAMAZ: iki kopya aynı anda
     #    yazma kabul ederse (split-brain) veriler ayrışır ve birleştirilemez.
@@ -995,7 +1315,7 @@ def perform_failover(eid, reason, jid=None):
     save_topology(topo)
     write_roles()      # roller yer değiştirdi — yeni rol dosyasını üret
     write_routes()
-    reload_gateway()
+    routed, route_err = gateway_reload_or_alert(eid, "%s → %s devri" % (old, new))
 
     # 4) KAYDET
     jl("4/4 tamam — yeni primary:", new)
@@ -1003,6 +1323,14 @@ def perform_failover(eid, reason, jid=None):
                  "Otomatik failover: %s devre dışı, %s primary oldu. Sebep: %s"
                  % (old, new, reason),
                  level="critical", old_primary=old, new_primary=new)
+    if not routed:
+        # Yükseltme oldu ama trafik hâlâ ölü düğüme gidiyor. Bunu "başarılı"
+        # saymak, kullanıcıya çalışan bir veritabanı olduğunu söylemek olurdu;
+        # oysa uygulamaları hâlâ bağlanamıyor. İşi BAŞARISIZ kapatıp ne
+        # yapması gerektiğini tek cümlede söylüyoruz.
+        jl("UYARI:", route_err)
+        return False, ("Yedek kopya (%s) yükseltildi ve yazmaya açık, ancak %s"
+                       % (new, route_err))
     return True, None
 
 
@@ -1019,6 +1347,48 @@ def volume_of(service):
     return ("%s_%s" % (PROJECT, v)) if v else None
 
 
+# Yeni kurulan yedeğin gerçekten yedek olduğunu doğrulamak için beklenecek
+# süre. İlk klonlama (pg_basebackup / dump) büyük veritabanlarında dakikalar
+# sürebilir; bu yüzden cömert.
+STANDBY_VERIFY_TIMEOUT = int(os.environ.get("STANDBY_VERIFY_TIMEOUT", "900"))
+
+
+def verify_standby(engine, service, jl):
+    """Yeni kurulan düğüm GERÇEKTEN yedek mi? (ok, açıklama)
+
+    Eskiden yalnız `compose up`'ın çıkış koduna bakılıyordu. Ama container'ın
+    ayağa kalkması hiçbir şey kanıtlamaz: veri hacmi silinemediyse düğüm eski
+    verisiyle İKİNCİ BİR YAZILABİLİR ANA KOPYA olarak açılır (replika okuma
+    portu 5433/3307 host'a açık olduğu için uygulamalar oraya yazmaya bile
+    başlayabilir), replikasyon kullanıcısı yoksa da sonsuz crash-loop'a girer.
+    İki durumda da işlem "başarılı" görünüyordu. Artık ölçüyoruz:
+      • failover betiğinin `check`i 0 dönerse düğüm YAZILABİLİR primary'dir → felaket,
+      • `ready` 0 dönerse düğüm gerçekten veri almış bir yedektir → tamam.
+    """
+    fo = engine.get("failover", {})
+    script = script_path("failover", fo.get("promote_script") or engine["id"])
+    if not os.path.exists(script):
+        return True, "doğrulama betiği yok (%s) — atlandı" % script
+    env = script_env()
+    deadline = time.time() + STANDBY_VERIFY_TIMEOUT
+    turn, last = 0, ""
+    while True:
+        if node_is_writable_primary(engine, service, None) is True:
+            return False, ("%s yedek olarak değil, İKİNCİ BİR YAZILABİLİR ANA KOPYA "
+                           "olarak açıldı" % service)
+        rrc, rout, rerr = run(["sh", script, "ready", service], timeout=120, env=env)
+        last = (rout + rerr).strip()[-400:]
+        if rrc == 0:
+            return True, last
+        if time.time() >= deadline:
+            return False, ("%s %d saniyede yedek konumuna geçmedi. Son durum: %s"
+                           % (service, STANDBY_VERIFY_TIMEOUT, last or "(çıktı yok)"))
+        turn += 1
+        if turn % 6 == 1:
+            jl("   yedek kopya hâlâ senkronlanıyor…", last)
+        time.sleep(5)
+
+
 def rebuild_standby(eid, jid=None):
     """Failover sonrası eski primary'yi yeni primary'nin REPLİKASI olarak geri alır.
 
@@ -1027,25 +1397,90 @@ def rebuild_standby(eid, jid=None):
     """
     engine = CATALOG.engine(eid)
     rep = engine.get("replication", {})
-    old = standby_of(engine)   # failover sonrası eski primary artık "standby" rolünde
-    if not old:
-        return False, "Yeniden kurulacak kopya bulunamadı"
 
     def jl(*m):
         job_log(jid, *m) if jid else log(*m)
 
+    def refuse(msg, level="warning"):
+        record_event("rebuild_blocked", eid, "Yeniden kurulum YAPILMADI: " + msg,
+                     level=level)
+        return False, msg
+
+    # Bu işlem BİR VERİ HACMİNİ SİLER. Aynı motorda bir devir sürerken
+    # çalışırsa, o an primary'ye yükseltilmekte olan düğümü silebilir; eski
+    # primary de fence edilmiş olduğu için elde hiçbir sağlam kopya kalmaz.
+    lock = engine_lock(eid)
+    if not lock.acquire(blocking=False):
+        return refuse(BUSY_MSG % engine["name"])
+    try:
+        return _rebuild_standby_locked(engine, eid, rep, jid, jl, refuse)
+    finally:
+        lock.release()
+
+
+def _rebuild_standby_locked(engine, eid, rep, jid, jl, refuse):
+    old = standby_of(engine)   # failover sonrası eski primary artık "standby" rolünde
+    if not old:
+        return refuse("%s primary-replica desteklemiyor; yeniden kurulacak bir "
+                      "yedek kopya yok." % engine["name"])
+
+    # ÖNKOŞUL 1 — replikasyon kurulu olmalı. Kurulmadan çağrılırsa (dashboard'da
+    # düğme görünmese de uç açıktır) replika hacmi siliniyor, container ise
+    # olmayan replikasyon kullanıcısıyla bağlanmayı deneyip crash-loop'a
+    # giriyordu; state["profiles"] güncellenmediği için ne durdurulabiliyor ne
+    # de bellek defterine giriyordu — sessiz bir kaynak sızıntısı.
+    if rep.get("profile") and rep["profile"] not in load_state().get("profiles", []):
+        return refuse("%s için replikasyon kurulu değil. Önce 'Yedek Kopya Kur' "
+                      "deyin; yeniden kurulacak bir yedek yok." % engine["name"])
+
+    prim = current_primary(engine)
+    if old == prim:
+        # Buraya düşülmemeli; düşülürse topoloji tutarsız demektir.
+        return refuse("Hedef düğüm (%s) şu anda ANA KOPYA olarak görünüyor — "
+                      "yanlış düğümü silmemek için işlem durduruldu." % old, "critical")
+
+    # ÖNKOŞUL 2 — kopyanın alınacağı ana kopya AYAKTA ve YAZILABİLİR olmalı.
+    # Bu adım atlanırsa elde kalan tek sağlam kopyanın verisi silinir: yedeği
+    # yeniden kurmak, ana kopya sağlamken anlamlıdır.
+    pstat, phealth = _health_of(prim)
+    if pstat != "running":
+        return refuse("Ana kopya (%s) şu anda çalışmıyor (%s). Yedeği silip "
+                      "yeniden kurmak, elinizdeki tek kopyayı yok ederdi. Önce "
+                      "ana kopyayı ayağa kaldırın." % (prim, pstat), "critical")
+    if node_is_writable_primary(engine, prim, jl) is False:
+        return refuse("Ana kopya (%s) yazma kabul etmiyor (hâlâ yedek/read-only "
+                      "durumda olabilir). Kopyanın alınacağı kaynak sağlam "
+                      "değilken yedeği silmiyoruz." % prim, "critical")
+
     jl("Eski primary yeni primary'nin replikası olarak kuruluyor:", old)
+    jl("   kopya kaynağı (ana kopya):", prim, " hedef (yeniden kurulacak):", old)
     # Rolleri ÖNCE yaz: container yaratılırken doğru STANDBY_OF değerini
     # görmeli, yoksa yine primary olarak açılır.
     write_roles()
-    run(["docker", "rm", "-f", old], timeout=120)
+    rc, out, err = run(["docker", "rm", "-f", old], timeout=120)
+    if rc != 0:
+        # Container zaten yoksa docker sürümüne göre 0 ya da 1 dönebilir; asıl
+        # kapıyı aşağıdaki volume silme tutuyor (container duruyorsa hacim
+        # "in use" der ve orada duruyoruz).
+        jl("   not: container silinemedi/zaten yok:", (err or out).strip()[-200:])
 
     # Eski verinin silinmesi ZORUNLU — yoksa yeni primary ile ayrışmış geçmiş
     # birleşemez ve replikasyon tutarsız veriyle başlar.
     full = volume_of(old)
     if full:
         jl("eski veri temizleniyor:", full)
-        run(["docker", "volume", "rm", "-f", full], timeout=120)
+        rc, out, err = run(["docker", "volume", "rm", "-f", full], timeout=120)
+        if rc != 0:
+            # Sessizce devam etmek en pahalı hataydı: hacim silinmeyince düğüm
+            # ESKİ verisiyle ve (PGDATA dolu olduğu için klonlama atlanarak)
+            # NORMAL PRIMARY olarak açılıyor, ortada iki yazılabilir kopya
+            # kalıyordu. Hacmi genelde yedekleme betiği ya da hâlâ silinmemiş
+            # container tutar; ikisi de birkaç dakikada biter.
+            return refuse(
+                "Eski verinin hacmi silinemedi (%s): %s\nBaşka bir işlem (yedekleme "
+                "olabilir) hacmi kullanıyor. Birkaç dakika sonra tekrar deneyin — "
+                "eski veriyle açılan bir düğüm ikinci bir ana kopya olurdu."
+                % (full, (err or out).strip()[-300:]), "critical")
 
     with ACTION_LOCK:
         rc, out, err = run(compose_base() + ["--profile", engine["profile"],
@@ -1053,27 +1488,89 @@ def rebuild_standby(eid, jid=None):
                            timeout=1800)
     jl((out + err).strip()[-2000:])
     if rc != 0:
-        return False, "Replika yeniden kurulamadı"
+        return refuse("Yedek kopya yeniden kurulamadı (compose çıkış %d): %s"
+                      % (rc, (err or out).strip()[-300:]), "critical")
 
     # PostgreSQL ve Redis rol env'iyle kendi kendine bağlanır (entrypoint /
     # --replicaof). MariaDB'de dump+CHANGE MASTER gerekir; betik onu yapar.
     script = script_path("replication", eid)
     if os.path.exists(script) and eid == "mariadb":
+        # YÖN, betiğe AÇIKÇA verilir. Betik yönü kendi içinde sabit tutarsa
+        # (eskiden öyleydi) devirden sonra dump AZ ÖNCE SİLİNMİŞ boş düğümden
+        # alınıp CANLI ana kopyanın üzerine basılır; canlı kopya da o boş
+        # düğümün replikası yapılır. Yani veriyi kurtarmak için başlatılan
+        # işlem, elde kalan tek sağlam kopyayı siler.
         env = script_env()
-        env.update(REPLICATION_PRIMARY=current_primary(engine), REPLICATION_STANDBY=old)
+        env.update(REPLICATION_PRIMARY=prim, REPLICATION_STANDBY=old)
+
+        # Son emniyet kemeri: dump BASILMADAN hemen önce yönü bir kez daha
+        # ölçüyoruz. Kaynak yazılabilir ana kopya DEĞİLSE ya da hedef
+        # yazılabilir görünüyorsa dökümü hiç başlatmıyoruz.
+        if node_is_writable_primary(engine, prim, jl) is False:
+            return refuse("Kopya kaynağı (%s) yazılabilir ana kopya değil — "
+                          "yanlış yönde kopyalama yapıp canlı veriyi ezmemek için "
+                          "durduruldu." % prim, "critical")
+        if node_is_writable_primary(engine, old, jl) is True:
+            return refuse("Yeniden kurulan düğüm (%s) yazılabilir ana kopya olarak "
+                          "açılmış — üzerine döküm basmak iki kopyayı da bozardı. "
+                          "Durduruldu; `docker logs %s` çıktısına bakın."
+                          % (old, old), "critical")
+
         rc, out, err = run(["sh", script, "attach"], timeout=1800, env=env)
         jl((out + err).strip()[-3000:])
         if rc != 0:
-            return False, "Replika primary'e bağlanamadı"
+            return refuse("Yedek kopya ana kopyaya bağlanamadı (çıkış %d): %s"
+                          % (rc, (err or out).strip()[-300:]), "critical")
+
+    # Doğrulama: düğüm gerçekten yedek mi? Bu adım olmadan crash-loop'taki ya da
+    # ikinci bir primary olarak açılmış düğüm "kuruldu" diye rapor ediliyordu.
+    jl("yedek kopya doğrulanıyor…")
+    ok, detail = verify_standby(engine, old, jl)
+    if not ok:
+        # Doğrulanamayan düğüm AYAKTA BIRAKILMAZ: yazılabilir olabilir ve
+        # replika okuma portundan eski veriyi sunar.
+        run(["docker", "stop", "-t", "15", old], timeout=120)
+        return refuse("%s. Düğüm güvenlik için durduruldu; veri kaybı olmasın diye "
+                      "ana kopyaya dokunulmadı." % detail, "critical")
+    jl("   doğrulandı:", detail)
 
     write_routes()
-    reload_gateway()
+    routed, route_err = gateway_reload_or_alert(eid, "%s yedeğinin yeniden kurulumu" % old)
     record_event("rebuild", eid, "%s yeniden replika olarak kuruldu" % old, level="info")
+    if not routed:
+        jl("UYARI:", route_err)
+        return False, ("Yedek kopya (%s) kuruldu ve ana kopyayı takip ediyor, ancak %s"
+                       % (old, route_err))
     return True, None
 
 
-_STRIKES = {}
-_LAST_FAILOVER = {}
+def health_verdict(eid, pstat, phealth):
+    """Denetleyicinin sağlık yorumu: "ok" | "starting" | "bad".
+
+    "starting" HATA DEĞİLDİR — motor daha açılıyor demektir. Docker healthcheck'i
+    start_period boyunca bunu döndürür (MariaDB'de 60 sn, PostgreSQL'de 30 sn).
+    Eskiden bu da sağlıksızlık sayılıyordu: sıradan bir sunucu reboot'unda
+    denetleyici 30 saniyede 3 vuruşu doldurup açılışını yapan ana kopyayı
+    ortasından kesiyor, daha kendisi de açılmamış yedeği yükseltmeye çalışıyordu.
+    Artık sayaç DONDURULUYOR — ama sonsuza kadar değil: açılış makul süreyi
+    aşarsa (motor gerçekten açılamıyorsa) yeniden sağlıksızlık sayılır."""
+    if pstat == "running" and phealth in ("healthy", "none"):
+        _STARTING_SINCE.pop(eid, None)
+        return "ok"
+    if pstat == "running" and phealth == "starting":
+        since = _STARTING_SINCE.setdefault(eid, time.time())
+        return "starting" if (time.time() - since) < FAILOVER_STARTING_GRACE else "bad"
+    _STARTING_SINCE.pop(eid, None)
+    return "bad"
+
+
+def _alert_once(eid, key, message, every=600):
+    """Aynı uyarıyı her 10 sn'de bir tekrarlamadan, ama unutmadan da bildirir."""
+    now = time.time()
+    if now - _ALERTED.get((eid, key), 0) < every:
+        return
+    _ALERTED[(eid, key)] = now
+    record_event("failover_impossible", eid, message, level="critical")
 
 
 def failover_supervisor():
@@ -1082,14 +1579,30 @@ def failover_supervisor():
     Neden üst üste birkaç hata bekliyoruz: tek bir başarısız healthcheck geçici
     olabilir (yoğun anlık yük, kısa GC duraklaması). Gereksiz failover, gereksiz
     kesinti demektir — bu yüzden eşik FAILOVER_STRIKES kadar arka arkaya hatadır.
+
+    Açılış lütuf süresi neden var: devir kararının en tehlikeli anı, sunucunun
+    yeni açıldığı andır. Reboot sonrası hem veritabanı hem controller birlikte
+    kalkar; veritabanının healthcheck'i start_period boyunca "starting" der.
+    Bunu sağlıksızlık sayan eski sürüm, sıradan bir reboot'ta 30 saniye içinde
+    3 vuruşu doldurup açılışını yapan ana kopyayı ortasından kesiyor (crash
+    recovery sırasında olabiliyor) ve daha kendisi de açılmamış replikayı
+    yükseltmeye çalışıyordu — sonuç 5+ dakikalık tam kesintiydi.
     """
-    log("failover denetleyicisi başladı (her %ds, eşik %d)"
-        % (FAILOVER_INTERVAL, FAILOVER_STRIKES))
+    log("failover denetleyicisi başladı (her %ds, eşik %d, açılış lütfu %ds)"
+        % (FAILOVER_INTERVAL, FAILOVER_STRIKES, FAILOVER_STARTUP_GRACE))
     while True:
         time.sleep(FAILOVER_INTERVAL)
         try:
             enabled = auto_failover_engines()
             if not enabled:
+                continue
+            grace_left = FAILOVER_STARTUP_GRACE - (time.time() - _STARTED_AT)
+            if grace_left > 0:
+                # Açılışta hiçbir devir kararı verilmez; sayaçlar da temiz kalır.
+                if int(grace_left) % 30 < FAILOVER_INTERVAL:
+                    log("açılış lütuf süresi: devir kararları %d sn sonra başlıyor"
+                        % int(grace_left))
+                _STRIKES.clear()
                 continue
             for eid in list(enabled):
                 engine = CATALOG.engine(eid)
@@ -1097,14 +1610,27 @@ def failover_supervisor():
                     continue
                 if engine["failover"].get("mode") != "supervised":
                     continue
-                stand = standby_of(engine)
-                if not stand:
-                    continue
                 prim = current_primary(engine)
                 pstat, phealth = _health_of(prim)
+                stand = standby_of(engine)
+                rep_profile = (engine.get("replication") or {}).get("profile")
+                can_fail_over = bool(stand) and (
+                    not rep_profile or rep_profile in load_state().get("profiles", []))
+                if not can_fail_over:
+                    # Otomatik devir AÇIK ama yükseltilecek yedek yok. Ana kopya
+                    # da ölüyse sistem eskiden tamamen sessiz kalıyordu: dashboard
+                    # "otomatik devir açık" yazdığı için sahte bir güven veriyor,
+                    # kimse durumu öğrenmiyordu. Artık düzenli olarak haber veriyoruz.
+                    if pstat != "running":
+                        _alert_once(eid, "no-standby",
+                                    "%s ana kopyası çalışmıyor (%s) ve devredilecek "
+                                    "bir yedek kopya YOK — otomatik devir yapılamıyor. "
+                                    "Elle müdahale gerekiyor."
+                                    % (engine["name"], pstat))
+                    continue
 
-                healthy = (pstat == "running" and phealth in ("healthy", "none"))
-                if healthy:
+                verdict = health_verdict(eid, pstat, phealth)
+                if verdict == "ok":
                     if _STRIKES.get(eid):
                         log("%s: primary toparlandı, sayaç sıfırlandı" % eid)
                     _STRIKES[eid] = 0
@@ -1129,11 +1655,23 @@ def failover_supervisor():
                                              level="warning")
                     continue
 
+                # Motor açılıyorsa (health=starting) sayaç DONDURULUR; devir
+                # kararı vermek için ortada bir arıza yok.
+                waited = int(time.time() - _STARTING_SINCE.get(eid, time.time()))
+                if verdict == "starting":
+                    if waited % 60 < FAILOVER_INTERVAL:
+                        log("%s: ana kopya açılıyor (%d sn) — sayaç dondu"
+                            % (eid, waited))
+                    continue
+                if phealth == "starting":
+                    log("%s: ana kopya %d sn'dir açılamıyor — sağlıksız sayılıyor"
+                        % (eid, waited))
+
                 _STRIKES[eid] = _STRIKES.get(eid, 0) + 1
                 # Devir denendi ve olmadıysa bekleme süresi boyunca sayaç artmaya
                 # devam eder; her turda satır basmak logu doldurup asıl hatayı
                 # görünmez yapıyordu (gerçek bir olayda "24/3" e kadar gitti).
-                cooling = time.time() - _LAST_FAILOVER.get(eid, 0) < FAILOVER_COOLDOWN
+                cooling = time.time() - _last_failover_at(eid) < FAILOVER_COOLDOWN
                 if _STRIKES[eid] <= FAILOVER_STRIKES or _STRIKES[eid] % 20 == 0:
                     log("%s: primary sağlıksız (%s/%s) — %d/%d%s"
                         % (eid, pstat, phealth, _STRIKES[eid], FAILOVER_STRIKES,
@@ -1142,11 +1680,21 @@ def failover_supervisor():
                     continue
 
                 _STRIKES[eid] = 0
-                _LAST_FAILOVER[eid] = time.time()
+                _mark_failover_attempt(eid)
                 jid = new_job("failover", eid)
-                okk, reason = perform_failover(
-                    eid, "primary %d kez üst üste sağlıksız (%s)" % (FAILOVER_STRIKES, phealth),
-                    jid)
+                # perform_failover'ın kendisi de istisna fırlatabilir (docker
+                # daemon kayıp, betik zaman aşımı…). Yakalamazsak iş sonsuza dek
+                # "devam ediyor" görünür ve kimse ne olduğunu bilemez.
+                try:
+                    okk, reason = perform_failover(
+                        eid, "primary %d kez üst üste sağlıksız (%s)"
+                        % (FAILOVER_STRIKES, phealth), jid)
+                except Exception as e:
+                    okk, reason = False, repr(e)
+                    record_event("failover_failed", eid,
+                                 "Otomatik devir sırasında beklenmeyen hata: %r — "
+                                 "veritabanının durumunu elle kontrol edin." % e,
+                                 level="critical")
                 job_done(jid, okk, reason)
         except Exception as e:
             log("denetleyici hatası:", repr(e))
@@ -1269,6 +1817,27 @@ def do_activate(jid, eid, requested_mb=None):
             return job_done(jid, rc == 0, None if rc == 0 else errout.strip(), {"plan": p})
 
         services = list(engine["services"])
+        profiles = [engine["profile"]]
+
+        # DEVİR OLMUŞSA GÜNCEL VERİ ARTIK YEDEKTEDİR. Kataloğun "asıl" ana
+        # kopyası (ör. postgresql) devirde durdurulmuş, ESKİMİŞ veriyle duran
+        # düğümdür; onu açmak iki felaketi birden getirirdi: veri dolu olduğu
+        # için entrypoint klonlamayı atlar ve düğüm eski verisiyle yazma kabul
+        # eden ikinci bir primary olur; üstelik yönlendirme tablosu gerçek ana
+        # kopyayı gösterdiği için kullanıcı gateway'den ona hiç ulaşamaz ve
+        # dashboard motoru "açılmadı" gösterir. Bu yüzden ŞU ANKİ ana kopyayı
+        # açıyoruz; eski düğüm ancak "Eski kopyayı yeniden kur" ile geri gelir.
+        prim = current_primary(engine)
+        rep = engine.get("replication", {})
+        if prim != engine["primary_service"] and rep.get("profile"):
+            services = [s for s in services if s != engine["primary_service"]] + [prim]
+            profiles.append(rep["profile"])
+            write_roles()   # container doğru rolle yaratılsın
+            job_log(jid, "NOT: bu motorda devir yapılmış — güncel veriyi taşıyan "
+                         "%s açılıyor. Eski kopyayı (%s) geri almak için "
+                         "'Eski kopyayı yeniden kur' düğmesini kullanın."
+                    % (prim, engine["primary_service"]))
+
         if not p.get("with_panel", True):
             skip = set((engine.get("panel") or {}).get("services", []))
             services = [s for s in services if s not in skip]
@@ -1280,8 +1849,10 @@ def do_activate(jid, eid, requested_mb=None):
             # Servisler AÇIKÇA isimlendirilir. İsim vermeden `--profile X up -d`
             # demek profilsiz servisleri de (controller dahil!) yeniden yaratır —
             # controller kendini öldürürdü.
-            cmd = compose_base() + ["--profile", engine["profile"], "up", "-d",
-                                    "--remove-orphans"] + services
+            args = []
+            for pr in profiles:
+                args += ["--profile", pr]
+            cmd = compose_base() + args + ["up", "-d", "--remove-orphans"] + services
             job_log(jid, "$", " ".join(cmd[-8:]))
             rc, out, errout = run(cmd, timeout=1800)
         for line in (out + errout).splitlines()[-40:]:
@@ -1290,8 +1861,14 @@ def do_activate(jid, eid, requested_mb=None):
             return job_done(jid, False, "compose başarısız (çıkış %d)" % rc, {"plan": p})
 
         st = load_state()
-        st["profiles"] = list(set(st.get("profiles", [])) | {engine["profile"]})
+        st["profiles"] = list(set(st.get("profiles", [])) | set(profiles))
         save_state(st)
+        # Yönlendirme tablosu açık motorları da göstermeli; devir sonrası
+        # yeniden açılan motorda gateway'in hedefi tazelenmezse istekler
+        # var olmayan container'a gider.
+        if prim != engine["primary_service"]:
+            write_routes()
+            gateway_reload_or_alert(eid, "%s yeniden açıldı" % engine["name"])
         record_event("activate", eid,
                      "%s açıldı — %d MB ayrıldı%s"
                      % (engine["name"], p["limit_mb"],
@@ -1318,9 +1895,18 @@ def do_deactivate(jid, eid):
         rep = engine.get("replication", {})
         targets = list(engine["services"])
         profiles = [engine["profile"]]
-        if rep.get("profile") and rep["profile"] in load_state().get("profiles", []):
+        prim = current_primary(engine)
+        # Devir olmuşsa ŞU ANKİ ana kopya replika servisidir; onu listeye
+        # almazsak "durdur" dediğimiz motor aslında ayakta kalır ve yazma kabul
+        # etmeye devam eder. (Profil defterine bakmak yetmiyor: devirden sonra
+        # profil listesi elle bozulmuş olabilir.)
+        if rep.get("profile") and (rep["profile"] in load_state().get("profiles", [])
+                                   or prim != engine["primary_service"]):
             targets.append(rep["replica_service"])
             profiles.append(rep["profile"])
+        # TOPOLOJİ KAYDI SİLİNMEZ. Motor kapatılıp yeniden açıldığında hangi
+        # düğümün güncel veriyi taşıdığını yalnız bu kayıt biliyor; silersek
+        # bir sonraki "Aktif Et" eskimiş eski primary'yi açardı.
 
         with ACTION_LOCK:
             args = []
@@ -1368,6 +1954,26 @@ def do_replication(jid, eid, enable):
         svc = rep["replica_service"]
         override = "%s-replica" % eid  # overrides/<eid>-replica.yml (varsa)
 
+        # DEVİRDEN SONRA ROLLER TERSTİR: replika servisi (ör. postgresql-replica)
+        # artık CANLI ANA KOPYADIR. Bu kontrol olmadan "replikasyonu kapat",
+        # kataloğa bakıp o servisi durdurup container'ını siliyordu — eski
+        # primary zaten fence edilmiş olduğu için ortada çalışan hiçbir
+        # veritabanı kalmıyordu. "Replikayı kur" tarafı ise aynı düğümün
+        # HACMİNİ siliyordu. İkisi de tek komutla toplam veri kaybı demek.
+        prim = current_primary(engine)
+        if svc == prim:
+            msg = ("%s için devir yapılmış durumda: şu anki ANA KOPYA '%s'. "
+                   "Bu işlem ana kopyayı silerdi. Önce 'Eski kopyayı yeniden kur' "
+                   "ile rolleri eski hâline getirin." % (engine["name"], prim))
+            record_event("replication_blocked", eid, msg, level="critical")
+            return job_done(jid, False, msg)
+
+        # Betiklere yönü AÇIKÇA söylüyoruz: hangi düğümden kopyalanacak, hangi
+        # düğüme basılacak. Yönü betiğin içine sabitlemek, devirden sonra canlı
+        # kopyanın üzerine yazmakla sonuçlanıyordu.
+        rep_env = script_env()
+        rep_env.update(REPLICATION_PRIMARY=prim, REPLICATION_STANDBY=svc)
+
         if enable:
             if engine["profile"] not in load_state().get("profiles", []):
                 return job_done(jid, False, "Önce %s motorunu aktif edin." % engine["name"])
@@ -1403,7 +2009,7 @@ def do_replication(jid, eid, enable):
             script = script_path("replication", eid)
             if os.path.exists(script):
                 job_log(jid, "primary hazırlanıyor…")
-                rc, out, errout = run(["sh", script, "prepare"], timeout=900, env=script_env())
+                rc, out, errout = run(["sh", script, "prepare"], timeout=900, env=rep_env)
                 job_log(jid, (out + errout).strip()[-3000:])
                 if rc != 0:
                     return job_done(jid, False, "primary hazırlanamadı (çıkış %d)" % rc)
@@ -1435,7 +2041,7 @@ def do_replication(jid, eid, enable):
             # Bağlama aşaması: replika ayakta, şimdi primary'e bağlanıyor.
             if os.path.exists(script):
                 job_log(jid, "replika primary'e bağlanıyor…")
-                rc, out, errout = run(["sh", script, "attach"], timeout=1800, env=script_env())
+                rc, out, errout = run(["sh", script, "attach"], timeout=1800, env=rep_env)
                 job_log(jid, (out + errout).strip()[-4000:])
                 if rc != 0:
                     # YARIM YAPILANDIRILMIŞ REPLİKA BIRAKILMAZ. Ayakta kalırsa
@@ -1465,8 +2071,28 @@ def do_replication(jid, eid, enable):
         script = script_path("replication", eid)
         if os.path.exists(script):
             job_log(jid, "replikasyon kalıntıları temizleniyor…")
-            rc, out, err = run(["sh", script, "cleanup"], timeout=300, env=script_env())
+            rc, out, err = run(["sh", script, "cleanup"], timeout=300, env=rep_env)
             job_log(jid, (out + err).strip()[-2000:])
+            if rc != 0:
+                # Temizlik çıkış kodu eskiden hiç okunmuyordu. PostgreSQL'de
+                # kalan slot, "bu WAL'ı hâlâ biri okuyacak" anlamına gelir ve
+                # disk dolana kadar WAL biriktirir — sonu ana kopyanın durması.
+                # Ana kopya ayaktayken bu iş her zaman yeniden denenebilir, o
+                # yüzden replikayı silmeden duruyoruz.
+                pstat, _ = _health_of(prim)
+                detail = (err or out).strip()[-300:]
+                if pstat == "running":
+                    msg = ("Replikasyon kalıntıları temizlenemedi (%s). Yedek kopya "
+                           "KALDIRILMADI: temizlenmemiş bir kalıntı, ana kopyanın "
+                           "diskini doldurup onu durdurabilir. Birkaç dakika sonra "
+                           "tekrar deneyin." % detail)
+                    record_event("replication_blocked", eid, msg, level="critical")
+                    return job_done(jid, False, msg)
+                record_event("replication", eid,
+                             "Ana kopya (%s) çalışmadığı için replikasyon kalıntıları "
+                             "temizlenemedi (%s). Ana kopya açıldıktan sonra 'Yedek "
+                             "Kopya Kur / Kapat' işlemini bir kez daha çalıştırın."
+                             % (prim, detail), level="warning")
 
         with ACTION_LOCK:
             args = ["--profile", engine["profile"], "--profile", profile]
@@ -1663,20 +2289,61 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(202, {"job": jid})
 
             # --- failover -------------------------------------------------
+            # Uzun işlerin gövdesi try/except ile sarılır. Eskiden sarılmıyordu:
+            # yükseltme betiği zaman aşımına uğradığında (subprocess.TimeoutExpired)
+            # thread sessizce ölüyor, job_done hiç çağrılmıyor ve dashboard işi
+            # sonsuza dek "devam ediyor" gösteriyordu — üstelik ana kopya fence
+            # edilmiş, yükseltme yarıda kalmış hâldeyken.
+            def _job_runner(fn, jid, eid, kind):
+                def _go():
+                    try:
+                        okk, reason = fn(eid, jid)
+                    except Exception as e:
+                        job_log(jid, "HATA:", repr(e))
+                        record_event("%s_failed" % kind, eid,
+                                     "%s işlemi beklenmeyen bir hatayla durdu: %r — "
+                                     "veritabanının durumunu kontrol edin." % (kind, e),
+                                     level="critical")
+                        okk, reason = False, repr(e)
+                    job_done(jid, okk, reason)
+                return _go
+
             if action == "failover":
                 jid = new_job("failover", eid)
-
-                def _run(jid=jid, eid=eid):
-                    okk, reason = perform_failover(eid, "elle tetiklendi", jid)
-                    job_done(jid, okk, reason)
-                threading.Thread(target=_run, daemon=True).start()
+                threading.Thread(
+                    target=_job_runner(
+                        lambda e, j: perform_failover(e, "elle tetiklendi", j),
+                        jid, eid, "failover"),
+                    daemon=True).start()
                 return self._send(202, {"job": jid})
 
             if action == "failover-auto":
                 engine = CATALOG.engine(eid)
                 want = bool(body.get("enabled"))
-                if want and not engine.get("failover", {}).get("supported"):
-                    return self._send(400, {"error": engine["failover"]["note"]})
+                fo = engine.get("failover", {})
+                rep = engine.get("replication", {})
+                # Otomatik devir, ancak yükseltilecek bir yedek varsa bir şey
+                # ifade eder. Eskiden yalnız "motor destekliyor mu" diye
+                # bakılıyordu: replikası hiç kurulmamış bir motorda düğme
+                # açılıyor, dashboard "Otomatik devir açık" rozetini gösteriyor
+                # ve kullanıcı korunduğunu sanıyordu. Ana kopya öldüğünde ise
+                # yapılacak hiçbir şey olmuyordu.
+                if want and not fo.get("supported"):
+                    return self._send(400, {"error": fo.get("note", "")})
+                if want and fo.get("mode") != "supervised":
+                    msg = ("%s devri kendi içinde yapar; controller'ın otomatik "
+                           "devri burada devreye girmez. %s"
+                           % (engine["name"], fo.get("note", "")))
+                    record_event("config_refused", eid,
+                                 "Otomatik devir açılmadı: " + msg, level="warning")
+                    return self._send(400, {"error": msg})
+                if want and rep.get("profile") not in load_state().get("profiles", []):
+                    msg = ("%s için önce yedek kopya (replika) kurun. Yedek kopya "
+                           "olmadan otomatik devir yapılamaz — ana kopya çökerse "
+                           "devreye alınacak bir düğüm olmaz." % engine["name"])
+                    record_event("config_refused", eid,
+                                 "Otomatik devir açılmadı: " + msg, level="warning")
+                    return self._send(400, {"error": msg})
                 st = load_state()
                 cur = set(st.get("auto_failover", []))
                 cur.add(eid) if want else cur.discard(eid)
@@ -1688,11 +2355,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
             if action == "rebuild-standby":
                 jid = new_job("rebuild", eid)
-
-                def _run2(jid=jid, eid=eid):
-                    okk, reason = rebuild_standby(eid, jid)
-                    job_done(jid, okk, reason)
-                threading.Thread(target=_run2, daemon=True).start()
+                threading.Thread(
+                    target=_job_runner(lambda e, j: rebuild_standby(e, j),
+                                       jid, eid, "rebuild"),
+                    daemon=True).start()
                 return self._send(202, {"job": jid})
         return self._send(404, {"error": "bulunamadı"})
 

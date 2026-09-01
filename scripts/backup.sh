@@ -78,14 +78,99 @@ check_disk() {
     return 0
 }
 
+# Bir yedekleme ürününde en pahalı hata, felaket günü dosyayı açıp İÇİNİ BOŞ
+# bulmaktır. Eski sürüm yalnız "dosya duruyor mu, arşiv bozuk mu" diye bakıyordu:
+# boş bir dizinin tar.gz'si 115 bayt, boş girdinin gzip'i 20 bayttır ve İKİSİ DE
+# bu testlerden geçip "Bütünlük doğrulandı" damgası yiyordu — ClickHouse'da ve
+# MSSQL'de aylarca sessizce böyle oldu. Artık dosyanın gerçekten geri
+# yüklenebilir içerik taşıdığına da bakıyoruz; her motorun biçimi farklı olduğu
+# için kontrol de biçime göre değişiyor.
 verify_backup() {
-    local f="$1"
-    [ -f "$f" ] && [ -s "$f" ] || { berr "Yedek dosyası yok ya da boş: $f"; return 1; }
-    case "$f" in
-        *.tar.gz) tar -tzf "$f" >/dev/null 2>&1 || { berr "Bozuk arşiv: $f"; return 1; } ;;
-        *.gz)     gzip -t "$f"  2>/dev/null     || { berr "Bozuk gzip: $f";  return 1; } ;;
+    local f="${1:-}"
+    [ -n "$f" ] || { berr "Doğrulanacak dosya belirtilmedi. Örnek: ./scripts/backup.sh verify backups/mariadb/full/<dosya>"; return 1; }
+    [ -f "$f" ] || { berr "Yedek dosyası yok: $f"; return 1; }
+    [ -s "$f" ] || { berr "Yedek dosyası boş: $f — bu yedek KULLANILAMAZ."; return 1; }
+    local base detay=""; base="$(basename "$f")"
+
+    case "$base" in
+        *.tar.gz)
+            # Tek geçiş: hem arşivin sağlamlığı hem içindeki dosya sayısı aynı
+            # okumada çıkıyor (büyük yedeklerde arşivi ikinci kez açmak boşuna
+            # dakikalar demek). Alt kabuğun sonundaki `exit`, tar'ın çıkış
+            # kodunu dışarı taşır — grep'inki değil.
+            # Boş bir dizinin arşivinde yalnızca "./" girdisi vardır; dizin
+            # olmayan tek bir üye bile yoksa arşivin içi gerçekten boştur.
+            local files trc
+            files="$(tar -tzf "$f" 2>/dev/null | grep -vc '/$'; exit "${PIPESTATUS[0]}")"; trc=$?
+            [ "$trc" -eq 0 ] || { berr "Bozuk arşiv: $base — bu yedek KULLANILAMAZ."; return 1; }
+            if [ "${files:-0}" -lt 1 ]; then
+                berr "Yedeğin İÇİ BOŞ: $base — arşivde tek dosya bile yok, geri yüklenemez."
+                berr "  Motorun o anki hatası burada: $LOG_FILE"
+                return 1
+            fi
+            detay=", $files dosya"
+            ;;
+        *.archive.gz)
+            # mongodump --archive --gzip çıktısı GZIP DOSYASI DEĞİLDİR: kendi
+            # başlığı vardır (6d e2 99 81), sıkıştırma o başlığın içindedir.
+            # `gzip -t` denemek sapasağlam bir MongoDB yedeğine "bozuk" dedirtiyordu.
+            if command -v od >/dev/null 2>&1; then
+                local magic; magic="$(head -c 4 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+                case "$magic" in
+                    6de29981|1f8b*) ;;
+                    *) berr "MongoDB arşivi tanınmıyor: $base — mongodump çıktısı değil."; return 1 ;;
+                esac
+            fi
+            ;;
+        *.gz)
+            gzip -t "$f" 2>/dev/null || { berr "Bozuk gzip: $base — bu yedek KULLANILAMAZ."; return 1; }
+            # Açılmış ilk 64 KB hem "içi tamamen boş mu" hem de "beklenen biçimde
+            # mi" sorusunu tek okumada cevaplar. NUL baytları atılıyor: kabuk
+            # değişkeni ikili veriyi olduğu gibi taşıyamaz (RDB dosyaları ikili).
+            local head64; head64="$(gzip -dc "$f" 2>/dev/null | head -c 65536 | tr -d '\000')"
+            if [ "${#head64}" -eq 0 ]; then
+                berr "Yedeğin İÇİ BOŞ: $base — açıldığında tek bayt bile çıkmıyor."
+                berr "  Motorun o anki hatası burada: $LOG_FILE"
+                return 1
+            fi
+            case "$base" in
+                *.sql.gz)
+                    # Geri yüklenebilir bir dump en az bir DDL/DML satırı taşır.
+                    # Yalnızca SET/başlık satırları varsa döküm yarıda kesilmiştir.
+                    case "$head64" in
+                        *CREATE*|*INSERT*|*COPY*|*GRANT*|*"DROP "*) ;;
+                        *) berr "Yedeğin İÇİ BOŞ görünüyor: $base — dump'ta hiç CREATE/INSERT satırı yok."; return 1 ;;
+                    esac ;;
+                *.rdb.gz)
+                    # RDB dosyaları her zaman "REDIS<sürüm>" imzasıyla başlar.
+                    case "$head64" in
+                        REDIS*) ;;
+                        *) berr "Redis yedeği geçerli bir RDB değil: $base"; return 1 ;;
+                    esac ;;
+                *.json.gz)
+                    case "$head64" in
+                        \{*) ;;
+                        *) berr "RabbitMQ tanımları JSON değil: $base — dışa aktarma yarım kalmış."; return 1 ;;
+                    esac ;;
+            esac
+            ;;
     esac
-    bok "Bütünlük doğrulandı: $(basename "$f") ($(du -h "$f" | cut -f1))"
+    bok "Bütünlük doğrulandı: $base ($(du -h "$f" | cut -f1)$detay)"
+}
+
+# Yedek ALMA yolunda verify_backup yerine bu kullanılır. Doğrulamayı geçemeyen
+# dosya olduğu yerde kalırsa `list` ve `stats` onu geçerli bir kurtarma noktası
+# gibi sayar, clean_old'un "son N kopyayı koru" tabanı da onu korur; yani
+# kullanıcı elinde olmayan bir yedeğe güvenmeye devam eder. Silmiyoruz da —
+# ürettiğimiz dosyayı yok etmek yerine .bozuk uzantısıyla kenara koyuyoruz;
+# incelenebilir kalsın ama yedek sanılmasın. (clean_old bunları da süpürür.)
+finalize_backup() {
+    local f="$1"
+    verify_backup "$f" && return 0
+    mv -f "$f" "$f.bozuk" 2>/dev/null \
+        && berr "Doğrulamayı geçemedi, kenara alındı: $(basename "$f").bozuk" \
+        || rm -f "$f"
+    return 1
 }
 
 # =============================================================================
@@ -123,7 +208,7 @@ backup_mariadb() {
             --master-data=2 --skip-comments $ignore \
         2>>"$LOG_FILE" | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "MariaDB dump başarısız"; rm -f "$f"; return 1; }
-    verify_backup "$f"
+    finalize_backup "$f"
 }
 
 backup_postgresql() {
@@ -137,7 +222,7 @@ backup_postgresql() {
         pg_dumpall -U "${POSTGRES_USER:-root}" --clean --if-exists --quote-all-identifiers \
         2>>"$LOG_FILE" | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "PostgreSQL dump başarısız"; rm -f "$f"; return 1; }
-    verify_backup "$f"
+    finalize_backup "$f"
 }
 
 backup_mongodb() {
@@ -180,15 +265,22 @@ backup_redis() {
     "${IO_NICE[@]}" docker exec "$C" cat /data/dump.rdb 2>>"$LOG_FILE" \
         | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "Redis dump kopyalanamadı"; rm -f "$f"; return 1; }
-    verify_backup "$f"
+    finalize_backup "$f"
 }
 
 backup_mssql() {
+    # Devirden sonra ana kopya yedek düğüm olabilir — topolojiden çöz.
+    # Bu satır sabit container adları kaldırılırken UNUTULMUŞTU: fonksiyonun
+    # gövdesi $C kullanıyor ama hiçbir yerde tanımlı değildi. `set -u` yüzünden
+    # bash "C: unbound variable" deyip BÜTÜN betikten çıkıyordu; mssql'den
+    # sonraki motorların (cassandra, elasticsearch, rabbitmq, clickhouse,
+    # neo4j, minio) hiçbiri yedeklenmiyor, özet tablosu bile basılmıyordu.
+    local C; C="$(primary_of mssql)"
     local f; f="$(out_path mssql full tar.gz)"
     local SQLCMD=/opt/mssql-tools18/bin/sqlcmd
     blog "MSSQL yedekleniyor…"
     sq() { SQLCMDPASSWORD="${MSSQL_PASSWORD:-$DB_PASSWORD}" \
-           docker exec -e SQLCMDPASSWORD mssql "$SQLCMD" -S localhost -U sa -C "$@"; }
+           docker exec -e SQLCMDPASSWORD "$C" "$SQLCMD" -S localhost -U sa -C "$@"; }
 
     docker exec "$C" sh -c 'mkdir -p /var/opt/mssql/backup && rm -f /var/opt/mssql/backup/*.bak' 2>/dev/null
 
@@ -198,6 +290,11 @@ backup_mssql() {
     local dbs failed=0 db
     dbs="$(sq -h -1 -W -Q "SET NOCOUNT ON; SELECT name FROM sys.databases WHERE database_id>4 OR name IN ('master','msdb');" \
            2>>"$LOG_FILE" | tr -d '\r' | grep -v '^$')"
+    # master ve msdb HER ZAMAN vardır; liste boş dönüyorsa sorgu düşmüştür
+    # (yanlış parola, sunucu henüz ayağa kalkmamış…). Eskiden döngü hiç
+    # dönmüyor, failed=0 kalıyor ve BOŞ klasör tar'lanıp "doğrulandı" damgası
+    # alıyordu — elde yedek var sanılıyordu.
+    [ -n "$dbs" ] || { berr "MSSQL veritabanı listesi alınamadı — sunucu hazır mı, MSSQL_PASSWORD doğru mu? Ayrıntı: $LOG_FILE"; return 1; }
     while IFS= read -r db; do
         [ -z "$db" ] && continue
         blog "  - $db"
@@ -208,12 +305,12 @@ backup_mssql() {
     done <<< "$dbs"
     [ "$failed" -eq 0 ] || { docker exec "$C" sh -c 'rm -f /var/opt/mssql/backup/*.bak'; return 1; }
 
-    "${IO_NICE[@]}" docker exec mssql tar -cf - -C /var/opt/mssql/backup . 2>>"$LOG_FILE" \
+    "${IO_NICE[@]}" docker exec "$C" tar -cf - -C /var/opt/mssql/backup . 2>>"$LOG_FILE" \
         | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
     local rc="${PIPESTATUS[0]}"
     docker exec "$C" sh -c 'rm -f /var/opt/mssql/backup/*.bak' 2>/dev/null
     [ "$rc" -eq 0 ] || { berr "MSSQL arşivi alınamadı"; rm -f "$f"; return 1; }
-    verify_backup "$f"
+    finalize_backup "$f"
 }
 
 backup_cassandra() {
@@ -225,16 +322,29 @@ backup_cassandra() {
     docker exec cassandra nodetool snapshot -t "$snap" >>"$LOG_FILE" 2>&1 \
         || { berr "snapshot alınamadı"; return 1; }
     # Şema de gerekli: snapshot yalnız SSTable'ları içerir, tablo tanımlarını değil.
-    docker exec -e CQLSH_PW="${CASSANDRA_PASSWORD:-$DB_PASSWORD}" cassandra sh -c \
-        'cqlsh -u ${CASSANDRA_USER:-cassandra} -p "$CQLSH_PW" -e "DESCRIBE SCHEMA;" > /tmp/schema.cql' \
-        2>>"$LOG_FILE"
+    # Kullanıcı adını da -e ile geçiyoruz: tek tırnaklı sh -c içindeki
+    # ${CASSANDRA_USER} HOST'ta değil CONTAINER'da çözülür, orada da tanımlı
+    # değildir — kullanıcı adı değiştirilmişse sessizce yanlış hesapla
+    # bağlanmaya çalışılıyordu.
+    docker exec -e CQLSH_PW="${CASSANDRA_PASSWORD:-$DB_PASSWORD}" \
+                -e CQLSH_USER="${CASSANDRA_USER:-cassandra}" cassandra sh -c \
+        'cqlsh -u "$CQLSH_USER" -p "$CQLSH_PW" -e "DESCRIBE SCHEMA;" > /tmp/schema.cql' \
+        2>>"$LOG_FILE" \
+        || { berr "Cassandra şeması alınamadı (parola ya da yetki?). Şemasız snapshot GERİ YÜKLENEMEZ, yedek alınmadı."
+             docker exec cassandra nodetool clearsnapshot -t "$snap" >>"$LOG_FILE" 2>&1
+             return 1; }
+    # Yönlendirme, komut düşse bile dosyayı (boş olarak) yaratıyor; çıkış kodu
+    # hiç bakılmadığı için boş şemalı, geri yüklenemez arşivler "doğrulandı"
+    # damgası alıyordu. Boşluk hatası değilse de kullanıcıyı uyar.
+    docker exec cassandra sh -c '[ -s /tmp/schema.cql ]' 2>/dev/null \
+        || warn "Cassandra şema dökümü boş — bu düğümde kullanıcı keyspace'i yok gibi görünüyor."
     "${IO_NICE[@]}" docker exec cassandra sh -c \
         "tar -cf - -C /tmp schema.cql \$(find /var/lib/cassandra/data -type d -name '$snap' -printf '%P\n' 2>/dev/null | sed 's|^|-C /var/lib/cassandra/data |') 2>/dev/null || tar -cf - -C /var/lib/cassandra/data . --wildcards '*/snapshots/$snap/*'" \
         2>>"$LOG_FILE" | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
     local rc="${PIPESTATUS[0]}"
     docker exec cassandra nodetool clearsnapshot -t "$snap" >>"$LOG_FILE" 2>&1
     [ "$rc" -eq 0 ] || { berr "Cassandra arşivi alınamadı"; rm -f "$f"; return 1; }
-    verify_backup "$f"
+    finalize_backup "$f"
 }
 
 backup_elasticsearch() {
@@ -251,19 +361,46 @@ backup_elasticsearch() {
        -H 'Content-Type: application/json' -d '{"indices":"*","include_global_state":true}' \
        >>"$LOG_FILE" 2>&1 || { berr "snapshot başarısız"; return 1; }
 
+    # Depoyu buda. Eski sürüm hiçbir snapshot'ı SİLMİYORDU: her gece bir yenisi
+    # ekleniyor, /snapshots volume'u şişiyor (ES disk watermark'a takılınca
+    # indeksleri read-only'ye çevirir → yazma kesintisi) ve o günün arşivi TÜM
+    # geçmişi taşıyordu; 30. günde arşiv 30 snapshot'lık oluyordu. Arşivin
+    # kendisi host'ta durduğu için depoda yalnızca en yeni snapshot yeterli.
+    # Budama tar'dan ÖNCE: arşive yalnız bugünün snapshot'ı girsin.
+    local old s
+    old="$(es "http://localhost:9200/_cat/snapshots/backup_repo?h=id" 2>/dev/null | tr -d '\r' | grep -vFx "$snap")"
+    for s in $old; do
+        [ -n "$s" ] || continue
+        if es -X DELETE "http://localhost:9200/_snapshot/backup_repo/$s" >>"$LOG_FILE" 2>&1; then
+            blog "  depodan silindi: $s"
+        else
+            warn "  eski snapshot depodan silinemedi: $s"
+        fi
+    done
+
     "${IO_NICE[@]}" docker exec elasticsearch tar -cf - -C /snapshots . 2>>"$LOG_FILE" \
         | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "ES arşivi alınamadı"; rm -f "$f"; return 1; }
-    verify_backup "$f"
+    finalize_backup "$f"
 }
 
 backup_clickhouse() {
     local f; f="$(out_path clickhouse full tar.gz)"
     blog "ClickHouse yedekleniyor…"
-    ch() { docker exec -e CH_PW="${CLICKHOUSE_PASSWORD:-$DB_PASSWORD}" clickhouse \
-           clickhouse-client --user "${CLICKHOUSE_USER:-default}" --password "$CH_PW" "$@"; }
-    local dbs db
-    dbs="$(ch --query "SELECT name FROM system.databases WHERE name NOT IN ('system','INFORMATION_SCHEMA','information_schema')" 2>>"$LOG_FILE")"
+    # Parola CONTAINER'da çözülmeli. Eski sürümde `--password "$CH_PW"` ÇİFT
+    # tırnak içindeydi: host'ta genişliyordu, host'ta böyle bir değişken de
+    # olmadığı için `set -u` komut ikamesinin alt kabuğunu öldürüyordu. Sonuç
+    # sessizdi ve pahalıydı: veritabanı listesi BOŞ kalıyor, hiç BACKUP
+    # çalışmıyor, boş klasör tar'lanıyor ve "Bütünlük doğrulandı" deniyordu.
+    # Tek tırnaklı sh -c sarmalayıcısı (cassandra'daki doğru desen) bunu
+    # container'a taşır.
+    ch() { docker exec -e CH_PW="${CLICKHOUSE_PASSWORD:-$DB_PASSWORD}" \
+                       -e CH_USER="${CLICKHOUSE_USER:-default}" clickhouse \
+           sh -c 'exec clickhouse-client --user "$CH_USER" --password "$CH_PW" "$@"' sh "$@"; }
+    local dbs db rc
+    dbs="$(ch --query "SELECT name FROM system.databases WHERE name NOT IN ('system','INFORMATION_SCHEMA','information_schema')" 2>>"$LOG_FILE")"; rc=$?
+    [ "$rc" -eq 0 ] || { berr "ClickHouse'a bağlanılamadı — CLICKHOUSE_PASSWORD doğru mu? Ayrıntı: $LOG_FILE"; return 1; }
+    [ -n "$dbs" ] || { berr "ClickHouse'ta yedeklenecek veritabanı yok — boş yedek üretmemek için durduruldu."; return 1; }
     docker exec clickhouse sh -c 'rm -rf /var/lib/clickhouse/backups/* ' 2>/dev/null
     while IFS= read -r db; do
         [ -z "$db" ] && continue
@@ -273,10 +410,10 @@ backup_clickhouse() {
     done <<< "$dbs"
     "${IO_NICE[@]}" docker exec clickhouse tar -cf - -C /var/lib/clickhouse/backups . 2>>"$LOG_FILE" \
         | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
-    local rc="${PIPESTATUS[0]}"
+    rc="${PIPESTATUS[0]}"
     docker exec clickhouse sh -c 'rm -rf /var/lib/clickhouse/backups/*' 2>/dev/null
     [ "$rc" -eq 0 ] || { berr "ClickHouse arşivi alınamadı"; rm -f "$f"; return 1; }
-    verify_backup "$f"
+    finalize_backup "$f"
 }
 
 backup_rabbitmq() {
@@ -286,9 +423,16 @@ backup_rabbitmq() {
     # şey exchange/queue/binding/policy tanımlarıdır.
     docker exec rabbitmq rabbitmqctl export_definitions /tmp/defs.json >>"$LOG_FILE" 2>&1 \
         || { berr "export_definitions başarısız"; return 1; }
-    docker exec rabbitmq cat /tmp/defs.json | gzip -"$COMPRESSION_LEVEL" > "$f"
+    docker exec rabbitmq cat /tmp/defs.json 2>>"$LOG_FILE" | gzip -"$COMPRESSION_LEVEL" > "$f"
+    # Boru hattının SOL tarafı hiç kontrol edilmiyordu (dosyadaki tek yerdi):
+    # `cat` düşse bile gzip boş girdiden 20 baytlık GEÇERLİ bir dosya üretiyor,
+    # verify de ona "doğrulandı" diyordu. İçinde tek exchange/queue tanımı
+    # olmayan bu dosyayla RabbitMQ topolojisi geri getirilemez.
+    local ps=("${PIPESTATUS[@]}")
     docker exec rabbitmq rm -f /tmp/defs.json 2>/dev/null
-    verify_backup "$f"
+    [ "${ps[0]}" -eq 0 ] && [ "${ps[1]}" -eq 0 ] \
+        || { berr "RabbitMQ tanım dosyası okunamadı — yedek alınmadı."; rm -f "$f"; return 1; }
+    finalize_backup "$f"
 }
 
 backup_minio() {
@@ -302,7 +446,7 @@ backup_minio() {
     "${IO_NICE[@]}" docker cp "minio:/data/." - 2>>"$LOG_FILE" \
         | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "MinIO arşivi alınamadı"; rm -f "$f"; return 1; }
-    verify_backup "$f"
+    finalize_backup "$f"
 }
 
 backup_neo4j() {
@@ -325,7 +469,7 @@ backup_neo4j() {
     blog "Neo4j yeniden başlatılıyor…"
     compose --profile neo4j up -d neo4j >>"$LOG_FILE" 2>&1
     [ "$rc" -eq 0 ] || { berr "Neo4j dump başarısız"; rm -f "$f"; return 1; }
-    verify_backup "$f"
+    finalize_backup "$f"
 }
 
 # =============================================================================
@@ -345,7 +489,12 @@ backup_all() {
             printf '  %-14s %s\n' "$eid" "atlandı (kapalı)"
             skipc=$((skipc+1)); continue
         fi
-        if "backup_$eid"; then okc=$((okc+1)); else failc=$((failc+1)); fi
+        # Alt kabuk KASITLI: bir motorun beklenmedik kabuk hatası (tanımsız
+        # değişken gibi) `set -u` yüzünden BÜTÜN turu ortasından kesiyordu —
+        # mssql'de gerçekten oldu ve o geceden sonraki motorların hiçbiri
+        # yedeklenmedi, özet tablosu bile basılmadı. Alt kabukta hata yalnız o
+        # motoru düşürür, diğerleri yedeklenmeye devam eder.
+        if ( "backup_$eid" ); then okc=$((okc+1)); else failc=$((failc+1)); fi
     done
 
     local dur=$(( $(date +%s) - start ))
@@ -372,24 +521,82 @@ confirm_restore() {
 restore_mariadb() {
     local C; C="$(primary_of mariadb)"
     local f="$1"; [ -f "$f" ] || die "Dosya yok: $f"
+    # Geri yükleme mevcut veriyi SİLEREK başlar. Elimizdeki dosyanın gerçekten
+    # dolu olduğunu silmeden ÖNCE doğruluyoruz — boş bir yedekle başlanan geri
+    # yükleme, veriyi geri getirmez, sadece yok eder.
+    verify_backup "$f" || die "Bu dosyayla geri yükleme yapılmaz."
     confirm_restore "MariaDB" || return 1
     gzip -dc "$f" | MYSQL_PWD="${MARIADB_PASSWORD:-$DB_PASSWORD}" \
         docker exec -e MYSQL_PWD -i "$C" mariadb -u root
-    [ "${PIPESTATUS[1]}" -eq 0 ] && bok "MariaDB geri yüklendi" || { berr "başarısız"; return 1; }
+    # gzip tarafı da kontrol ediliyor: kesik bir .gz kısmi SQL üretip 1 ile
+    # çıkar, istemci o kısmı sorunsuz yutar ve YARIM geri yükleme "başarılı"
+    # görünürdü.
+    local ps=("${PIPESTATUS[@]}")
+    if [ "${ps[0]}" -eq 0 ] && [ "${ps[1]}" -eq 0 ]; then
+        bok "MariaDB geri yüklendi"
+    else
+        berr "MariaDB geri yüklenemedi — veritabanı YARIM kalmış olabilir. Ayrıntı: $LOG_FILE"
+        return 1
+    fi
 }
 
 restore_postgresql() {
     local C; C="$(primary_of postgresql)"
     local f="$1"; [ -f "$f" ] || die "Dosya yok: $f"
+    verify_backup "$f" || die "Bu dosyayla geri yükleme yapılmaz."
     confirm_restore "PostgreSQL" || return 1
+    # ------------------------------------------------------------------------
+    # ON_ERROR_STOP KULLANILMAZ — kullanılırsa geri yükleme HER SEFERİNDE yarıda
+    # kalır ve veri kaybettirir. Sebep: `pg_dumpall --clean` çıktısı, bağlı
+    # olduğumuz rolü ve veritabanını da düşürmeye çalışır:
+    #     DROP DATABASE IF EXISTS "postgres";  → cannot drop the currently open database
+    #     DROP ROLE     IF EXISTS "root";      → current user cannot be dropped
+    # Bu iki hata NORMALDİR ve zararsızdır; ama ON_ERROR_STOP=1 ile psql tam o
+    # noktada durur — yani DİĞER veritabanları çoktan düşürülmüşken. Elde ne
+    # eski veri ne de yenisi kalır. (Bu, bir düzeltme denemesinin ürettiği
+    # gerçek bir regresyondu; postgres:16 üzerinde birebir üretilip doğrulandı.)
+    #
+    # Bunun yerine: psql serbest çalışır, hataları TOPLARIZ ve sonunda
+    # BEKLENENLERİ eleyip geriye gerçek hata kalıp kalmadığına bakarız. Böylece
+    # hem geri yükleme tamamlanır hem de "her şey patladı ama başarılı dedik"
+    # durumu imkânsız olur.
+    # (--single-transaction da kullanılamaz: CREATE/DROP DATABASE tek işlem
+    # içinde çalıştırılamaz.)
+    # ------------------------------------------------------------------------
+    local errf; errf="$(mktemp)"
     gzip -dc "$f" | docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" -i "$C" \
-        psql -U "${POSTGRES_USER:-root}" -d postgres
-    [ "${PIPESTATUS[1]}" -eq 0 ] && bok "PostgreSQL geri yüklendi" || { berr "başarısız"; return 1; }
+        psql -U "${POSTGRES_USER:-root}" -d postgres 2>"$errf" >>"$LOG_FILE"
+    local ps=("${PIPESTATUS[@]}")
+    cat "$errf" >>"$LOG_FILE"
+
+    if [ "${ps[0]}" -ne 0 ]; then
+        rm -f "$errf"
+        berr "Yedek dosyası açılamadı (bozuk gzip). Geri yükleme yapılmadı."
+        return 1
+    fi
+
+    # Beklenen (zararsız) hatalar. Hepsi "bağlı olduğumuz oturumu düşüremeyiz"
+    # ailesinden; DROP başarısız olunca ardından gelen CREATE de "zaten var"
+    # der — o da beklenendir.
+    local gercek
+    gercek="$(grep -E '^(psql:|ERROR|FATAL|HATA)' "$errf" 2>/dev/null \
+        | grep -viE 'current user cannot be dropped|cannot drop the currently open database|role .* already exists|database .* already exists|is being accessed by other users' \
+        || true)"
+    rm -f "$errf"
+
+    if [ -n "$gercek" ]; then
+        berr "PostgreSQL geri yüklenirken hata oluştu — cluster YARIM kalmış olabilir:"
+        printf '%s\n' "$gercek" | head -5 | sed 's/^/    /' >&2
+        berr "Tam çıktı: $LOG_FILE"
+        return 1
+    fi
+    bok "PostgreSQL geri yüklendi"
 }
 
 restore_mongodb() {
     local C; C="$(primary_of mongodb)"
     local f="$1"; [ -f "$f" ] || die "Dosya yok: $f"
+    verify_backup "$f" || die "Bu dosyayla geri yükleme yapılmaz."
     confirm_restore "MongoDB" || return 1
     docker exec -i "$C" mongorestore \
         --username "${MONGO_USER:-root}" --password "${MONGO_PASSWORD:-$DB_PASSWORD}" \
@@ -399,6 +606,9 @@ restore_mongodb() {
 
 restore_redis() {
     local f="$1"; [ -f "$f" ] || die "Dosya yok: $f"
+    # 2. adım volume'daki dump.rdb'yi ve AOF'u SİLİYOR; dosyanın gerçek bir RDB
+    # olduğunu önce doğrula, yoksa elde hiçbir şey kalmaz.
+    verify_backup "$f" || die "Bu dosyayla geri yükleme yapılmaz."
     confirm_restore "Redis" || return 1
     local pw="${REDIS_PASSWORD:-$DB_PASSWORD}"
     local C; C="$(primary_of redis)"
@@ -470,20 +680,38 @@ restore_redis() {
 restore_mssql() {
     local C; C="$(primary_of mssql)"
     local f="$1"; [ -f "$f" ] || die "Dosya yok: $f"
+    verify_backup "$f" || die "Bu dosyayla geri yükleme yapılmaz."
     confirm_restore "MSSQL" || return 1
-    local SQLCMD=/opt/mssql-tools18/bin/sqlcmd rc=0
+    local SQLCMD=/opt/mssql-tools18/bin/sqlcmd rc=0 bulunan=0 yuklenen=0
     docker exec "$C" sh -c 'mkdir -p /var/opt/mssql/backup && rm -f /var/opt/mssql/backup/*.bak'
     gzip -dc "$f" | docker exec -i "$C" tar -xf - -C /var/opt/mssql/backup
+    # Arşiv açma hiç kontrol edilmiyordu: açılmazsa klasör boş kalıyor, aşağıdaki
+    # döngü hiç dönmüyor, rc başlangıç değeri 0'da kalıyor ve betik HİÇBİR ŞEY
+    # yapmadan "MSSQL geri yüklendi" deyip 0 ile çıkıyordu.
+    local ps=("${PIPESTATUS[@]}")
+    [ "${ps[0]}" -eq 0 ] && [ "${ps[1]}" -eq 0 ] \
+        || { berr "Yedek arşivi açılamadı: $f"; return 1; }
     for bak in $(docker exec "$C" sh -c 'ls /var/opt/mssql/backup/*.bak 2>/dev/null'); do
+        bulunan=$((bulunan+1))
         local db; db="$(basename "$bak" .bak)"
         case "$db" in master|msdb) blog "  $db atlandı (sistem DB'si elle geri yüklenir)"; continue ;; esac
         blog "  geri yükleniyor: $db"
-        SQLCMDPASSWORD="${MSSQL_PASSWORD:-$DB_PASSWORD}" docker exec -e SQLCMDPASSWORD mssql \
+        if SQLCMDPASSWORD="${MSSQL_PASSWORD:-$DB_PASSWORD}" docker exec -e SQLCMDPASSWORD "$C" \
             "$SQLCMD" -S localhost -U sa -C -b \
-            -Q "RESTORE DATABASE [$db] FROM DISK=N'$bak' WITH REPLACE;" >>"$LOG_FILE" 2>&1 || rc=1
+            -Q "RESTORE DATABASE [$db] FROM DISK=N'$bak' WITH REPLACE;" >>"$LOG_FILE" 2>&1
+        then yuklenen=$((yuklenen+1)); else rc=1; fi
     done
     docker exec "$C" sh -c 'rm -f /var/opt/mssql/backup/*.bak'
-    [ "$rc" -eq 0 ] && bok "MSSQL geri yüklendi" || { berr "başarısız"; return 1; }
+    # "Hiç dönmeyen döngü = başarı" tuzağını kapatıyoruz: en az bir veritabanı
+    # gerçekten geri yüklenmediyse bu iş BAŞARISIZDIR.
+    [ "$bulunan" -gt 0 ] || { berr "Arşivin içinde .bak dosyası yok — bu dosya bir MSSQL yedeği değil."; return 1; }
+    [ "$yuklenen" -gt 0 ] || { berr "Hiçbir veritabanı geri yüklenmedi (arşivde yalnızca sistem veritabanları olabilir). Ayrıntı: $LOG_FILE"; return 1; }
+    if [ "$rc" -eq 0 ]; then
+        bok "MSSQL geri yüklendi ($yuklenen veritabanı)"
+    else
+        berr "Bazı veritabanları geri yüklenemedi ($yuklenen/$bulunan). Ayrıntı: $LOG_FILE"
+        return 1
+    fi
 }
 
 # =============================================================================
@@ -491,15 +719,50 @@ restore_mssql() {
 # =============================================================================
 clean_old() {
     local days="${1:-$RETENTION_DAYS}"
-    heading "$days günden eski yedekler temizleniyor"
-    # Tek find: eski sürüm "*.gz" ve "*.tar.gz" için ayrı sayıyordu; "*.gz"
-    # deseni tar.gz'yi de yakaladığı için toplam ÇİFT görünüyordu.
-    local n; n="$(find "$BACKUP_DIR" -type f -name '*.gz' -mtime +"$days" 2>/dev/null | wc -l)"
-    if [ "$n" -eq 0 ]; then log "Silinecek yedek yok"; return 0; fi
-    find "$BACKUP_DIR" -type f -name '*.gz' -mtime +"$days" -printf '  siliniyor: %f\n' 2>/dev/null | head -10
+    # `clean abc` gibi sayısal olmayan bir argümanda find hata veriyor, 2>/dev/null
+    # bunu yutuyor ve kullanıcı "Silinecek yedek yok" görüp temizliğin
+    # çalıştığını sanıyordu. Artık ne olduğunu açıkça söylüyoruz.
+    case "$days" in
+        ''|*[!0-9]*) die "Gün sayısı bir tam sayı olmalı, '$days' değil. Örnek: ./scripts/backup.sh clean 7" ;;
+    esac
+    # Her motorda EN YENİ birkaç kopya, yaşı ne olursa olsun korunur. Kapalı
+    # (ya da yedeği üst üste başarısız olan) bir motorun yedeği yenilenmediği
+    # için tarih eşiğini geçiyor ve eski sürüm SON kurtarma noktasını da
+    # siliyordu: motor tekrar açıldığında geriye hiçbir yedek kalmıyordu.
+    local keep="${BACKUP_KEEP_MIN:-3}"
+    heading "$days günden eski yedekler temizleniyor (her motorda en yeni $keep kopya korunur)"
+
+    local d korunan aday liste="" n=0 kalan=0 f
+    for d in "$BACKUP_DIR"/*/; do
+        [ -d "$d" ] || continue
+        korunan="$(find "$d" -type f -name '*.gz' -printf '%T@\t%p\n' 2>/dev/null \
+                   | sort -rn | head -n "$keep" | cut -f2-)"
+        aday="$(find "$d" -type f -name '*.gz' -mtime +"$days" 2>/dev/null)"
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            if printf '%s\n' "$korunan" | grep -Fxq "$f"; then
+                kalan=$((kalan+1)); continue
+            fi
+            liste="$liste$f"$'\n'
+            n=$((n+1))
+        done <<< "$aday"
+    done
+
+    if [ "$n" -eq 0 ]; then
+        log "Silinecek yedek yok (son $keep kopya her motorda korunuyor)"
+        return 0
+    fi
+    printf '%s' "$liste" | head -10 | while IFS= read -r f; do
+        [ -n "$f" ] && printf '  siliniyor: %s\n' "$(basename "$f")"
+    done
     [ "$n" -gt 10 ] && log "  … ve $((n-10)) dosya daha"
-    find "$BACKUP_DIR" -type f -name '*.gz' -mtime +"$days" -delete 2>/dev/null
-    bok "$n dosya silindi (kalan: $(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1))"
+    while IFS= read -r f; do
+        [ -n "$f" ] && rm -f "$f"
+    done <<< "$liste"
+    # Doğrulamayı geçemeyip kenara alınmış dosyalar kurtarma noktası değildir;
+    # onlarda "son N kopyayı koru" tabanı da aranmaz, yaşı gelen gider.
+    find "$BACKUP_DIR" -type f -name '*.bozuk' -mtime +"$days" -delete 2>/dev/null
+    bok "$n dosya silindi, $kalan dosya kural gereği korundu (kalan: $(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1))"
 }
 
 list_backups() {
@@ -545,11 +808,15 @@ case "${1:-help}" in
                 container_running "$primary" || die "$1 çalışmıyor. Önce: ./stack.sh enable $1"
                 check_disk || exit 1
                 "backup_$1" ;;
-    restore-mariadb)     restore_mariadb "${2:-}" ;;
-    restore-postgresql)  restore_postgresql "${2:-}" ;;
-    restore-mongodb)     restore_mongodb "${2:-}" ;;
-    restore-redis)       restore_redis "${2:-}" ;;
-    restore-mssql)       restore_mssql "${2:-}" ;;
+    restore-mariadb|restore-postgresql|restore-mongodb|restore-redis|restore-mssql)
+                # Yedeklemeyle AYNI kilit. Kilitsizken 02:00 cron'u, yarım geri
+                # yüklenmiş bir veritabanını (bazı tablolar yeni, bazıları
+                # DROP edilmiş) döküp "geçerli yedek" diye saklıyor ve uzağa
+                # senkronluyordu; üstelik iki ağır iş aynı container'ın
+                # cgroup'unda çakışınca dosyanın başında anlatılan OOM riski de
+                # geri geliyordu.
+                acquire_lock /tmp/databases-stack-backup.lock
+                "restore_${1#restore-}" "${2:-}" ;;
     restore-*)           die "Bu motor için otomatik geri yükleme yok: ${1#restore-}. docs/BACKUP.md bakın." ;;
     clean)      clean_old "${2:-}" ;;
     list)       list_backups ;;

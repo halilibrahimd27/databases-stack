@@ -9,10 +9,27 @@ PASS="${MARIADB_PASSWORD:-$DB_PASSWORD}"
 RUSER="${MARIADB_REPLICATION_USER:-repl}"
 RPASS="${MARIADB_REPLICATION_PASSWORD:-$PASS}"
 
+# YÖN SABİT DEĞİLDİR. Devirden sonra roller yer değiştirir: canlı primary
+# `mariadb-replica`, yeniden kurulacak yedek ise `mariadb` olur. Bu betik
+# eskiden yönü sabit yazıyordu; controller doğru adları ortamda veriyordu ama
+# betik onları hiç okumuyordu. Kurtarma sanılan şey felaketti: yedeği yeniden
+# kurarken döküm AZ ÖNCE SİLİNMİŞ boş düğümden alınıp CANLI primary'nin üzerine
+# basılıyor, üstüne canlı primary o boş düğümün slave'i yapılıyordu — yani elde
+# kalan tek sağlam kopya siliniyordu. Artık kaynak ve hedef hep dışarıdan gelir;
+# varsayılanlar hiç devir olmamış ilk kurulumun hâlidir.
+PRIMARY="${REPLICATION_PRIMARY:-mariadb}"           # dökümün ALINACAĞI canlı primary
+STANDBY="${REPLICATION_STANDBY:-mariadb-replica}"   # dökümün BASILACAĞI yedek
+
 # Parola MYSQL_PWD ile geçer — komut satırında olsaydı host'ta `ps` çıktısında
 # ve container'ın /proc'unda görünürdü.
-m_primary() { MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD -i mariadb mariadb -u root "$@"; }
-m_replica() { MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD -i mariadb-replica mariadb -u root "$@"; }
+m_primary() { MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD -i "$PRIMARY" mariadb -u root "$@"; }
+m_replica() { MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD -i "$STANDBY" mariadb -u root "$@"; }
+
+# Bir düğümdeki KULLANICI veritabanları (sistem şemaları hariç). Hem yön
+# doğrulaması hem de tohumlama bunu kullanır.
+user_dbs() {
+    "$1" -N -e "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN ('mysql','information_schema','performance_schema','sys');" 2>/dev/null | tr -d '\r'
+}
 
 # Replikanın sistem şeması sağlam mı? Bu üç tablo MariaDB'nin kendi
 # kurulumundan gelir; biri bile eksikse şema bozulmuştur.
@@ -37,6 +54,31 @@ prepare)
   ;;
 
 attach)
+  echo "[mariadb] yön: $PRIMARY (kaynak) → $STANDBY (hedef)"
+
+  # Kaynakla hedef aynı olursa düğüm kendi kendinin slave'i yapılır; hiçbir
+  # şey kopyalanmaz ama SLAVE ayarı düğümü bozar. Adları önce karşılaştırıyoruz.
+  if [ "$PRIMARY" = "$STANDBY" ]; then
+      echo "[mariadb] ✗ kaynak ve hedef aynı düğüm: $PRIMARY" >&2
+      echo "[mariadb]   Yedek kopya, ana kopyadan FARKLI bir düğüm olmalı. Hiçbir şey yapılmadı." >&2
+      exit 1
+  fi
+
+  # Döküm YALNIZCA yazılabilir primary'den alınır. read_only açıksa o düğüm ya
+  # bir replikadır ya da devir sırasında kapatılmıştır; oradan alınacak kopya
+  # eksik/eskimiş olur ve hedefteki veriyi boş yere ezerdik.
+  ro="$(m_primary -N -e "SELECT @@read_only;" 2>/dev/null | tr -d '[:space:]')"
+  if [ -z "$ro" ]; then
+      echo "[mariadb] ✗ ana kopyaya bağlanılamadı: $PRIMARY" >&2
+      echo "[mariadb]   Panelde bu veritabanının durumu 'çalışıyor' olmalı; başlatıp tekrar deneyin." >&2
+      exit 1
+  fi
+  if [ "$ro" != "0" ]; then
+      echo "[mariadb] ✗ kaynak düğüm ($PRIMARY) şu an yazma kabul etmiyor (read_only)." >&2
+      echo "[mariadb]   Kopya CANLI ana veritabanından alınmalı — yön ters görünüyor. Hiçbir şey yapılmadı." >&2
+      exit 1
+  fi
+
   echo "[mariadb] replika hazır olması bekleniyor…"
   i=0; while [ $i -lt 40 ]; do
       m_replica -e "SELECT 1" >/dev/null 2>&1 && break
@@ -47,6 +89,18 @@ attach)
   # Zaten bağlıysa tekrar kopyalama (uzun sürer, gereksiz).
   if m_replica -N -e "SHOW SLAVE STATUS\G" 2>/dev/null | grep -q "Slave_IO_Running: Yes"; then
       echo "[mariadb] ✓ replika zaten akışta"; exit 0
+  fi
+
+  # Son ve en önemli yön kontrolü: kaynakta hiç kullanıcı veritabanı yokken
+  # hedefte veri VARSA yön neredeyse kesin terstir — az önce silinip boş açılmış
+  # bir düğümden, elde kalan tek dolu kopyanın üzerine döküm basmak üzereyiz.
+  # Bu noktada devam etmek veriyi kurtarmak değil yok etmek olur.
+  dbs="$(user_dbs m_primary)"
+  if [ -z "$dbs" ] && [ -n "$(user_dbs m_replica)" ]; then
+      echo "[mariadb] ✗ yön ters görünüyor: kaynakta ($PRIMARY) hiç veritabanı yok, hedefte ($STANDBY) veri var." >&2
+      echo "[mariadb]   Kopyalama iptal edildi; hedefteki veriler OLDUĞU GİBİ duruyor, hiçbir şey silinmedi." >&2
+      echo "[mariadb]   Panelde hangi kopyanın 'ana' (primary) olduğunu kontrol edip tekrar deneyin." >&2
+      exit 1
   fi
 
   # ---------------------------------------------------------------------------
@@ -66,13 +120,11 @@ attach)
   # ---------------------------------------------------------------------------
   if ! sys_schema_ok; then
       echo "[mariadb] replikanın sistem şeması eksik — onarılıyor (mariadb-upgrade)"
-      MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD mariadb-replica \
+      MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD "$STANDBY" \
           mariadb-upgrade -u root --force >/dev/null 2>&1 || true
       sys_schema_ok || { echo "[mariadb] ✗ replikanın sistem şeması onarılamadı" >&2; exit 1; }
       echo "[mariadb] ✓ sistem şeması onarıldı"
   fi
-
-  dbs="$(m_primary -N -e "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN ('mysql','information_schema','performance_schema','sys');" 2>/dev/null | tr -d '\r')"
 
   err_log="$(mktemp)"
   if [ -n "$dbs" ]; then
@@ -80,7 +132,7 @@ attach)
       # --single-transaction: tabloları kilitlemeden tutarlı anlık görüntü.
       # --gtid + --master-data=2: dökümün başına `SET GLOBAL gtid_slave_pos=…`
       #   yazar → replika tam olarak doğru noktadan devam eder, veri atlanmaz.
-      if ! MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD mariadb mariadb-dump -u root \
+      if ! MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD "$PRIMARY" mariadb-dump -u root \
               --databases $dbs \
               --single-transaction --quick --gtid --master-data=2 \
               --routines --triggers --events 2>"$err_log" \
@@ -121,7 +173,7 @@ attach)
   m_replica -e "
       STOP SLAVE;
       CHANGE MASTER TO
-          MASTER_HOST='mariadb', MASTER_PORT=3306,
+          MASTER_HOST='$PRIMARY', MASTER_PORT=3306,
           MASTER_USER='$RUSER', MASTER_PASSWORD='$RPASS',
           MASTER_USE_GTID=slave_pos,
           MASTER_CONNECT_RETRY=10;
