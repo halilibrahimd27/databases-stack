@@ -22,7 +22,7 @@
       "id": 1,
       "type": "stat",
       "title": "PostgreSQL çalışıyor mu?",
-      "description": "Veritabanının şu anda cevap verip vermediğini gösterir. Yeşil ise her şey yolunda, uygulamalarınız bağlanabilir. Kırmızı ise veritabanı cevap vermiyor demektir, hemen bakılmalıdır. Hiçbir değer görünmüyorsa (Kapalı) PostgreSQL bu sunucuda açık değildir; panodan aktif edebilirsiniz.",
+      "description": "Veritabanının şu anda gerçekten cevap verip vermediği. Yeşil ise PostgreSQL sorgulara cevap veriyor, uygulamalarınız bağlanabilir. Kırmızı ise endişelenin: ya veritabanı cevap vermiyor ya da onu izleyen exporter'a ulaşılamıyor — her iki durumda da ./stack.sh logs postgresql ile bakın. \"Kapalı ya da izleme yok\" yazıyorsa bu sunucuda PostgreSQL kapalıdır (ya da izleme profili açık değildir); motoru kasten kapalı tutuyorsanız bu normaldir, panodan açabilirsiniz.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
       "fieldConfig": {
@@ -37,11 +37,12 @@
               }
             }
           ],
-          "noValue": "Kapalı",
+          "noValue": "Kapalı ya da izleme yok",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
+              { "color": "text", "value": null },
+              { "color": "red", "value": 0 },
               { "color": "green", "value": 1 }
             ]
           },
@@ -64,7 +65,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "min(pg_up{engine=\"postgresql\"})",
+          "expr": "min(pg_up{engine=\"postgresql\"}) or min(up{job=\"databases\", engine=\"postgresql\"})",
           "instant": false,
           "legendFormat": "Durum",
           "range": true,
@@ -77,7 +78,7 @@
       "id": 2,
       "type": "stat",
       "title": "Açık bağlantı sayısı",
-      "description": "Şu anda veritabanına bağlı olan uygulama ve oturum sayısı. Bu sayı tek başına iyi ya da kötü değildir; yanındaki Bağlantı doluluğu paneli üst sınıra ne kadar yaklaşıldığını söyler. Sayı hiç düşmeden sürekli artıyorsa uygulamanız bağlantıları kapatmayı unutuyor olabilir.",
+      "description": "Şu anda veritabanına bağlı olan uygulama ve oturum sayısı. Bu sayı tek başına iyi ya da kötü değildir; yanındaki Bağlantı doluluğu paneli üst sınıra ne kadar yaklaşıldığını söyler. Endişelenme anı: iş yoğunluğu düştüğü hâlde sayı hiç azalmadan sürekli tırmanıyorsa uygulamanız bağlantıları kapatmayı unutuyor demektir; sonunda üst sınıra dayanır ve yeni bağlantılar reddedilir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
       "fieldConfig": {
@@ -122,7 +123,7 @@
       "id": 3,
       "type": "stat",
       "title": "Bağlantı doluluğu",
-      "description": "Açık bağlantıların, izin verilen üst sınıra oranı. Yeşil (%70 altı) normaldir. Sarı ise yoğunluk var, göz ucuyla izleyin. Kırmızı (%85 üstü) ise sınıra dayanılıyor demektir: sınıra ulaşıldığında veritabanı yeni bağlantıları reddeder ve uygulamalar too many connections hatası almaya başlar.",
+      "description": "Açık bağlantıların, izin verilen üst sınıra oranı. Yeşil (%70 altı) normaldir. Sarı ise yoğunluk var, göz ucuyla izleyin. Kırmızı (%85 üstü) ise endişelenin: sınıra ulaşıldığında veritabanı yeni bağlantıları reddeder ve uygulamalar \"too many connections\" hatası almaya başlar. Çözüm genellikle uygulamada bağlantı havuzu kullanmaktır.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
       "fieldConfig": {
@@ -160,7 +161,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "100 * sum(pg_stat_database_numbackends{engine=\"postgresql\"}) / max(pg_settings_max_connections{engine=\"postgresql\"})",
+          "expr": "100 * sum(pg_stat_database_numbackends{engine=\"postgresql\"}) / (max(pg_settings_max_connections{engine=\"postgresql\"}) > 0)",
           "instant": false,
           "legendFormat": "Doluluk",
           "range": true,
@@ -173,7 +174,7 @@
       "id": 4,
       "type": "stat",
       "title": "Toplam veri boyutu",
-      "description": "Bu sunucudaki bütün PostgreSQL veritabanlarının diskte kapladığı toplam yer. Zamanla yavaşça büyümesi normaldir ve beklenir. Kısa sürede hızla büyüyorsa sunucunun boş disk alanını kontrol edin: disk dolduğunda PostgreSQL yazma işlemlerini tamamen durdurur ve uygulamalar veri kaydedemez.",
+      "description": "Bu sunucudaki bütün PostgreSQL veritabanlarının diskte kapladığı toplam yer (boş şablon veritabanları dâhil olduğu için taban değer birkaç MB'tır). Zamanla yavaşça büyümesi normaldir ve beklenir. Endişelenme anı: kısa sürede hızla büyüyorsa sunucunun boş disk alanını kontrol edin — disk dolduğunda PostgreSQL yazma işlemlerini tamamen durdurur ve uygulamalar veri kaydedemez.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
       "fieldConfig": {
@@ -218,7 +219,7 @@
       "id": 5,
       "type": "stat",
       "title": "Önbellek isabet oranı",
-      "description": "Okunan verinin yüzde kaçının yavaş diske gidilmeden hızlı bellekten karşılandığını gösterir. %98 ve üstü beklenen değerdir. Uzun süre %90'ın altında kalıyorsa veritabanına ayrılan bellek iş yükü için yetersiz demektir ve sorgular gözle görülür şekilde yavaşlar. Veritabanı boştayken hiç okuma olmadığı için değer görünmeyebilir; bu normaldir.",
+      "description": "Okunan verinin yüzde kaçının yavaş diske gidilmeden hızlı bellekten karşılandığı. %98 ve üstü beklenen değerdir. Endişelenme anı: uzun süre %90'ın altında kalıyorsa veritabanına ayrılan bellek iş yükü için yetersiz demektir ve sorgular gözle görülür şekilde yavaşlar. Veritabanı boştayken hiç okuma olmaz; o zaman değer yerine \"Okuma yok\" yazması normaldir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 8, "x": 0, "y": 5 },
       "fieldConfig": {
@@ -232,7 +233,8 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
+              { "color": "text", "value": null },
+              { "color": "red", "value": 0 },
               { "color": "#EAB839", "value": 90 },
               { "color": "green", "value": 98 }
             ]
@@ -256,7 +258,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "100 * sum(rate(pg_stat_database_blks_hit{engine=\"postgresql\"}[5m])) / (sum(rate(pg_stat_database_blks_hit{engine=\"postgresql\"}[5m])) + sum(rate(pg_stat_database_blks_read{engine=\"postgresql\"}[5m])))",
+          "expr": "100 * sum(rate(pg_stat_database_blks_hit{engine=\"postgresql\"}[5m])) / (sum(rate(pg_stat_database_blks_hit{engine=\"postgresql\"}[5m])) + sum(rate(pg_stat_database_blks_read{engine=\"postgresql\"}[5m])) > 0)",
           "instant": false,
           "legendFormat": "İsabet oranı",
           "range": true,
@@ -269,7 +271,7 @@
       "id": 6,
       "type": "stat",
       "title": "Kesintisiz çalışma süresi",
-      "description": "PostgreSQL'in en son başlatılmasından bu yana geçen süre, gün olarak. Siz yeniden başlatmadığınız hâlde bu süre sık sık sıfırlanıyorsa veritabanı kendi kendine çöküp yeniden açılıyor demektir; en sık nedeni yetersiz bellektir. Sarı renk, veritabanının yakın zamanda yeniden başladığını söyler.",
+      "description": "PostgreSQL'in en son başlatılmasından bu yana geçen süre, gün olarak. Sarı renk, veritabanının son bir saat içinde yeniden başladığını söyler. Endişelenme anı: siz yeniden başlatmadığınız hâlde bu süre sık sık sıfırlanıyorsa veritabanı kendi kendine çöküp yeniden açılıyor demektir; en sık nedeni yetersiz bellektir (./stack.sh logs postgresql). PostgreSQL kapalıyken \"Veri yok\" yazması normaldir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 8, "x": 8, "y": 5 },
       "fieldConfig": {
@@ -278,11 +280,12 @@
           "decimals": 1,
           "mappings": [],
           "min": 0,
-          "noValue": "Kapalı",
+          "noValue": "Veri yok",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "#EAB839", "value": null },
+              { "color": "text", "value": null },
+              { "color": "#EAB839", "value": 0 },
               { "color": "green", "value": 0.04 }
             ]
           },
@@ -318,7 +321,7 @@
       "id": 7,
       "type": "stat",
       "title": "Son 1 saatteki kilitlenme",
-      "description": "İki işlemin birbirini beklemesi yüzünden veritabanının birini zorla iptal etmek zorunda kaldığı durumların (deadlock) sayısı. Sağlıklı bir sistemde 0 olmalıdır. Sıfırdan büyükse bazı kayıt işlemleri yarıda kesilmiş ve uygulama hata almış demektir. Sürekli tekrar ediyorsa uygulamanın aynı verilere farklı sırayla yazması araştırılmalıdır.",
+      "description": "İki işlemin birbirini beklemesi yüzünden veritabanının birini zorla iptal etmek zorunda kaldığı durumların (deadlock) sayısı. Sağlıklı bir sistemde 0 olmalıdır. Endişelenme anı: sıfırdan büyükse bazı kayıt işlemleri yarıda kesilmiş ve uygulama hata almış demektir; sürekli tekrar ediyorsa uygulamanın aynı verilere farklı sırayla yazması araştırılmalıdır.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 8, "x": 16, "y": 5 },
       "fieldConfig": {
@@ -368,7 +371,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Bağlantı sayısı ve üst sınır",
-      "description": "Zaman içinde açık olan bağlantı sayısı ile izin verilen üst sınırın karşılaştırması. Mavi çizginin gün içinde inip çıkması normaldir. Mavi çizgi kırmızı kesikli sınıra yaklaşıyorsa önlem alın: sınıra ulaşıldığında yeni bağlantılar reddedilir. Çözüm genellikle uygulamada bağlantı havuzu kullanmak ya da sınırı yükseltmektir.",
+      "description": "Zaman içinde açık olan bağlantı sayısı ile izin verilen üst sınırın karşılaştırması. Mavi çizginin gün içinde inip çıkması normaldir. Endişelenme anı: mavi çizgi kırmızı kesikli sınıra yaklaşıyorsa önlem alın — sınıra ulaşıldığında yeni bağlantılar reddedilir. Çözüm genellikle uygulamada bağlantı havuzu kullanmak ya da sınırı yükseltmektir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
       "fieldConfig": {
@@ -445,7 +448,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "Saniyedeki işlem sayısı",
-      "description": "Veritabanının saniyede kaç iş tamamladığı. Yeşil çizgi normal iş yükünüzdür; gün içinde inip çıkması beklenir ve hiç iş yokken sıfıra inmesi normaldir. Turuncu çizgi, yarıda kesilip geri alınan işleri gösterir; yeşile göre çok küçük kalmalıdır. Turuncu sürekli yükseliyorsa uygulama hata alıyor ya da işlemleri iptal ediyor demektir.",
+      "description": "Veritabanının saniyede kaç iş tamamladığı. Yeşil çizgi normal iş yükünüzdür; gün içinde inip çıkması beklenir ve hiç iş yokken sıfıra inmesi normaldir. Turuncu çizgi, yarıda kesilip geri alınan işleri gösterir ve yeşile göre çok küçük kalmalıdır. Endişelenme anı: turuncu çizgi sürekli yükseliyor ya da yeşile yaklaşıyorsa uygulama hata alıyor veya işlemleri iptal ediyor demektir — uygulama günlüklerine bakın.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
       "fieldConfig": {
@@ -525,8 +528,8 @@
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Tutulan kilit sayısı (türüne göre)",
-      "description": "Kilit, bir işlem veriyi değiştirirken başkalarının aynı veriye dokunmasını engelleyen sıra bekletme mekanizmasıdır. Kilit sayısının işlerle birlikte inip çıkması normaldir. Sayı uzun süre yüksek kalıp düşmüyorsa sorgular birbirini bekliyor, yani sistem yavaşlıyor olabilir; bu durumda uygulamada uzun süren ya da kapatılmayı unutulan işlemleri arayın.",
+      "title": "Tutulan kilit sayısı",
+      "description": "Kilit, bir işlem veriyi değiştirirken başkalarının aynı veriye dokunmasını engelleyen sıra bekletme mekanizmasıdır. Her sıradan sorgu bile kilit alır, bu yüzden sayının iş yüküyle birlikte inip çıkması normaldir. Turuncu çizgi, veriyi değiştiren (yazma) kilitlerini ayrıca gösterir. Endişelenme anı: sayı iş yoğunluğu geçtiği hâlde uzun süre yüksek kalıp hiç düşmüyorsa sorgular birbirini bekliyor, yani sistem yavaşlıyor olabilir; uygulamada açık bırakılmış ya da çok uzun süren işlemleri arayın.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
       "fieldConfig": {
@@ -540,17 +543,17 @@
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 20,
+            "fillOpacity": 15,
             "gradientMode": "none",
             "hideFrom": { "legend": false, "tooltip": false, "viz": false },
             "insertNulls": false,
             "lineInterpolation": "stepAfter",
-            "lineWidth": 1,
+            "lineWidth": 2,
             "pointSize": 5,
             "scaleDistribution": { "type": "linear" },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": { "group": "A", "mode": "normal" },
+            "stacking": { "group": "A", "mode": "none" },
             "thresholdsStyle": { "mode": "off" }
           },
           "decimals": 0,
@@ -562,7 +565,20 @@
           },
           "unit": "short"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Toplam kilit" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Yazma (dışlayıcı) kilidi" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
@@ -572,11 +588,20 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum by (mode) (pg_locks_count{engine=\"postgresql\"})",
+          "expr": "sum(pg_locks_count{engine=\"postgresql\"})",
           "instant": false,
-          "legendFormat": "{{mode}}",
+          "legendFormat": "Toplam kilit",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(pg_locks_count{engine=\"postgresql\", mode=~\".*exclusivelock\"})",
+          "instant": false,
+          "legendFormat": "Yazma (dışlayıcı) kilidi",
+          "range": true,
+          "refId": "B"
         }
       ],
       "pluginVersion": "11.0.0"

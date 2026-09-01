@@ -29,7 +29,7 @@
       "id": 1,
       "type": "stat",
       "title": "Erişilebilirlik",
-      "description": "ClickHouse ayakta mı? 'Çalışıyor' yazıyorsa sunucu 30 saniyede bir sorulan yoklamaya cevap veriyor demektir. 'Cevap vermiyor' yazıyorsa motor ya kapalı ya da takılmış durumdadır; uygulamalarınız bağlanamaz, hata alır. Motoru siz kapattıysanız kutu 'Veri yok' gösterir, bu normaldir.",
+      "description": "ClickHouse ayakta mı? Bu kutunun cevabı doğrudan ClickHouse'un kendi metrik ucundan gelir; araya ayrı bir exporter girmez, yani 'Çalışıyor' yazıyorsa 30 saniyede bir sorulan yoklamaya motorun kendisi cevap vermiştir. 'Cevap vermiyor' yazıyorsa motor ya kapalı ya da takılmış durumdadır; uygulamalarınız bağlanamaz, hata alır. Motoru siz kapattıysanız kutu 'Veri yok' gösterir, bu normaldir.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -115,7 +115,7 @@
       "id": 2,
       "type": "stat",
       "title": "Açık bağlantı sayısı",
-      "description": "Şu anda ClickHouse'a bağlı istemci sayısı (HTTP arayüzü ve native protokol birlikte). Normalde uygulamanızın bağlantı havuzu kadar olur ve dalgalanır. Sayı sürekli tırmanıp hiç düşmüyorsa uygulama açtığı bağlantıları kapatmıyordur; bir noktadan sonra sunucu yeni bağlantı kabul etmez ve uygulama 'bağlanamadı' hatası verir.",
+      "description": "Şu anda ClickHouse'a bağlı istemci sayısı (HTTP arayüzü ve native protokol birlikte). Normalde uygulamanızın bağlantı havuzu kadar olur ve dalgalanır. Bu kurulumda üst sınır 4096 bağlantıdır; kutu 1000'de sarıya, 2000'de kırmızıya döner — yani sınıra varmadan çok önce uyarır. Asıl bakılacak şey şudur: sayı sürekli tırmanıp hiç düşmüyorsa uygulama açtığı bağlantıları kapatmıyordur (bağlantı sızıntısı). Sınıra ulaşıldığında sunucu yeni bağlantı kabul etmez ve uygulama 'bağlanamadı' hatası verir.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -145,11 +145,11 @@
               },
               {
                 "color": "orange",
-                "value": 200
+                "value": 1000
               },
               {
                 "color": "red",
-                "value": 500
+                "value": 2000
               }
             ]
           }
@@ -189,7 +189,7 @@
       "id": 3,
       "type": "stat",
       "title": "Şu an çalışan sorgu",
-      "description": "Tam bu anda işlenmekte olan sorgu sayısı. Birkaç tane olması gayet normaldir. Sayı uzun süre yüksek kalıyorsa sorgular birikiyor demektir: ya sorgular ağırdır ya da sunucu yetişemiyordur. ClickHouse'un varsayılan üst sınırı 100 eş zamanlı sorgudur; oraya dayanılırsa yeni sorgular doğrudan reddedilir.",
+      "description": "Tam bu anda işlenmekte olan sorgu sayısı. Birkaç tane olması gayet normaldir. Sayı uzun süre yüksek kalıyorsa sorgular birikiyor demektir: ya sorgular ağırdır ya da sunucu yetişemiyordur. Bu kurulumda eş zamanlı sorgu üst sınırı 1000'dir; kutu 300'de sarıya, 700'de kırmızıya döner. Sınıra dayanılırsa yeni sorgular çalıştırılmadan doğrudan reddedilir.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -219,11 +219,11 @@
               },
               {
                 "color": "orange",
-                "value": 30
+                "value": 300
               },
               {
                 "color": "red",
-                "value": 70
+                "value": 700
               }
             ]
           }
@@ -262,8 +262,8 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "Kullanılan bellek",
-      "description": "ClickHouse'un o an ayırdığı bellek. ClickHouse sorgu sırasında belleği bolca kullanır; sayının inip çıkması normaldir. Motora tanınan bellek tavanına dayanırsa büyük sorgular 'bellek sınırı aşıldı' hatasıyla iptal edilir. Değer sürekli tavana yakın seyrediyorsa ya sunucuya RAM eklemek ya da sorguları küçültmek (daha az satır, daha az sütun) gerekir.",
+      "title": "Bellek doluluğu",
+      "description": "ClickHouse'un kullandığı belleğin, bu konteynere ayrılan belleğe oranı (konteynere limit konmamışsa sunucunun toplam RAM'ine oranı). ClickHouse sorgu sırasında belleği bolca kullanır, sayının inip çıkması normaldir. Motorun kendi tavanı ayrılan belleğin yaklaşık dörtte üçüne kurulur: oraya dayanan büyük sorgular 'bellek sınırı aşıldı' hatasıyla iptal edilir — sunucu çökmez ama sorgu tamamlanmaz. Yüzde 80'i sürekli aşıyorsa ya sorguları küçültün (daha az satır, daha az sütun) ya da motora daha çok bellek verin: motoru kapatıp yeniden açtığınızda yığın belleği baştan hesaplar.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -276,21 +276,29 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "bytes",
-          "decimals": 1,
+          "unit": "percent",
+          "decimals": 0,
           "min": 0,
+          "max": 100,
           "noValue": "Veri yok",
           "color": {
-            "mode": "fixed",
-            "fixedColor": "blue"
+            "mode": "thresholds"
           },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "blue",
+                "color": "green",
                 "value": null
+              },
+              {
+                "color": "orange",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 80
               }
             ]
           }
@@ -320,8 +328,8 @@
             "uid": "dbstack-prometheus"
           },
           "editorMode": "code",
-          "expr": "ClickHouseMetrics_MemoryTracking{engine=\"clickhouse\"}",
-          "legendFormat": "Bellek",
+          "expr": "100 * ClickHouseMetrics_MemoryTracking{engine=\"clickhouse\"}\n/\nclamp_max(\n  ClickHouseAsyncMetrics_CGroupMemoryTotal{engine=\"clickhouse\"},\n  scalar(ClickHouseAsyncMetrics_OSMemoryTotal{engine=\"clickhouse\"})\n)",
+          "legendFormat": "Bellek doluluğu",
           "range": true
         }
       ]
@@ -436,7 +444,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Hata ile biten sorgular",
-      "description": "Saniyede kaç sorgunun hata alarak sonlandığı. Sağlıklı bir sistemde bu çizgi sıfırda, düz durur ve grafik yeşildir. Çizgi yukarı kalkıp kırmızıya dönüyorsa uygulamanız o anda hata alıyor demektir: yanlış yazılmış sorgu, aşılan bellek sınırı ya da olmayan bir tablo. Tek tük sıçramalar genelde uygulama tarafındaki bir hatadır; sürekli devam ediyorsa günlüklere bakın: ./stack.sh logs clickhouse",
+      "description": "Dakikada kaç sorgunun hata alarak sonlandığı. Sağlıklı bir sistemde bu çizgi sıfırda, düz durur ve grafik yeşildir. Değer 5 dakikalık ortalamadan hesaplandığı için tek bir hatalı sorgu bile '0.20 hata/dk' gibi küçük bir tepe olarak görünür ve çizgiyi sarıya çeker; bu genelde uygulamanın ya da elle yazılan bir sorgunun hatasıdır, geçer. Çizgi kırmızıya dönüp orada kalıyorsa (dakikada 1 hatanın üstü) sistematik bir sorun vardır: yanlış yazılmış sorgu, aşılan bellek sınırı ya da olmayan bir tablo. Günlüklere bakın: ./stack.sh logs clickhouse",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -449,7 +457,7 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "suffix: hata/sn",
+          "unit": "suffix: hata/dk",
           "decimals": 2,
           "min": 0,
           "noValue": "Veri yok",
@@ -465,8 +473,12 @@
                 "value": null
               },
               {
+                "color": "orange",
+                "value": 0.05
+              },
+              {
                 "color": "red",
-                "value": 0.001
+                "value": 1
               }
             ]
           },
@@ -486,7 +498,7 @@
               "group": "A"
             },
             "axisPlacement": "auto",
-            "axisLabel": "hata/sn",
+            "axisLabel": "hata/dk",
             "axisColorMode": "text",
             "axisBorderShow": false,
             "axisCenteredZero": false,
@@ -525,7 +537,7 @@
             "uid": "dbstack-prometheus"
           },
           "editorMode": "code",
-          "expr": "rate(ClickHouseProfileEvents_FailedQuery{engine=\"clickhouse\"}[5m])",
+          "expr": "rate(ClickHouseProfileEvents_FailedQuery{engine=\"clickhouse\"}[5m]) * 60",
           "legendFormat": "Başarısız sorgu",
           "range": true
         }
@@ -534,8 +546,8 @@
     {
       "id": 7,
       "type": "timeseries",
-      "title": "Önbellek isabet oranı",
-      "description": "ClickHouse'un okuduğu verinin yüzde kaçını diske gitmeden bellekteki önbellekten karşıladığı. Yüzde 90'ın üstü iyidir, yeşil görünür. Uzun süre yüzde 70'in altında kalıyorsa neredeyse her sorgu diske iniyor demektir; sorgular gözle görülür şekilde yavaşlar. Çare genelde sunucuya RAM eklemek ya da sorguların taradığı veriyi azaltmaktır. Hiç sorgu çalışmayan sakin saatlerde hesaplanacak bir şey olmadığı için çizgide boşluk olur; bu bir arıza değildir.",
+      "title": "Bellek kullanımı ve tavan",
+      "description": "ClickHouse'un o an kullandığı bellek ile bu konteynere ayrılan bellek yan yana. Üstteki kesik kırmızı çizgi tavandır; aradaki boşluk elinizde kalan paydır. Motorun kendi sınırı bu tavanın biraz altına (yaklaşık dörtte üçüne) kurulur: oraya dayanan büyük sorgular 'bellek sınırı aşıldı' hatasıyla iptal edilir. Kullanım çizgisinin sorgu sırasında zıplaması normaldir; endişelenmeniz gereken durum, çizginin tavana doğru sürekli tırmanıp bir daha inmemesidir. Konteynere bellek limiti konmamışsa tavan olarak sunucunun toplam RAM'i çizilir.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -548,29 +560,20 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
+          "unit": "bytes",
           "decimals": 1,
           "min": 0,
-          "max": 100,
           "noValue": "Veri yok",
           "color": {
-            "mode": "thresholds"
+            "mode": "palette-classic"
           },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 70
-              },
-              {
                 "color": "green",
-                "value": 90
+                "value": null
               }
             ]
           },
@@ -578,7 +581,7 @@
             "drawStyle": "line",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
-            "fillOpacity": 10,
+            "fillOpacity": 14,
             "gradientMode": "opacity",
             "barAlignment": 0,
             "spanNulls": false,
@@ -590,7 +593,7 @@
               "group": "A"
             },
             "axisPlacement": "auto",
-            "axisLabel": "yüzde",
+            "axisLabel": "bellek",
             "axisColorMode": "text",
             "axisBorderShow": false,
             "axisCenteredZero": false,
@@ -603,11 +606,38 @@
               "legend": false
             },
             "thresholdsStyle": {
-              "mode": "dashed"
+              "mode": "off"
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Ayrılan bellek (tavan)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [10, 10]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -617,8 +647,8 @@
           "calcs": []
         },
         "tooltip": {
-          "mode": "single",
-          "sort": "none"
+          "mode": "multi",
+          "sort": "desc"
         }
       },
       "targets": [
@@ -629,8 +659,19 @@
             "uid": "dbstack-prometheus"
           },
           "editorMode": "code",
-          "expr": "100 * rate(ClickHouseProfileEvents_MarkCacheHits{engine=\"clickhouse\"}[5m])\n/\n(\n  rate(ClickHouseProfileEvents_MarkCacheHits{engine=\"clickhouse\"}[5m])\n  +\n  rate(ClickHouseProfileEvents_MarkCacheMisses{engine=\"clickhouse\"}[5m])\n)",
-          "legendFormat": "İsabet oranı",
+          "expr": "ClickHouseMetrics_MemoryTracking{engine=\"clickhouse\"}",
+          "legendFormat": "Kullanılan bellek",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "clamp_max(\n  ClickHouseAsyncMetrics_CGroupMemoryTotal{engine=\"clickhouse\"},\n  scalar(ClickHouseAsyncMetrics_OSMemoryTotal{engine=\"clickhouse\"})\n)",
+          "legendFormat": "Ayrılan bellek (tavan)",
           "range": true
         }
       ]
@@ -639,7 +680,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Saniyede işlenen satır sayısı",
-      "description": "Saniyede okunan ve yazılan satır sayısı. ClickHouse'un asıl iş hacmi budur: sorgu sayısı az olsa bile burada milyonlar görmek son derece normaldir, çünkü tek bir sorgu milyonlarca satır tarayabilir. 'Yazılan' çizgisi beklediğiniz veri akışını göstermiyorsa (örneğin gece boyunca sıfırsa ama veri akması gerekiyorsa) veriyi besleyen tarafta bir sorun vardır. 'Okunan' çizgisinin sürekli çok yüksek olması, sorguların gereğinden fazla veri taradığına işaret edebilir.",
+      "description": "Saniyede okunan ve yazılan satır sayısı. ClickHouse'un asıl iş hacmi budur: sorgu sayısı az olsa bile burada milyonlar görmek son derece normaldir, çünkü tek bir sorgu milyonlarca satır tarayabilir. Önemli not: ClickHouse arka planda kendi sistem günlüklerini yazar ve parçaları birleştirir; bu yüzden 'Yazılan' çizgisi siz hiçbir veri göndermeseniz bile sıfıra inmez. Kendi kurulumunuzun sakin saatlerdeki taban değerini bir kez gözleyip onu referans alın: çizgi beklediğiniz seviyenin çok altına düşerse veriyi besleyen tarafta bir sorun var demektir. 'Okunan' çizgisinin sürekli çok yüksek olması ise sorguların gereğinden fazla veri taradığına işaret edebilir.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -745,7 +786,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "Diskteki veri boyutu",
-      "description": "Tablolarınızın diskte kapladığı toplam yer (ClickHouse veriyi sıkıştırarak sakladığı için bu, gönderdiğiniz ham veriden çok daha küçüktür). Zamanla artması beklenir. Basamak basamak ani sıçramalar toplu veri yüklemesidir. Önemli olan eğimdir: bu hızla artmaya devam ederse diskin ne zaman dolacağını buradan kestirebilirsiniz. Diskin dolması ClickHouse'ta en sert arızadır, yazma tamamen durur; yer daralmadan eski verileri temizleyin veya disk ekleyin.",
+      "description": "Tablolarınızın diskte kapladığı toplam yer (ClickHouse veriyi sıkıştırarak sakladığı için bu, gönderdiğiniz ham veriden çok daha küçüktür). Zamanla artması beklenir; basamak basamak ani sıçramalar toplu veri yüklemesidir. ClickHouse'un kendi sistem günlük tabloları da bu toplama dahildir, bu yüzden siz hiç veri yazmasanız bile çizgi yavaşça tırmanır — bu normaldir. Bu sayı diskin doluluğu DEĞİLDİR: diskte ne kadar yer kaldığını ve bu gidişle ne zaman dolacağını 'Genel Bakış' panosundaki disk grafiklerinden görürsünüz. Buradaki eğim beklenmedik biçimde dikleşiyorsa neyin büyüdüğüne bakın ve eski veriyi temizleyin (TTL); diskin dolması ClickHouse'ta en sert arızadır, yazma tamamen durur.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"

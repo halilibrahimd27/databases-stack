@@ -2,7 +2,7 @@
   "id": null,
   "uid": "dbstack-mariadb",
   "title": "MariaDB — Genel Durum",
-  "description": "MariaDB'nin sağlık ve yük özeti. Üst sıradaki kutular 'her şey yolunda mı' sorusuna, alttaki grafikler 'ne kadar yükleniyor ve nerede takılıyor' sorusuna cevap verir. Renkler yeşilse bir şey yapmanız gerekmez.",
+  "description": "MariaDB'nin sağlık ve yük özeti. Üst sıradaki kutular 'her şey yolunda mı' sorusuna, alttaki grafikler 'ne kadar yükleniyor ve nerede takılıyor' sorusuna cevap verir. Renkler yeşilse bir şey yapmanız gerekmez. Tüm ölçümler ana (primary) MariaDB sunucusundan gelir; bu kurulumda yedek kopyanın kendi exporter'ı olmadığı için replikasyon gecikmesi ölçülmez.",
   "tags": ["databases-stack", "mariadb"],
   "timezone": "browser",
   "editable": true,
@@ -42,7 +42,7 @@
       "id": 1,
       "type": "stat",
       "title": "Durum",
-      "description": "MariaDB'ye bağlanılabiliyor mu? 'Çalışıyor' yazıyorsa veritabanı ayakta ve sorgu kabul ediyor. 'Erişilemiyor' yazıyorsa veritabanı kapalı, çökmüş ya da parola/ağ sorunu var demektir; uygulamalarınız o sırada veritabanına ulaşamaz. Motoru kasıtlı olarak kapattıysanız bu kutunun boş ya da kırmızı olması normaldir. Beklenmedik bir kırmızı görürseniz günlüklere bakın: ./stack.sh logs mariadb",
+      "description": "MariaDB'ye bağlanılabiliyor mu? 'Çalışıyor' (yeşil): veritabanı ayakta ve sorgu kabul ediyor. 'Erişilemiyor' (kırmızı): izleme ayakta ama veritabanına bağlanamıyor — motor çökmüş ya da parola/ağ sorunu var; uygulamalarınız o sırada veritabanına ulaşamaz, günlüklere bakın: ./stack.sh logs mariadb. 'Veri yok' (gri) ise BAŞKA bir şeydir ve iki anlama gelir: ya motoru kasıtlı kapattınız, ya da izlemenin kendisi durdu (Prometheus veya mariadb-exporter çalışmıyor) — bu ikinci durumda veritabanının gerçek durumu bilinmiyordur. Motorun açık olduğunu düşünüyorsanız önce ./stack.sh ps ile exporter'ın ayakta olup olmadığına bakın.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -81,12 +81,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "text",
                 "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
               }
             ]
           }
@@ -431,7 +427,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Bağlantılar ve Üst Sınır",
-      "description": "Açık bağlantı sayısının zaman içindeki seyri ile izin verilen üst sınır. 'Açık bağlantı' çizgisi kesikli kırmızı sınır çizgisine yaklaşıyorsa yeni bağlantılar birazdan reddedilecek demektir; uygulamada bağlantı havuzunu küçültün ya da sınırı yükseltin. 'Çalışan' çizgisi o an iş yapan bağlantıları gösterir: açık bağlantılar sabitken bu çizgi sürekli tırmanıyorsa sorgular sıkışıyordur.",
+      "description": "Açık bağlantı sayısının zaman içindeki seyri. Sol eksen gerçek bağlantı sayısına göre ölçeklenir; kesikli kırmızı 'Üst sınır' çizgisi ise SAĞ eksende durur, yani iki çizgi aynı ölçeğe sıkışmaz — sınıra ne kadar kaldığını yüzde olarak yukarıdaki 'Bağlantı Doluluğu' kutusundan okuyun. Endişe zamanı: 'Açık bağlantı' sürekli tırmanıp düşmüyorsa bağlantılar sızıyordur (havuzu küçültün ya da .env içindeki MARIADB_MAX_CONNECTIONS değerini yükseltin). 'Çalışan' çizgisi o an iş yapan bağlantıları gösterir: açık bağlantılar sabitken bu çizgi sürekli tırmanıyorsa sorgular sıkışıyordur.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -518,6 +514,10 @@
                   "fill": "dash",
                   "dash": [10, 10]
                 }
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
               }
             ]
           },
@@ -1017,8 +1017,8 @@
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Replikasyon Gecikmesi",
-      "description": "Yedek kopyanın (replika), ana veritabanının kaç saniye gerisinde kaldığı. Sıfıra yakın olmalıdır. Yedek kopya kullanmıyorsanız bu panelin 'Veri yok' göstermesi tamamen normaldir, bir arıza değildir. Gecikme büyürken otomatik devir (failover) yapılırsa aradaki veri kaybolur; birkaç dakikayı aşıp orada kalıyorsa ağ ya da disk darboğazına bakın, sürerse yedeği yeniden kurun: ./stack.sh failover rebuild mariadb",
+      "title": "Disk Trafiği",
+      "description": "MariaDB'nin saniyede diske yazdığı ve diskten okuduğu veri miktarı (InnoDB). 'Yazma' yükün doğrudan karşılığıdır: veri değiştikçe artar, boşta bir yığında sıfıra yakın seyreder. 'Okuma' çizgisinin sürekli yüksek olması istenmez — aranan veri bellekte bulunamayıp diske gidiliyor demektir; böyle bir durumda soldaki 'Önbellek İsabet Oranı' da düşmüş olur, çözüm tampon havuzunu büyütmektir (.env içindeki MARIADB_BUFFER_POOL). Endişe zamanı: her iki çizgi de diskinizin taşıyabileceği hıza yaklaşıp orada kalıyorsa tüm sorgular yavaşlar; kısa süreli sıçramalar (yedekleme, toplu yükleme) normaldir. Not: bu yığında tek exporter ana sunucuya bağlı olduğu için replikasyon gecikmesi ölçülmez, o yüzden burada gösterilmiyor.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -1032,11 +1032,11 @@
       "fieldConfig": {
         "defaults": {
           "noValue": "Veri yok",
-          "unit": "s",
+          "unit": "Bps",
           "min": 0,
-          "decimals": 0,
+          "decimals": 1,
           "color": {
-            "mode": "thresholds"
+            "mode": "palette-classic"
           },
           "mappings": [],
           "thresholds": {
@@ -1045,14 +1045,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 60
-              },
-              {
-                "color": "red",
-                "value": 300
               }
             ]
           },
@@ -1060,7 +1052,7 @@
             "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
-            "axisLabel": "saniye",
+            "axisLabel": "bayt/sn",
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
@@ -1085,15 +1077,46 @@
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "dashed"
+              "mode": "off"
             }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Yazma"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Okuma"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
-          "calcs": ["max"],
+          "calcs": ["mean", "max"],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
@@ -1111,8 +1134,20 @@
             "uid": "dbstack-prometheus"
           },
           "editorMode": "code",
-          "expr": "mysql_slave_status_seconds_behind_master{engine=\"mariadb\"}",
-          "legendFormat": "Gecikme",
+          "expr": "rate(mysql_global_status_innodb_data_written{engine=\"mariadb\"}[5m])",
+          "legendFormat": "Yazma",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(mysql_global_status_innodb_data_read{engine=\"mariadb\"}[5m])",
+          "legendFormat": "Okuma",
           "range": true,
           "instant": false
         }

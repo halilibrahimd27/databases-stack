@@ -2,7 +2,7 @@
   "id": null,
   "uid": "dbstack-kafka",
   "title": "Apache Kafka — Genel Durum",
-  "description": "Kafka mesaj kuyruğunun sağlık ve yük özeti. Üstteki büyük sayılar \"her şey yolunda mı\" sorusunu, alttaki grafikler \"ne kadar yükleniyor\" sorusunu yanıtlar. Renk yeşilse aksiyon gerekmez.",
+  "description": "Kafka mesaj kuyruğunun sağlık ve yük özeti. Üstteki büyük sayılar \"her şey yolunda mı\" sorusunu, alttaki grafikler \"ne kadar yükleniyor\" sorusunu yanıtlar. Renk yeşilse aksiyon gerekmez. Okuyucu (tüketici grubu) ile ilgili paneller, Kafka'dan mesaj okuyan bir uygulama çalışmadığı sürece boş kalır — bu normaldir.",
   "tags": ["databases-stack", "kafka"],
   "timezone": "browser",
   "editable": false,
@@ -42,7 +42,7 @@
       "id": 1,
       "type": "stat",
       "title": "Kafka erişilebilir mi?",
-      "description": "Kafka'nın ölçüm servisine ulaşılıp ulaşılamadığını gösterir. \"Çalışıyor\" yazıyorsa sistem ayakta demektir. \"Erişilemiyor\" görürseniz Kafka durmuş ya da ağ bağlantısı kopmuştur; bu durumda uygulamalar ne mesaj gönderebilir ne de mesaj okuyabilir. Hemen ilgilenilmesi gereken tek panel budur.",
+      "description": "Kafka'nın KENDİSİNE bağlanılıp bağlanılamadığını gösterir: ölçüm toplayıcı Kafka'ya soru sorup en az bir sunucu (broker) görebiliyorsa \"Çalışıyor\" yazar. \"Erişilemiyor\" görüyorsanız Kafka durmuş, henüz açılıyor ya da ağ bağlantısı kopmuştur; bu durumda uygulamalar ne mesaj gönderebilir ne de mesaj okuyabilir. Hemen ilgilenilmesi gereken tek panel budur. Not: ölçüm toplayıcının ayakta olması Kafka'nın ayakta olduğu anlamına gelmez, bu yüzden panel toplayıcıya değil Kafka'nın verdiği cevaba bakar.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -59,7 +59,7 @@
           "color": {
             "mode": "thresholds"
           },
-          "noValue": "Veri yok",
+          "noValue": "Erişilemiyor",
           "unit": "short",
           "mappings": [
             {
@@ -116,7 +116,7 @@
             "uid": "dbstack-prometheus"
           },
           "editorMode": "code",
-          "expr": "max(up{engine=\"kafka\", job=\"databases\"})",
+          "expr": "clamp_max(max(kafka_brokers{engine=\"kafka\"}), 1) or on() vector(0)",
           "instant": true,
           "range": false,
           "legendFormat": "__auto",
@@ -128,7 +128,7 @@
       "id": 2,
       "type": "stat",
       "title": "Sunucu (broker) sayısı",
-      "description": "Kümede şu an çalışan Kafka sunucusu sayısı. Bu yığın tek sunucuyla kurulur, yani normal değer 1'dir. 0 görüyorsanız Kafka kapalıdır. Daha önce 3 iken 2'ye düştüyse bir sunucu arızalanmış demektir; veri hâlâ okunabilir ama yedeklilik azalmıştır.",
+      "description": "Kümede şu an cevap veren Kafka sunucusu sayısı. Bu yığın tek sunucuyla kurulur, yani normal değer 1'dir. 0 görüyorsanız Kafka'ya hiç ulaşılamıyordur (soldaki panelle aynı sebep). Çok sunuculu bir kurulumda sayı 3 iken 2'ye düştüyse bir sunucu arızalanmış demektir: veri hâlâ okunabilir ama yedeklilik azalmıştır, düşen sunucuyu geri getirin.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -145,7 +145,7 @@
           "color": {
             "mode": "thresholds"
           },
-          "noValue": "Veri yok",
+          "noValue": "0",
           "unit": "short",
           "decimals": 0,
           "mappings": [],
@@ -187,7 +187,7 @@
             "uid": "dbstack-prometheus"
           },
           "editorMode": "code",
-          "expr": "max(kafka_brokers{engine=\"kafka\"})",
+          "expr": "max(kafka_brokers{engine=\"kafka\"}) or on() vector(0)",
           "instant": true,
           "range": false,
           "legendFormat": "__auto",
@@ -199,7 +199,7 @@
       "id": 3,
       "type": "stat",
       "title": "Kopyası eksik bölüm",
-      "description": "Olması gerektiği kadar yedek kopyası bulunmayan bölüm sayısı. Sağlıklı bir sistemde bu değer 0'dır. Sıfırdan büyükse bir sunucu düşmüş ya da kopyalama geride kalmıştır: o bölümdeki mesajlar şu an tek kopya halinde durur ve yeni bir arıza olursa kaybolabilir. Tek sunuculu kurulumda bu değer zaten hep 0 kalır.",
+      "description": "Olması gerektiği kadar yedek kopyası bulunmayan bölüm sayısı. Sağlıklı bir sistemde bu değer 0'dır. Sıfırdan büyükse bir sunucu düşmüş ya da kopyalama geride kalmıştır: o bölümdeki mesajlar şu an tek kopya halinde durur ve yeni bir arıza olursa kaybolabilir. Bu yığın tek sunucuyla kurulduğu için kopya zaten yoktur ve değer hep 0 kalır — normaldir; panel asıl olarak çok sunuculu bir kuruluma geçtiğinizde anlam kazanır.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -270,7 +270,7 @@
       "id": 4,
       "type": "stat",
       "title": "En yüksek okuma gecikmesi",
-      "description": "Mesajları okuyan uygulamalar arasında en çok geride kalanın kaç mesaj gerisinde olduğunu gösterir. Küçük ve sabit bir sayı normaldir. Sayı sürekli büyüyorsa okuyan uygulama, gelen mesajları üretildiği hızda işleyemiyor demektir: işler birikir ve veriler gecikmeli işlenir. Sarı uyarıdır, kırmızıda okuyan uygulamayı hızlandırmak gerekir.",
+      "description": "Mesajları okuyan uygulamalar arasında en çok geride kalanın kaç mesaj gerisinde olduğunu gösterir. Küçük ve sabit bir sayı normaldir. Sayı sürekli büyüyorsa okuyan uygulama, gelen mesajları üretildiği hızda işleyemiyor demektir: işler birikir ve veriler gecikmeli işlenir. Sarı uyarıdır; kırmızıda okuyan uygulamayı hızlandırmak ya da kopya sayısını artırmak gerekir. \"Okuyucu yok\" yazıyorsa Kafka'dan mesaj okuyan hiçbir uygulama çalışmıyor demektir — yeni kurulumda normaldir. Henüz tek bir mesaj bile işlememiş okuyucular için ölçüm -1 gelir; bu sahte değerler hesaba katılmaz.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -287,8 +287,8 @@
           "color": {
             "mode": "thresholds"
           },
-          "noValue": "Veri yok",
-          "unit": "suffix: mesaj",
+          "noValue": "Okuyucu yok",
+          "unit": "suffix:mesaj",
           "decimals": 0,
           "mappings": [],
           "thresholds": {
@@ -333,7 +333,7 @@
             "uid": "dbstack-prometheus"
           },
           "editorMode": "code",
-          "expr": "max(kafka_consumergroup_lag{engine=\"kafka\"})",
+          "expr": "max(kafka_consumergroup_lag{engine=\"kafka\"} >= 0)",
           "instant": true,
           "range": false,
           "legendFormat": "__auto",
@@ -345,7 +345,7 @@
       "id": 5,
       "type": "stat",
       "title": "Konu (topic) sayısı",
-      "description": "Kafka'da tanımlı konu sayısı. Konu, mesajların türüne göre ayrıldığı posta kutusu gibidir; her uygulama kendi konusunu kullanır. Kafka'nın kendi iç konuları da bu sayıya dahildir, bu yüzden hiç konu açmasanız bile sayı 1-2 görünebilir. Beklemediğiniz hızda artıyorsa bir uygulama her çalıştığında yeni konu açıyor olabilir.",
+      "description": "Kafka'da tanımlı konu sayısı. Konu, mesajların türüne göre ayrıldığı posta kutusu gibidir; her uygulama kendi konusunu kullanır. Kafka'nın kendi iç konuları da bu sayıya dahildir, bu yüzden hiç konu açmasanız bile sayı 1-2 görünebilir. Tek başına endişe sebebi değildir; beklemediğiniz hızda artıyorsa bir uygulama her çalıştığında yeni konu açıyor olabilir, konu adlarını Kafka UI'dan kontrol edin.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -413,7 +413,7 @@
       "id": 6,
       "type": "stat",
       "title": "Toplam bölüm (partition) sayısı",
-      "description": "Tüm konuların bölüm sayısı toplamı. Bölüm, bir konunun paralel çalışan şeridi gibidir: ne kadar çok bölüm varsa o kadar çok uygulama aynı anda okuyabilir. Tek sunucuda binlerce bölüm bellek ve disk baskısı yaratır; sayı birkaç bini aşıyorsa konu ve bölüm tasarımını gözden geçirin.",
+      "description": "Tüm konuların bölüm sayısı toplamı; Kafka'nın kendi iç konuları da dahildir (yalnız onlar bile 50 bölüm eder, bu yüzden bomboş bir kurulumda sayının 50 civarı olması normaldir). Bölüm, bir konunun paralel çalışan şeridi gibidir: ne kadar çok bölüm varsa o kadar çok uygulama aynı anda okuyabilir. Tek sunucuda binlerce bölüm bellek ve disk baskısı yaratır; sarıya (2000) yaklaşıyorsa konu ve bölüm tasarımını gözden geçirin.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -488,7 +488,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "Saniyede yazılan mesaj (konuya göre)",
-      "description": "Her konuya saniyede kaç yeni mesaj yazıldığı. Sistemin ne kadar yüklendiğini gösteren ana grafiktir. Ani sıçramalar toplu iş veya kampanya anlamına gelebilir; asıl dikkat edilmesi gereken, normalde trafik olan bir konunun çizgisinin sıfıra düşmesidir — bu, mesaj gönderen uygulamanın durduğu anlamına gelir.",
+      "description": "Her konuya saniyede kaç yeni mesaj yazıldığı. Sistemin ne kadar yüklendiğini gösteren ana grafiktir. Ani sıçramalar toplu iş ya da kampanya anlamına gelebilir; asıl dikkat edilmesi gereken, normalde trafik olan bir konunun çizgisinin sıfıra düşmesidir — bu, mesaj gönderen uygulamanın durduğu anlamına gelir. Kafka'nın kendi iç konuları (adı __ ile başlayanlar) bu grafiğe DAHİL EDİLMEMİŞTİR: onlar sayılsaydı siz hiç mesaj göndermeseniz bile grafik doluymuş gibi görünürdü. Hiç uygulama trafiği yoksa grafik boş kalır, bu da normaldir.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -506,7 +506,7 @@
             "mode": "palette-classic"
           },
           "noValue": "Veri yok",
-          "unit": "suffix: mesaj/sn",
+          "unit": "suffix:mesaj/sn",
           "decimals": 1,
           "min": 0,
           "mappings": [],
@@ -573,7 +573,7 @@
             "uid": "dbstack-prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (topic) (rate(kafka_topic_partition_current_offset{engine=\"kafka\"}[5m]))",
+          "expr": "sum by (topic) (rate(kafka_topic_partition_current_offset{engine=\"kafka\", topic!~\"__.*\"}[5m]))",
           "instant": false,
           "range": true,
           "legendFormat": "{{topic}}",
@@ -585,7 +585,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Okunmayı bekleyen mesaj (gecikme)",
-      "description": "Her okuyucu grubunun daha işlemediği mesaj sayısı. Çizgi düz ya da inişteyse okuyucu trafiğe yetişiyor demektir, sorun yoktur. Sürekli yükselen bir çizgi darboğaz işaretidir: mesajlar üretildiği hızda işlenemiyor. Bu durumda okuyan uygulamayı hızlandırmak veya kopya sayısını artırmak gerekir.",
+      "description": "Her okuyucu grubunun daha işlemediği mesaj sayısı. Çizgi düz ya da inişteyse okuyucu trafiğe yetişiyor demektir, sorun yoktur. Sürekli yükselen bir çizgi darboğaz işaretidir: mesajlar üretildiği hızda işlenemiyor, okuyan uygulamayı hızlandırmak ya da kopya sayısını artırmak gerekir. Kafka'dan mesaj okuyan bir uygulama (tüketici grubu) kurulu değilse bu grafik boş kalır — normaldir. Henüz tek bir mesaj bile işlememiş bölümler için ölçüm -1 gelir; bu sahte değerler grafiğe alınmaz.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -602,8 +602,8 @@
           "color": {
             "mode": "palette-classic"
           },
-          "noValue": "Veri yok",
-          "unit": "suffix: mesaj",
+          "noValue": "Okuyucu yok",
+          "unit": "suffix:mesaj",
           "decimals": 0,
           "min": 0,
           "mappings": [],
@@ -670,7 +670,7 @@
             "uid": "dbstack-prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (consumergroup, topic) (kafka_consumergroup_lag{engine=\"kafka\"})",
+          "expr": "sum by (consumergroup, topic) (kafka_consumergroup_lag{engine=\"kafka\"} >= 0)",
           "instant": false,
           "range": true,
           "legendFormat": "{{consumergroup}} → {{topic}}",
@@ -682,7 +682,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "Saniyede okunan mesaj (okuyucu grubuna göre)",
-      "description": "Mesajları okuyan uygulama gruplarının saniyede kaç mesaj işlediği. Bu değer soldaki \"saniyede yazılan mesaj\" grafiğine yakınsa sistem dengededir. Yazma hızının altında kalırsa gecikme birikmeye başlar. Sıfıra düşmesi, okuyan uygulamanın durduğu ya da hata alıp yeniden başlamaya çalıştığı anlamına gelir.",
+      "description": "Mesajları okuyan uygulama gruplarının saniyede kaç mesaj işlediği. Bu değer yukarıdaki \"saniyede yazılan mesaj\" grafiğine yakınsa sistem dengededir. Yazma hızının altında kalırsa gecikme birikmeye başlar; sıfıra düşmesi, okuyan uygulamanın durduğu ya da hata alıp yeniden başlamaya çalıştığı anlamına gelir. Kafka'dan mesaj okuyan bir uygulama (tüketici grubu) kurulu değilse bu grafik boş kalır — normaldir. Henüz mesaj işlememiş bölümlerin -1 değeri hesaba katılmaz; katılsaydı okuyucu ilk mesajını işlediği anda grafikte sahte bir tepe çıkardı.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -699,8 +699,8 @@
           "color": {
             "mode": "palette-classic"
           },
-          "noValue": "Veri yok",
-          "unit": "suffix: mesaj/sn",
+          "noValue": "Okuyucu yok",
+          "unit": "suffix:mesaj/sn",
           "decimals": 1,
           "min": 0,
           "mappings": [],
@@ -767,7 +767,7 @@
             "uid": "dbstack-prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (consumergroup) (rate(kafka_consumergroup_current_offset{engine=\"kafka\"}[5m]))",
+          "expr": "sum by (consumergroup) (rate((kafka_consumergroup_current_offset{engine=\"kafka\"} >= 0)[5m:30s]))",
           "instant": false,
           "range": true,
           "legendFormat": "{{consumergroup}}",
@@ -779,7 +779,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "Diskte saklanan mesaj sayısı (konuya göre)",
-      "description": "Her konuda şu an diskte duran mesaj sayısı. Kafka mesajları saklama süresi dolana kadar tutar (varsayılan 7 gün), bu yüzden sayının yüksek olması tek başına sorun değildir. Grafiğin merdiven gibi inip çıkması normaldir: eski mesajlar silinince düşer. Hiç düşmeden sürekli büyüyorsa ve disk doluyorsa saklama süresini kısaltmak gerekir.",
+      "description": "Her konuda şu an diskte duran mesaj sayısı. Kafka mesajları saklama süresi dolana kadar tutar (bu kurulumda varsayılan 7 gün), bu yüzden sayının yüksek olması tek başına sorun değildir. Grafiğin merdiven gibi inip çıkması normaldir: saklama süresi dolan eski mesajlar silinince düşer. Hiç düşmeden sürekli büyüyorsa ve disk doluyorsa saklama süresini kısaltmak gerekir. Kafka'nın kendi iç konuları (adı __ ile başlayanlar) listeye alınmamıştır; henüz hiç mesaj yazılmamışsa grafik boş kalır, bu normaldir.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -797,7 +797,7 @@
             "mode": "palette-classic"
           },
           "noValue": "Veri yok",
-          "unit": "suffix: mesaj",
+          "unit": "suffix:mesaj",
           "decimals": 0,
           "min": 0,
           "mappings": [],
@@ -864,7 +864,7 @@
             "uid": "dbstack-prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (topic) (kafka_topic_partition_current_offset{engine=\"kafka\"} - kafka_topic_partition_oldest_offset{engine=\"kafka\"})",
+          "expr": "sum by (topic) (kafka_topic_partition_current_offset{engine=\"kafka\", topic!~\"__.*\"} - kafka_topic_partition_oldest_offset{engine=\"kafka\", topic!~\"__.*\"})",
           "instant": false,
           "range": true,
           "legendFormat": "{{topic}}",

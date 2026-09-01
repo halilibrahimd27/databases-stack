@@ -31,6 +31,40 @@ user_dbs() {
     "$1" -N -e "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN ('mysql','information_schema','performance_schema','sys');" 2>/dev/null | tr -d '\r'
 }
 
+# Bir düğümdeki KULLANICI TABLOSU sayısı. "Kaynak boş mu?" sorusunu ŞEMA
+# düzeyinde sormak işe yaramıyordu: compose `MARIADB_DATABASE=defaultdb`
+# verdiği için MariaDB, AZ ÖNCE SİLİNİP sıfırdan açılmış bir düğümde bile o
+# şemayı ilk açılışta mutlaka yaratır (root SUPER olduğundan read_only da
+# engellemez). Yani "boş düğüm" hiçbir zaman boş görünmüyor, boşluk kemeri hiç
+# ateşlemiyordu. Tablo saymak DEFAULT_DATABASE'in adından ve varlığından
+# bağımsızdır.
+user_tables() {
+    "$1" -N -e "SELECT COUNT(*) FROM information_schema.TABLES WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys');" 2>/dev/null | tr -d '[:space:]'
+}
+
+# GTID konumundaki EN BÜYÜK sıra numarası. MariaDB'de gtid "alan-sunucu-sıra"
+# üçlüsüdür ve `sıra`, alan içinde TÜM küme boyunca artar: devirde yükseltilen
+# düğüm sayacı kaldığı yerden sürdürür. Bu yüzden iki düğümün sıra numarası,
+# hangisinin daha GÜNCEL olduğunu söyleyen ucuz ve güvenilir ölçüttür.
+# (read_only bunu söylemez: o yalnızca "şu an yazmaya kapalı" demektir.)
+gtid_seq() {
+    printf '%s' "$1" | tr ',' '\n' | awk -F- '{ if ($3+0 > m) m = $3+0 } END { print m+0 }'
+}
+
+# Ana kopya cevap verene kadar 30 sn bekler; $ro'ya read_only değerini yazar,
+# hiç cevap alınamazsa boş bırakır. Tek atışlık prob şuna takılıyordu: uzun bir
+# imaj çekimi sırasında ya da OOM sonrası yeniden başlarken ana kopya birkaç
+# saniye geç cevap veriyor, betik de daha ilk temasta "bağlanılamadı" deyip
+# vazgeçiyordu. Betikteki diğer bütün beklemeler zaten yeniden denemeli.
+wait_primary_ro() {
+    ro=""; i=0
+    while [ $i -lt 10 ]; do
+        ro="$(m_primary -N -e "SELECT @@read_only;" 2>/dev/null | tr -d '[:space:]')"
+        [ -n "$ro" ] && break
+        i=$((i+1)); sleep 3
+    done
+}
+
 # Replikanın sistem şeması sağlam mı? Bu üç tablo MariaDB'nin kendi
 # kurulumundan gelir; biri bile eksikse şema bozulmuştur.
 sys_schema_ok() {
@@ -40,8 +74,46 @@ sys_schema_ok() {
 
 case "$PHASE" in
 prepare)
+  # prepare, kullanıcının replikasyon kurarken çarptığı İLK aşamadır ve attach
+  # ile AYNI yönü izler — kemerleri de aynı olmalı. Eskiden burada hiçbir
+  # kontrol yoktu: yön ters verildiğinde replikasyon kullanıcısı SESSİZCE
+  # yanlış düğümde açılıyor (root SUPER olduğu için read_only bile engellemez),
+  # betik "hazır" diyor, controller da başarı sayıp devam ediyordu. Arıza çok
+  # sonra, replikada sebebi görünmeyen bir "Access denied" olarak patlıyordu.
+  echo "[mariadb] yön: $PRIMARY (kaynak) → $STANDBY (hedef)"
+  if [ "$PRIMARY" = "$STANDBY" ]; then
+      echo "[mariadb] ✗ kaynak ve hedef aynı düğüm: $PRIMARY" >&2
+      echo "[mariadb]   Yedek kopya, ana kopyadan FARKLI bir düğüm olmalı. Hiçbir şey yapılmadı." >&2
+      exit 1
+  fi
+
+  wait_primary_ro
+  if [ -z "$ro" ]; then
+      echo "[mariadb] ✗ ana kopyaya bağlanılamadı: $PRIMARY" >&2
+      echo "[mariadb]   Panelde bu veritabanının durumu 'çalışıyor' olmalı." >&2
+      exit 1
+  fi
+  if [ "$ro" != "0" ]; then
+      # Uyarı, hata değil: CREATE USER bu düğümde yine de çalışır. Ama ana kopya
+      # olması gereken düğümün yazmaya kapalı olması, yönün yanlış verilmiş
+      # olabileceğinin görünür tek işaretidir — kullanıcı bunu okuyabilmeli.
+      echo "[mariadb] ⚠ ana kopya ($PRIMARY) şu an yazmaya kapalı (read_only)."
+      echo "[mariadb]   Bu genelde sunucu yeniden başladıktan sonra olur ve kendiliğinden düzelir."
+      echo "[mariadb]   Panelde 'ana kopya' olarak BAŞKA bir düğüm görünüyorsa işlemi durdurun."
+  fi
+
   echo "[mariadb] binlog kontrolü"
   v=$(m_primary -N -e "SELECT @@log_bin;" 2>/dev/null | tr -d '[:space:]')
+  # Bağlantı hatası ile AYAR hatası ayrı şeylerdir. Container kapalıyken sorgu
+  # boş döner; eski sürüm buna da "log_bin kapalı, my.cnf'e bakın" diyordu.
+  # Oysa config/mariadb/my.cnf'te `log_bin = mysql-bin` zaten yazılı: veritabanı
+  # bilmeyen kullanıcı DOĞRU olan dosyayı defalarca düzenleyip servisi yeniden
+  # başlatıyor, her seferinde aynı mesajı alıyor ve gerçek sebebi hiç öğrenmiyordu.
+  if [ -z "$v" ]; then
+      echo "[mariadb] ✗ ana kopyaya bağlanılamadı: $PRIMARY" >&2
+      echo "[mariadb]   Panelde bu veritabanının durumu 'çalışıyor' olmalı." >&2
+      exit 1
+  fi
   [ "$v" = "1" ] || { echo "[mariadb] ✗ log_bin kapalı — config/mariadb/my.cnf içinde açık olmalı" >&2; exit 1; }
 
   echo "[mariadb] replikasyon kullanıcısı: $RUSER"
@@ -64,21 +136,6 @@ attach)
       exit 1
   fi
 
-  # Döküm YALNIZCA yazılabilir primary'den alınır. read_only açıksa o düğüm ya
-  # bir replikadır ya da devir sırasında kapatılmıştır; oradan alınacak kopya
-  # eksik/eskimiş olur ve hedefteki veriyi boş yere ezerdik.
-  ro="$(m_primary -N -e "SELECT @@read_only;" 2>/dev/null | tr -d '[:space:]')"
-  if [ -z "$ro" ]; then
-      echo "[mariadb] ✗ ana kopyaya bağlanılamadı: $PRIMARY" >&2
-      echo "[mariadb]   Panelde bu veritabanının durumu 'çalışıyor' olmalı; başlatıp tekrar deneyin." >&2
-      exit 1
-  fi
-  if [ "$ro" != "0" ]; then
-      echo "[mariadb] ✗ kaynak düğüm ($PRIMARY) şu an yazma kabul etmiyor (read_only)." >&2
-      echo "[mariadb]   Kopya CANLI ana veritabanından alınmalı — yön ters görünüyor. Hiçbir şey yapılmadı." >&2
-      exit 1
-  fi
-
   echo "[mariadb] replika hazır olması bekleniyor…"
   i=0; while [ $i -lt 40 ]; do
       m_replica -e "SELECT 1" >/dev/null 2>&1 && break
@@ -86,22 +143,88 @@ attach)
   done
   [ $i -lt 40 ] || { echo "[mariadb] ✗ replika açılmadı" >&2; exit 1; }
 
-  # Zaten bağlıysa tekrar kopyalama (uzun sürer, gereksiz).
-  if m_replica -N -e "SHOW SLAVE STATUS\G" 2>/dev/null | grep -q "Slave_IO_Running: Yes"; then
-      echo "[mariadb] ✓ replika zaten akışta"; exit 0
+  # Zaten bağlıysa tekrar kopyalama (uzun sürer, gereksiz). AMA "akışta olmak"
+  # tek başına yetmez: bir kez YANLIŞ yönde kurulmuş topoloji de akışta görünür
+  # ve her tekrar denemede "sağlıklı" diye raporlanırdı — kemerlerin hiçbiri o
+  # topolojiyi bir daha denetlemiyordu. Akan bir replikada yönün GERÇEK kanıtı
+  # Master_Host'tur; onu doğrulamadan kısayola girmiyoruz.
+  st="$(m_replica -N -e "SHOW SLAVE STATUS\G" 2>/dev/null || true)"
+  if printf '%s\n' "$st" | grep -q "Slave_IO_Running: Yes"; then
+      mh="$(printf '%s\n' "$st" | sed -n 's/^ *Master_Host: *//p' | head -1 | tr -d '[:space:]')"
+      if [ "$mh" = "$PRIMARY" ]; then
+          echo "[mariadb] ✓ replika zaten akışta (kaynak: $mh)"; exit 0
+      fi
+      echo "[mariadb] ✗ yedek kopya akışta ama YANLIŞ kaynaktan: '$mh' (beklenen: '$PRIMARY')" >&2
+      echo "[mariadb]   Kopyalar birbirine ters bağlanmış olabilir. Hiçbir şey yapılmadı; veriler duruyor." >&2
+      echo "[mariadb]   Panelde hangi kopyanın 'ana' olduğunu kontrol edip 'Yedek Kopyayı Yeniden Kur' deyin." >&2
+      exit 1
   fi
 
-  # Son ve en önemli yön kontrolü: kaynakta hiç kullanıcı veritabanı yokken
-  # hedefte veri VARSA yön neredeyse kesin terstir — az önce silinip boş açılmış
-  # bir düğümden, elde kalan tek dolu kopyanın üzerine döküm basmak üzereyiz.
-  # Bu noktada devam etmek veriyi kurtarmak değil yok etmek olur.
-  dbs="$(user_dbs m_primary)"
-  if [ -z "$dbs" ] && [ -n "$(user_dbs m_replica)" ]; then
-      echo "[mariadb] ✗ yön ters görünüyor: kaynakta ($PRIMARY) hiç veritabanı yok, hedefte ($STANDBY) veri var." >&2
+  # BURADAN SONRASI DÖKÜM YOLUDUR. Kaynağa bağlanmayı gerektiren kontroller
+  # buraya, dökümün hemen önüne taşındı. Yukarıda dururken zararsız bir tekrar
+  # çağrıyı sert hataya çeviriyorlardı: sağlıklı akan bir replikada, kaynak o an
+  # cevap vermiyor diye betik 1 dönüyor, controller da "yarım replika bırakılmaz"
+  # kuralıyla ÇALIŞAN yedeği `docker rm -f` ile siliyordu.
+  wait_primary_ro
+  if [ -z "$ro" ]; then
+      echo "[mariadb] ✗ ana kopyaya bağlanılamadı: $PRIMARY" >&2
+      # "Başlatıp tekrar deneyin" tavsiyesi her durumda doğru DEĞİL: devirden
+      # sonra eski kopya BİLEREK durdurulur (fence). Kullanıcı onu elle
+      # başlatırsa eski verisiyle ikinci bir yazılabilir kopya olur — yani bu
+      # tavsiye, veri kaybına götüren adımı tarif eder. Hedef yazmaya açık ve
+      # doluysa ana kopyanın O olduğunu ölçebiliyoruz; o zaman ters konuşuruz.
+      d_ro="$(m_replica -N -e "SELECT @@read_only;" 2>/dev/null | tr -d '[:space:]')"
+      if [ "$d_ro" = "0" ] && [ "$(user_tables m_replica)" != "0" ]; then
+          echo "[mariadb]   Diğer kopya ($STANDBY) şu an yazmaya açık ve içinde veri var:" >&2
+          echo "[mariadb]   ana kopya büyük ihtimalle O. $PRIMARY ise devirden sonra bilerek" >&2
+          echo "[mariadb]   durdurulmuş olabilir — ELLE BAŞLATMAYIN, eski verisiyle geri gelir." >&2
+          echo "[mariadb]   Panelde 'Yedek Kopyayı Yeniden Kur' düğmesini kullanın." >&2
+      else
+          echo "[mariadb]   Panelde bu veritabanının durumu 'çalışıyor' olmalı; başlatıp tekrar deneyin." >&2
+      fi
+      exit 1
+  fi
+  if [ "$ro" != "0" ]; then
+      # read_only YÖNÜN GÖSTERGESİ DEĞİLDİR ve bu daldan çıkış vermek panelden
+      # çıkışı olmayan bir kilit yaratıyordu: yükseltilen düğüm compose'da
+      # --read-only=ON ile yaratıldığı, promote ise yalnız çalışma anında
+      # read_only=OFF yaptığı için o düğüm HER yeniden başlayışta read_only=ON
+      # gelir. Yön doğruyken bile betik "yön ters" deyip reddediyor, kullanıcı
+      # panele bakıp yönü onaylıyor ve her denemede aynı hatayı alıyordu.
+      # Döküm zaten yalnızca OKUR; read-only bir ana kopyadan alınan kopya
+      # sonuna kadar geçerlidir. Yön kararını aşağıdaki güncellik ölçümü verir.
+      echo "[mariadb] ⚠ ana kopya ($PRIMARY) şu an yazmaya kapalı (read_only)."
+      echo "[mariadb]   Kopyalamayı engellemez (döküm yalnız okur); bu genelde sunucu yeniden"
+      echo "[mariadb]   başladıktan sonra görülür ve otomatik devir açıksa kendiliğinden düzelir."
+  fi
+
+  # SON VE EN ÖNEMLİ YÖN KONTROLÜ — hangi kopya daha GÜNCEL?
+  # Eski sürüm yalnız "kaynak BOŞ ve hedef DOLU" hâline bakıyordu. Devir
+  # sonrasının OLAĞAN hâli bu değildir: iki düğümde de veri vardır, biri
+  # bayattır. O yüzden kemer hiç ateşlemiyor, BAYAT düğümün dökümü CANLI ana
+  # kopyanın üzerine basılıyor, üstüne canlı kopya bayat düğümün slave'i
+  # yapılıyordu — elde kalan tek sağlam kopya böyle yok oluyordu.
+  # Artık iki ölçüt birden var: (a) kaynakta hiç kullanıcı TABLOSU yokken
+  # hedefte varsa, (b) hedefin GTID sırası kaynağınkinden İLERİDEYSE dururuz.
+  n_src="$(user_tables m_primary)"
+  n_dst="$(user_tables m_replica)"
+  src_seq="$(gtid_seq "$(m_primary -N -e "SELECT @@gtid_current_pos;" 2>/dev/null | tr -d '[:space:]')")"
+  dst_seq="$(gtid_seq "$(m_replica  -N -e "SELECT @@gtid_current_pos;" 2>/dev/null | tr -d '[:space:]')")"
+  if [ "${n_src:-0}" = "0" ] && [ "${n_dst:-0}" != "0" ]; then
+      echo "[mariadb] ✗ yön ters görünüyor: kaynakta ($PRIMARY) hiç tablo yok, hedefte ($STANDBY) veri var." >&2
       echo "[mariadb]   Kopyalama iptal edildi; hedefteki veriler OLDUĞU GİBİ duruyor, hiçbir şey silinmedi." >&2
       echo "[mariadb]   Panelde hangi kopyanın 'ana' (primary) olduğunu kontrol edip tekrar deneyin." >&2
       exit 1
   fi
+  if [ "${dst_seq:-0}" -gt "${src_seq:-0}" ]; then
+      echo "[mariadb] ✗ hedefteki kopya ($STANDBY) kaynaktan ($PRIMARY) DAHA GÜNCEL." >&2
+      echo "[mariadb]   Üzerine kopyalasaydık daha yeni veriyi daha eskisiyle ezerdik." >&2
+      echo "[mariadb]   Hiçbir şey yapılmadı; her iki kopyadaki veriler olduğu gibi duruyor." >&2
+      echo "[mariadb]   Panelde 'ana kopya' olarak $STANDBY görünüyor olmalı; kontrol edip tekrar deneyin." >&2
+      exit 1
+  fi
+
+  dbs="$(user_dbs m_primary)"
 
   # ---------------------------------------------------------------------------
   # DİKKAT — burada `mariadb-dump --all-databases` KULLANILMAZ.
@@ -126,24 +249,41 @@ attach)
       echo "[mariadb] ✓ sistem şeması onarıldı"
   fi
 
-  err_log="$(mktemp)"
+  err_log="$(mktemp)"; dump_rc="$(mktemp)"
   if [ -n "$dbs" ]; then
       echo "[mariadb] kullanıcı veritabanları kopyalanıyor:" $dbs
       # --single-transaction: tabloları kilitlemeden tutarlı anlık görüntü.
       # --gtid + --master-data=2: dökümün başına `SET GLOBAL gtid_slave_pos=…`
       #   yazar → replika tam olarak doğru noktadan devam eder, veri atlanmaz.
-      if ! MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD "$PRIMARY" mariadb-dump -u root \
-              --databases $dbs \
-              --single-transaction --quick --gtid --master-data=2 \
-              --routines --triggers --events 2>"$err_log" \
+      #
+      # DÖKÜMÜN ÇIKIŞ KODU DOSYAYLA TAŞINIR. POSIX sh'te `pipefail` yoktur;
+      # boru hattının durumu SON komuttan (yani yüklemeyi yapan m_replica'dan)
+      # gelir. Sinyalle ölen bir döküm (OOM-killer, container restart; çıkış
+      # 137) stderr'e tek satır bile yazmaz, dolayısıyla aşağıdaki "error"
+      # taraması da onu göremez: yükleme yarıda kesilir, betik hiç durmadan
+      # CHANGE MASTER'a geçer ve "✓ replikasyon çalışıyor" der. Geriye SESSİZCE
+      # YARIM bir replika kalır — sonraki devir onu primary'ye yükseltirse veri
+      # kaybolur. `|| echo $?` yalnız döküm başarısız olduğunda dosyaya yazar.
+      : > "$dump_rc"
+      if ! { MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD "$PRIMARY" mariadb-dump -u root \
+                 --databases $dbs \
+                 --single-transaction --quick --gtid --master-data=2 \
+                 --routines --triggers --events 2>"$err_log" \
+             || echo "$?" > "$dump_rc"; } \
             | m_replica 2>>"$err_log"; then
-          echo "[mariadb] ✗ kopya aktarımı başarısız:" >&2
-          tail -5 "$err_log" >&2; rm -f "$err_log"; exit 1
+          echo "[mariadb] ✗ kopya aktarımı başarısız (yükleme hatası):" >&2
+          tail -5 "$err_log" >&2; rm -f "$err_log" "$dump_rc"; exit 1
+      fi
+      if [ -s "$dump_rc" ]; then
+          echo "[mariadb] ✗ kopya ALINAMADI: mariadb-dump çıkış kodu $(cat "$dump_rc")" >&2
+          echo "[mariadb]   Yedeğe eksik veri yazılmış olabilir; replikasyon başlatılmadı." >&2
+          echo "[mariadb]   (128'den büyük bir kod, dökümün bellek yetersizliğinden öldürüldüğü anlamına gelir.)" >&2
+          tail -5 "$err_log" >&2; rm -f "$err_log" "$dump_rc"; exit 1
       fi
       # Kısmi yükleme replikasyonu sessizce bozar; hata geçiştirilmez.
       if grep -qi "error" "$err_log" 2>/dev/null; then
           echo "[mariadb] ✗ kopya aktarımında hata:" >&2
-          grep -i "error" "$err_log" | head -5 >&2; rm -f "$err_log"; exit 1
+          grep -i "error" "$err_log" | head -5 >&2; rm -f "$err_log" "$dump_rc"; exit 1
       fi
   else
       # Hiç kullanıcı veritabanı yok — taşınacak veri de yok. GTID konumunu
@@ -152,7 +292,7 @@ attach)
       pos="$(m_primary -N -e "SELECT @@gtid_binlog_pos;" 2>/dev/null | tr -d '[:space:]')"
       m_replica -e "SET GLOBAL gtid_slave_pos='$pos';" >/dev/null
   fi
-  rm -f "$err_log"
+  rm -f "$err_log" "$dump_rc"
 
   # Hesaplar: `mysql` şemasını KOPYALAMADAN. Replikasyon başladıktan sonra
   # açılan kullanıcılar binlog ile zaten akar; buradaki iş, replikasyon
@@ -196,8 +336,21 @@ cleanup)
   # MariaDB'de PostgreSQL'in slot'u gibi WAL tutan bir yapı yok; binlog
   # zaten binlog_expire_logs_seconds ile temizleniyor. Yine de replikanın
   # bağlantısını düzgün kapatıp replikasyon kullanıcısını kaldırıyoruz.
+  # Buradaki `|| true` BİLEREK duruyor: kalan bir `repl` hesabı hiçbir şey
+  # biriktirmez, ana kopya kapalıyken de silinemez. Hata verirsek controller
+  # "temizlik başarısız" deyip yedeği kaldırmaz ve kullanıcı hiçbir zararı
+  # olmayan bir kalıntı yüzünden kilitlenir. (PostgreSQL'de tam tersi:
+  # orada kalıntı diski doldurur, o yüzden orası doğrulanıp hata verir.)
   echo "[mariadb] replikasyon kullanıcısı kaldırılıyor: $RUSER"
   m_primary -e "DROP USER IF EXISTS '$RUSER'@'%'; FLUSH PRIVILEGES;" 2>/dev/null || true
   echo "[mariadb] temizlendi"
+  ;;
+
+*)
+  # Tanınmayan faz SESSİZCE 0 DÖNMEZ. `case` hiçbir dala uymadığında 0 döner;
+  # controller bunu "yapıldı" sayar ve bir sonraki adıma geçer. Redis betiğinde
+  # tam olarak bu sınıf hata yaşandı (eksik faz, yanlış dala düşen çağrı).
+  echo "[mariadb] ✗ bilinmeyen faz: '$PHASE' (prepare | attach | cleanup)" >&2
+  exit 2
   ;;
 esac

@@ -3,7 +3,10 @@
   "uid": "dbstack-mongodb",
   "title": "MongoDB — Genel Bakış",
   "description": "MongoDB'nin sağlık durumu ve yükü. Yukarıdan aşağıya okuyun: önce 'çalışıyor mu', sonra 'ne kadar zorlanıyor', en altta ayrıntı.",
-  "tags": ["databases-stack", "mongodb"],
+  "tags": [
+    "databases-stack",
+    "mongodb"
+  ],
   "editable": false,
   "graphTooltip": 1,
   "timezone": "browser",
@@ -18,7 +21,10 @@
     "list": [
       {
         "builtIn": 1,
-        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
@@ -27,17 +33,30 @@
       }
     ]
   },
-  "templating": { "list": [] },
-  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
   "timepicker": {},
   "panels": [
     {
       "id": 1,
       "type": "stat",
       "title": "Erişilebilir mi?",
-      "description": "MongoDB'nin izleme sistemine cevap verip vermediğini gösterir. 'Çalışıyor' yazıyorsa sorun yok. 'Erişilemiyor' yazıyorsa motor ya kapalıdır ya da çökmüştür; bu durumda panodaki diğer grafikler de boşalır. Motoru açtığınız halde burası kırmızıysa kayıtlara bakın: ./stack.sh logs mongodb",
-      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-      "gridPos": { "h": 4, "w": 5, "x": 0, "y": 0 },
+      "description": "MongoDB'nin KENDİSİ cevap veriyor mu? Bu kutu doğrudan veritabanına sorar; izleme aracının (exporter) ayakta olması yetmez, MongoDB gerçekten cevap vermelidir. 'Çalışıyor' ise sorun yok. 'Erişilemiyor' ise motor çökmüş ya da cevap veremiyor demektir; panodaki diğer grafikler de boşalır, hemen kayıtlara bakın: ./stack.sh logs mongodb. Motoru siz kapattıysanız burada 'Veri yok' yazar; bu normaldir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 0,
+        "y": 0
+      },
       "pluginVersion": "11.0.0",
       "fieldConfig": {
         "defaults": {
@@ -47,16 +66,30 @@
             {
               "type": "value",
               "options": {
-                "0": { "text": "Erişilemiyor", "color": "red", "index": 0 },
-                "1": { "text": "Çalışıyor", "color": "green", "index": 1 }
+                "0": {
+                  "text": "Erişilemiyor",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "Çalışıyor",
+                  "color": "green",
+                  "index": 1
+                }
               }
             }
           ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 1 }
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
             ]
           }
         },
@@ -71,14 +104,23 @@
         "wideLayout": true,
         "showPercentChange": false,
         "percentChangeColorMode": "standard",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
-          "expr": "up{job=\"databases\", engine=\"mongodb\"}",
+          "expr": "mongodb_up{engine=\"mongodb\"}",
           "instant": true,
           "range": false,
           "legendFormat": "Durum"
@@ -89,9 +131,17 @@
       "id": 2,
       "type": "stat",
       "title": "Açık Bağlantı",
-      "description": "Şu anda MongoDB'ye bağlı olan uygulama/oturum sayısı. Normalde belli bir aralıkta gezinir. Sürekli tırmanıyor ve hiç düşmüyorsa uygulama açtığı bağlantıları kapatmıyor olabilir. Bu sayının kendisi tek başına bir şey söylemez; asıl karar verilecek yer yandaki 'Bağlantı Doluluğu' kutusudur.",
-      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-      "gridPos": { "h": 4, "w": 5, "x": 5, "y": 0 },
+      "description": "Şu anda MongoDB'ye bağlı olan uygulama/oturum sayısı. Tek bir 'doğru' değeri olmadığı için bilerek renklendirilmemiştir; kendi normalinizi öğrenin. Endişelenme anı: sayı sürekli tırmanıyor ve iş yükü azaldığında bile hiç geri inmiyorsa uygulamanız açtığı bağlantıları kapatmıyordur (bağlantı sızıntısı) — bu, uzun vadede belleği tüketir. Çalışma saatinde ani sıfıra düşüş ise uygulamanın veritabanı bağlantısını kaybettiğine işarettir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 5,
+        "y": 0
+      },
       "pluginVersion": "11.0.0",
       "fieldConfig": {
         "defaults": {
@@ -102,9 +152,10 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "#EAB839", "value": 200 },
-              { "color": "red", "value": 500 }
+              {
+                "color": "blue",
+                "value": null
+              }
             ]
           }
         },
@@ -119,12 +170,21 @@
         "wideLayout": true,
         "showPercentChange": false,
         "percentChangeColorMode": "standard",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(mongodb_ss_connections{engine=\"mongodb\", conn_type=\"current\"})",
           "instant": false,
@@ -136,25 +196,41 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "Bağlantı Doluluğu",
-      "description": "Bağlantı üst sınırının yüzde kaçının kullanıldığı. %70'i geçince sarı, %85'i geçince kırmızı olur. Kırmızıya dayanırsa MongoDB yeni bağlantı kabul edemez; uygulamalarınız hata almaya başlar, yani kullanıcılar hata sayfası görür. Bu kutu kırmızıysa uygulamanın bağlantı havuzu ayarını küçültün ya da kapatılmayan bağlantıları bulun.",
-      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-      "gridPos": { "h": 4, "w": 5, "x": 10, "y": 0 },
+      "title": "Ortalama İşlem Gecikmesi",
+      "description": "Bir işlemin ortalama kaç sürede tamamlandığı (okuma + yazma + komut birlikte). 'Veritabanı yavaş mı?' sorusunun en doğrudan cevabı budur. Rakamın kendisinden çok, kendi normalinize göre DEĞİŞİMİ önemlidir: her zaman 2 ms iken 40 ms'ye çıktıysa bir şey olmuştur. Kaba ölçü olarak 10 ms üstü sarı, 100 ms üstü kırmızıdır. Yükseldiğinde önce yandaki 'Bekleyen İstekler' ve alttaki 'İndeks Verimliliği' grafiklerine bakın; sebep çoğunlukla eksik indekstir. Hiç trafik yokken ölçülecek işlem olmadığı için 'Trafik yok' yazar; bu normaldir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 10,
+        "y": 0
+      },
       "pluginVersion": "11.0.0",
       "fieldConfig": {
         "defaults": {
-          "unit": "percent",
-          "decimals": 1,
+          "unit": "µs",
+          "decimals": 0,
           "min": 0,
-          "max": 100,
-          "noValue": "Veri yok",
+          "noValue": "Trafik yok",
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "#EAB839", "value": 70 },
-              { "color": "red", "value": 85 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 10000
+              },
+              {
+                "color": "red",
+                "value": 100000
+              }
             ]
           }
         },
@@ -169,42 +245,70 @@
         "wideLayout": true,
         "showPercentChange": false,
         "percentChangeColorMode": "standard",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
-          "expr": "100 * sum(mongodb_ss_connections{engine=\"mongodb\", conn_type=\"current\"}) / clamp_min(sum(mongodb_ss_connections{engine=\"mongodb\", conn_type=\"current\"}) + sum(mongodb_ss_connections{engine=\"mongodb\", conn_type=\"available\"}), 1)",
+          "expr": "sum(rate(mongodb_ss_opLatencies_latency{engine=\"mongodb\", op_type=~\"reads|writes|commands\"}[5m])) / sum(rate(mongodb_ss_opLatencies_ops{engine=\"mongodb\", op_type=~\"reads|writes|commands\"}[5m]))",
           "instant": false,
           "range": true,
-          "legendFormat": "Doluluk"
+          "legendFormat": "Ortalama gecikme"
         }
       ]
     },
     {
       "id": 4,
       "type": "stat",
-      "title": "Bellek Kullanımı",
-      "description": "MongoDB'nin şu an kullandığı RAM. Bu motora ayrılan sınır varsayılan olarak 2 GB'dır; sınıra dayanılırsa işletim sistemi MongoDB'yi öldürür ve veritabanı kendiliğinden yeniden başlar (kısa bir kesinti olur). 1,4 GB üstü sarı, 1,8 GB üstü kırmızıdır. Sürekli kırmızıysa ve sunucuda boş RAM varsa .env dosyasındaki MONGO_MEM_LIMIT ve MONGO_WIREDTIGER_CACHE_GB değerlerini büyütün.",
-      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-      "gridPos": { "h": 4, "w": 5, "x": 15, "y": 0 },
+      "title": "Bellek Kullanımı (Sınırın Yüzdesi)",
+      "description": "MongoDB container'ının kullandığı belleğin, ona AYRILAN sınıra oranı. Bu sınır sabit değildir: sunucunun RAM'ine göre otomatik hesaplanır (küçük sunucuda birkaç yüz MB, büyük sunucuda birkaç GB olabilir). Bu yüzden mutlak GB yerine yüzde gösterilir. %80 üstü sarı, %90 üstü kırmızıdır. Uzun süre kırmızıda kalırsa işletim sistemi MongoDB'yi öldürür ve veritabanı kendiliğinden yeniden başlar (kısa bir kesinti olur). Sunucuda boş RAM varsa .env dosyasındaki MONGO_MEM_LIMIT ve MONGO_WIREDTIGER_CACHE_GB değerlerini büyütün. Sınır bilgisi henüz hesaplanmamışsa 'Veri yok' yazar.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 15,
+        "y": 0
+      },
       "pluginVersion": "11.0.0",
       "fieldConfig": {
         "defaults": {
-          "unit": "bytes",
-          "decimals": 2,
+          "unit": "percent",
+          "decimals": 1,
           "noValue": "Veri yok",
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "#EAB839", "value": 1503238553 },
-              { "color": "red", "value": 1932735283 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
             ]
-          }
+          },
+          "min": 0,
+          "max": 100
         },
         "overrides": []
       },
@@ -217,17 +321,26 @@
         "wideLayout": true,
         "showPercentChange": false,
         "percentChangeColorMode": "standard",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
-          "expr": "sum(mongodb_ss_mem_resident{engine=\"mongodb\"}) * 1024 * 1024",
+          "expr": "100 * sum(dbstack_container_memory_bytes{service=\"mongodb\"}) / sum(dbstack_container_memory_limit_bytes{service=\"mongodb\"} > 0)",
           "instant": false,
           "range": true,
-          "legendFormat": "Kullanılan bellek"
+          "legendFormat": "Bellek doluluğu"
         }
       ]
     },
@@ -236,8 +349,16 @@
       "type": "stat",
       "title": "Veri Boyutu",
       "description": "Bütün veritabanlarındaki kayıtların toplam boyutu. Tek başına iyi ya da kötü bir sayı değildir; önemli olan büyüme hızıdır. Birkaç günde katlanarak büyüyorsa disk dolmadan önce yer açmayı planlayın: dolu disk veritabanları için en sert arıza biçimidir, yazma işlemleri tamamen durur. Diskin kendisi ayrıca 'Disk doluyor' uyarısıyla izlenir.",
-      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
       "pluginVersion": "11.0.0",
       "fieldConfig": {
         "defaults": {
@@ -247,7 +368,12 @@
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "blue", "value": null }]
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
           }
         },
         "overrides": []
@@ -261,12 +387,21 @@
         "wideLayout": true,
         "showPercentChange": false,
         "percentChangeColorMode": "standard",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(mongodb_dbstats_dataSize{engine=\"mongodb\"})",
           "instant": false,
@@ -280,19 +415,34 @@
       "type": "timeseries",
       "title": "Saniyedeki İşlem Sayısı",
       "description": "Veritabanının saniyede kaç istek aldığı, türlerine ayrılmış hali. 'Ne kadar yükleniyor' sorusunun cevabı budur. Yüksek olması tek başına kötü değildir, sadece trafiğiniz artmış demektir. Endişe edilecek durum şudur: bu çizgiler yükselirken yandaki 'Bekleyen İstekler' grafiği de yükseliyorsa veritabanı gelen yüke yetişemiyordur. Çizgilerin çalışma saatinde aniden sıfıra düşmesi ise uygulamanın bağlantısını kaybettiğine işarettir.",
-      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
       "pluginVersion": "11.0.0",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "min": 0,
           "noValue": "Veri yok",
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
           },
           "custom": {
             "axisLabel": "işlem / saniye",
@@ -304,28 +454,53 @@
             "drawStyle": "line",
             "fillOpacity": 8,
             "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
             "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "off" }
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           }
         },
         "overrides": []
       },
       "options": {
-        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(rate(mongodb_ss_opcounters{engine=\"mongodb\", legacy_op_type=\"query\"}[5m]))",
           "range": true,
@@ -333,7 +508,10 @@
         },
         {
           "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(rate(mongodb_ss_opcounters{engine=\"mongodb\", legacy_op_type=\"insert\"}[5m]))",
           "range": true,
@@ -341,7 +519,10 @@
         },
         {
           "refId": "C",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(rate(mongodb_ss_opcounters{engine=\"mongodb\", legacy_op_type=\"update\"}[5m]))",
           "range": true,
@@ -349,7 +530,10 @@
         },
         {
           "refId": "D",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(rate(mongodb_ss_opcounters{engine=\"mongodb\", legacy_op_type=\"delete\"}[5m]))",
           "range": true,
@@ -357,7 +541,10 @@
         },
         {
           "refId": "E",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(rate(mongodb_ss_opcounters{engine=\"mongodb\", legacy_op_type=\"command\"}[5m]))",
           "range": true,
@@ -365,7 +552,10 @@
         },
         {
           "refId": "F",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(rate(mongodb_ss_opcounters{engine=\"mongodb\", legacy_op_type=\"getmore\"}[5m]))",
           "range": true,
@@ -378,8 +568,16 @@
       "type": "timeseries",
       "title": "Bekleyen İstekler (Sıra Uzunluğu)",
       "description": "Sıraya girmiş, henüz işleme alınamamış okuma ve yazma istekleri. Sağlıklı bir sistemde bu sayı çoğu zaman sıfıra yakındır. Sürekli 5'in üstünde seyrediyorsa istekler birbirini bekletiyor demektir; kullanıcılar yavaşlık hisseder. 20'nin üstü ciddi tıkanmadır. Sebebi genellikle eksik indeks (aşağıdaki 'İndeks Verimliliği' grafiğine bakın), yetersiz RAM ya da yavaş disktir. Kesikli yatay çizgiler sarı ve kırmızı sınırları gösterir.",
-      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
       "pluginVersion": "11.0.0",
       "fieldConfig": {
         "defaults": {
@@ -387,14 +585,25 @@
           "decimals": 0,
           "min": 0,
           "noValue": "Veri yok",
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "#EAB839", "value": 5 },
-              { "color": "red", "value": 20 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
             ]
           },
           "custom": {
@@ -407,28 +616,53 @@
             "drawStyle": "line",
             "fillOpacity": 15,
             "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
             "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "dashed" }
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
           }
         },
         "overrides": []
       },
       "options": {
-        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(mongodb_ss_globalLock_currentQueue{engine=\"mongodb\", count_type=\"readers\"})",
           "range": true,
@@ -436,7 +670,10 @@
         },
         {
           "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(mongodb_ss_globalLock_currentQueue{engine=\"mongodb\", count_type=\"writers\"})",
           "range": true,
@@ -449,8 +686,16 @@
       "type": "timeseries",
       "title": "Önbellek Durumu (RAM'deki Veri)",
       "description": "MongoDB sık kullanılan veriyi RAM'de tutar; oradan okumak diskten okumaktan kat kat hızlıdır. 'Önbellek doluluğu' çizgisinin %80 civarında gezinmesi NORMALDİR, MongoDB önbelleği bilerek dolu tutar; bu bir arıza işareti değildir. Asıl izlenecek çizgi 'Diske yazılmayı bekleyen veri': %5'i sürekli aşıyorsa disk yazmaya yetişemiyor demektir. Doluluk sürekli %95'in üstündeyse önbellek küçük kalmıştır; sunucuda boş RAM varsa .env dosyasındaki MONGO_WIREDTIGER_CACHE_GB değerini artırın.",
-      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
       "pluginVersion": "11.0.0",
       "fieldConfig": {
         "defaults": {
@@ -459,14 +704,25 @@
           "min": 0,
           "max": 100,
           "noValue": "Veri yok",
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "#EAB839", "value": 80 },
-              { "color": "red", "value": 95 }
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "#EAB839",
+                "value": 80
+              },
+              {
+                "color": "red",
+                "value": 95
+              }
             ]
           },
           "custom": {
@@ -479,28 +735,53 @@
             "drawStyle": "line",
             "fillOpacity": 10,
             "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
             "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "dashed" }
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
           }
         },
         "overrides": []
       },
       "options": {
-        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "100 * sum(mongodb_ss_wt_cache_bytes_currently_in_the_cache{engine=\"mongodb\"}) / clamp_min(sum(mongodb_ss_wt_cache_maximum_bytes_configured{engine=\"mongodb\"}), 1)",
           "range": true,
@@ -508,7 +789,10 @@
         },
         {
           "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "100 * sum(mongodb_ss_wt_cache_tracked_dirty_bytes_in_the_cache{engine=\"mongodb\"}) / clamp_min(sum(mongodb_ss_wt_cache_maximum_bytes_configured{engine=\"mongodb\"}), 1)",
           "range": true,
@@ -521,19 +805,34 @@
       "type": "timeseries",
       "title": "İndeks Verimliliği (Taranan / Döndürülen Kayıt)",
       "description": "Saniyede kaç kayıt TARANDI ve bunların kaçı sonuç olarak DÖNDÜ. İki çizgi birbirine yakınsa sorgular doğru indeksleri kullanıyor demektir, her şey yolundadır. Turuncu 'taranan' çizgisi yeşil 'döndürülen' çizgisinin kat kat üstündeyse veritabanı tek bir sonuç bulmak için binlerce kaydı boşuna okuyordur; bu, eksik indeksin klasik belirtisidir ve yavaşlığın en sık sebebidir. Böyle bir tablo görürseniz en çok çalışan sorgulara indeks eklenmesi gerekir.",
-      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
       "pluginVersion": "11.0.0",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "min": 0,
           "noValue": "Veri yok",
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
           },
           "custom": {
             "axisLabel": "kayıt / saniye",
@@ -545,41 +844,84 @@
             "drawStyle": "line",
             "fillOpacity": 8,
             "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
             "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "off" }
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           }
         },
         "overrides": [
           {
-            "matcher": { "id": "byName", "options": "Taranan kayıt" },
+            "matcher": {
+              "id": "byName",
+              "options": "Taranan kayıt"
+            },
             "properties": [
-              { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
             ]
           },
           {
-            "matcher": { "id": "byName", "options": "Döndürülen kayıt (sonuç)" },
+            "matcher": {
+              "id": "byName",
+              "options": "Döndürülen kayıt (sonuç)"
+            },
             "properties": [
-              { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
             ]
           }
         ]
       },
       "options": {
-        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(rate(mongodb_ss_metrics_queryExecutor_scannedObjects{engine=\"mongodb\"}[5m]))",
           "range": true,
@@ -587,7 +929,10 @@
         },
         {
           "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(rate(mongodb_ss_metrics_document{engine=\"mongodb\", doc_op_type=\"returned\"}[5m]))",
           "range": true,
@@ -599,20 +944,39 @@
       "id": 10,
       "type": "timeseries",
       "title": "Hata ve Uyarı Sayaçları",
-      "description": "MongoDB'nin saniyede ürettiği hata ve uyarı sayısı. 'Uygulama hataları' genellikle zararsızdır: aynı kaydı iki kez eklemeye çalışmak gibi olağan durumlar da buraya düşer. Ama normalde düz giden bu çizgi birden fırlıyorsa uygulamanızda yeni bir hata çıkmış demektir; o saate ait uygulama kayıtlarına bakın. 'Sunucu içi hatalar' ve 'Kritik mesajlar' ise sıfırdan farklı olmamalıdır, bunlar MongoDB'nin kendi iç sorunudur. Görürseniz kayıtlara bakın (./stack.sh logs mongodb) ve sürüyorsa yedeğinizin güncel olduğundan emin olun.",
-      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 20 },
+      "description": "MongoDB'nin saniyede ürettiği hata ve uyarı sayısı. 'Uygulama hataları' (user, mavi) genellikle zararsızdır: aynı kaydı iki kez eklemeye çalışmak gibi olağan durumlar da buraya düşer. Ama normalde düz giden bu çizgi birden fırlıyorsa uygulamanızda yeni bir hata çıkmış demektir; o saate ait uygulama kayıtlarına bakın. 'Sunucu içi hatalar' (regular) ve 'Kritik mesajlar' (msg) ise SIFIRDAN FARKLI OLMAMALIDIR; bunlar kırmızı çizilir ve sıfırın hemen üstündeki kesikli eşik çizgisini aştıkları anda göze çarpar. Bu iki çizgiden biri sıfırdan ayrılırsa MongoDB'nin kendi iç sorunu var demektir: kayıtlara bakın (./stack.sh logs mongodb) ve sürüyorsa yedeğinizin güncel olduğundan emin olun.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 20
+      },
       "pluginVersion": "11.0.0",
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "min": 0,
           "noValue": "Veri yok",
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.001
+              }
+            ]
           },
           "custom": {
             "axisLabel": "hata / saniye",
@@ -624,28 +988,114 @@
             "drawStyle": "line",
             "fillOpacity": 12,
             "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
             "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "off" }
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Uygulama hataları (user)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Uyarılar (warning)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#EAB839"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Sunucu içi hatalar (regular)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Kritik mesajlar (msg)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "dark-red"
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
-        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "desc" }
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
       },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(rate(mongodb_ss_asserts{engine=\"mongodb\", assert_type=\"user\"}[5m]))",
           "range": true,
@@ -653,7 +1103,10 @@
         },
         {
           "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(rate(mongodb_ss_asserts{engine=\"mongodb\", assert_type=\"regular\"}[5m]))",
           "range": true,
@@ -661,7 +1114,10 @@
         },
         {
           "refId": "C",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(rate(mongodb_ss_asserts{engine=\"mongodb\", assert_type=\"warning\"}[5m]))",
           "range": true,
@@ -669,7 +1125,10 @@
         },
         {
           "refId": "D",
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
           "editorMode": "code",
           "expr": "sum(rate(mongodb_ss_asserts{engine=\"mongodb\", assert_type=\"msg\"}[5m]))",
           "range": true,

@@ -22,7 +22,7 @@
       "id": 1,
       "type": "stat",
       "title": "Erişilebilir mi?",
-      "description": "MinIO şu anda cevap veriyor mu? \"Çalışıyor\" ise dosya yükleme ve indirme hizmeti ayaktadır. \"Erişilemiyor\" görüyorsanız uygulamalarınız dosyalara ulaşamaz, yükleme ekranları hata verir. Motoru bilerek kapattıysanız bu normaldir; kapatmadıysanız kayıtlara bakın: ./stack.sh logs minio",
+      "description": "MinIO şu anda cevap veriyor mu? \"Çalışıyor\" ise dosya yükleme ve indirme hizmeti ayaktadır. \"Erişilemiyor\" ise uygulamalarınız dosyalara ulaşamaz, yükleme ekranları hata verir. Motoru siz kapattıysanız kırmızı görmek beklenen sonuçtur; kapatmadıysanız hemen kayıtlara bakın: ./stack.sh logs minio",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
       "fieldConfig": {
@@ -50,7 +50,7 @@
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": { "calcs": ["last"], "fields": "", "values": false },
         "orientation": "auto",
         "textMode": "auto",
         "colorMode": "background",
@@ -64,7 +64,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "up{job=\"databases\", engine=\"minio\"}",
+          "expr": "max(up{job=\"databases\", engine=\"minio\"}) or vector(0)",
           "instant": false,
           "range": true,
           "legendFormat": "Durum",
@@ -77,7 +77,7 @@
       "id": 2,
       "type": "stat",
       "title": "Depolama Sağlığı",
-      "description": "MinIO'nun kendi iç sağlık kontrolü. \"Sağlıklı\" ise dosyalar güvenle yazılıp okunabiliyor demektir. \"Sorunlu\" çıkarsa depolama yazma yapamayacak durumdadır: genellikle bir disk düşmüştür ya da yer kalmamıştır. Bu kutu kırmızıyken yeni dosya yüklemeleri başarısız olabilir, hemen aşağıdaki disk ve alan panellerine bakın.",
+      "description": "MinIO'nun kendi iç sağlık kontrolü. \"Sağlıklı\" ise dosyalar güvenle yazılıp okunabiliyor demektir. \"Sorunlu\" çıkarsa depolama yazma yapamayacak durumdadır: genellikle bir disk düşmüştür ya da yer kalmamıştır. Bu kutu kırmızıyken yeni dosya yüklemeleri başarısız olabilir, hemen yandaki disk ve alan kutularına bakın. MinIO kapalıyken ölçüm hiç gelmez ve kutu \"Veri yok\" gösterir — bu, sağlığın bozulduğu anlamına gelmez.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
       "fieldConfig": {
@@ -105,7 +105,7 @@
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": { "calcs": ["last"], "fields": "", "values": false },
         "orientation": "auto",
         "textMode": "auto",
         "colorMode": "background",
@@ -132,7 +132,7 @@
       "id": 3,
       "type": "stat",
       "title": "Çevrimdışı Disk",
-      "description": "MinIO'nun ulaşamadığı disk sayısı. Bu sayı normalde 0 olmalıdır ve öyle kalmalıdır. 1 veya daha fazlaysa bir disk arızalanmış ya da bağlantısı kopmuş demektir. Tek diskli kurulumda (bu yığının varsayılanı) yedek kopya olmadığı için bu doğrudan veri kaybı riskidir: hemen sunucunun disk durumunu kontrol edin ve yedeklerinizin güncel olduğundan emin olun.",
+      "description": "MinIO'nun ulaşamadığı disk sayısı. Bu sayı normalde 0 olmalıdır ve öyle kalmalıdır. 1 veya daha fazlaysa bir disk arızalanmış ya da bağlantısı kopmuş demektir. Tek diskli kurulumda (bu yığının varsayılanı) yedek kopya olmadığı için bu doğrudan veri kaybı riskidir: hemen sunucunun disk durumunu kontrol edin ve yedeklerinizin güncel olduğundan emin olun. MinIO kapalıyken ölçüm gelmez, kutu \"Veri yok\" gösterir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
       "fieldConfig": {
@@ -153,7 +153,7 @@
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": { "calcs": ["last"], "fields": "", "values": false },
         "orientation": "auto",
         "textMode": "auto",
         "colorMode": "background",
@@ -180,7 +180,7 @@
       "id": 4,
       "type": "stat",
       "title": "Şu An İşlenen İstek",
-      "description": "Tam bu anda işlenmekte olan dosya isteği (yükleme/indirme) sayısı — veritabanlarındaki \"açık bağlantı\" sayısının MinIO'daki karşılığıdır. Kısa süreli yükselmeler normaldir. Sayı uzun süre yüksek kalıyorsa MinIO gelen isteklere yetişemiyor demektir: dosya yüklemeleri yavaşlar ve uygulamalarda zaman aşımı hataları başlar. Hiç dosya işlemi yapılmadıysa \"Veri yok\" görünür, bu normaldir.",
+      "description": "Tam bu anda işlenmekte olan dosya isteği (yükleme/indirme) sayısı — veritabanlarındaki \"açık bağlantı\" sayısının MinIO'daki karşılığıdır. Kısa süreli yükselmeler normaldir. Sayı uzun süre yüksek kalıyorsa MinIO gelen isteklere yetişemiyor demektir: dosya yüklemeleri yavaşlar ve uygulamalarda zaman aşımı hataları başlar. Hiç dosya işlemi yapılmıyorsa 0 ya da \"Veri yok\" görünür; ikisi de normaldir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
       "fieldConfig": {
@@ -202,7 +202,7 @@
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": { "calcs": ["last"], "fields": "", "values": false },
         "orientation": "auto",
         "textMode": "auto",
         "colorMode": "background",
@@ -229,7 +229,7 @@
       "id": 5,
       "type": "stat",
       "title": "Kullanılan Disk Alanı",
-      "description": "MinIO'nun dosyaları sakladığı diskin yüzde kaçının dolu olduğu. %75'i geçtiğinde (sarı) yer açmayı planlayın. %90'ı geçerse (kırmızı) durum acildir: disk tamamen dolduğunda yeni dosya yüklenemez ve yükleme işlemleri hata vermeye başlar. Yer açmak için eski dosyaları ya da eski yedekleri silin, veya sunucunun diskini büyütün.",
+      "description": "MinIO'nun dosyaları sakladığı diskin yüzde kaçının dolu olduğu. %75'i geçtiğinde (sarı) yer açmayı planlayın. %90'ı geçerse (kırmızı) durum acildir: disk tamamen dolduğunda yeni dosya yüklenemez ve yükleme işlemleri hata vermeye başlar. Yer açmak için eski dosyaları ya da eski yedekleri silin, veya sunucunun diskini büyütün. MinIO kapalıyken \"Veri yok\" görünür.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
       "fieldConfig": {
@@ -253,7 +253,7 @@
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": { "calcs": ["last"], "fields": "", "values": false },
         "orientation": "auto",
         "textMode": "auto",
         "colorMode": "background",
@@ -267,7 +267,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "100 * (1 - sum(minio_cluster_capacity_usable_free_bytes{engine=\"minio\"}) / sum(minio_cluster_capacity_usable_total_bytes{engine=\"minio\"}))",
+          "expr": "100 * (1 - sum(minio_cluster_capacity_usable_free_bytes{engine=\"minio\"}) / clamp_min(sum(minio_cluster_capacity_usable_total_bytes{engine=\"minio\"}), 1))",
           "instant": false,
           "range": true,
           "legendFormat": "Doluluk",
@@ -279,29 +279,32 @@
     {
       "id": 6,
       "type": "stat",
-      "title": "Bellek Kullanımı",
-      "description": "MinIO'nun kullandığı RAM miktarı. Bu yığında MinIO'ya varsayılan olarak 512 MB sınır verilir (.env içindeki MINIO_MEM_LIMIT). Sınıra dayanılırsa işletim sistemi MinIO'yu aniden kapatır ve dosya hizmeti kesilir. Renkler 512 MB varsayılanına göre ayarlıdır: sarı yaklaşıyorsunuz, kırmızı sınırın dibindesiniz demektir. Sürekli kırmızıysa MINIO_MEM_LIMIT değerini artırın.",
+      "title": "Bellek Kullanımı (%)",
+      "description": "MinIO'nun kullandığı belleğin, kendisine AYRILAN sınıra oranı. Sınır sabit değildir ve .env'den okunmaz: controller onu sunucunun RAM'ine göre hesaplar (RAM'in ~%5'i, en az 256 MB, en çok 2 GB) ve state/tuning.env dosyasına yazar — bu yüzden burada sabit bir MB eşiği değil, sınırın yüzdesi gösterilir. %75'i geçerse (sarı) izlemeye alın. %90'ı geçerse (kırmızı) sınıra dayanmışsınız demektir: işletim sistemi MinIO'yu aniden kapatabilir (OOM) ve dosya hizmeti kesilir. Kalıcı olarak kırmızıysa motoru yönetim panelinden daha fazla bellek vererek yeniden açın. \"Veri yok\" ise MinIO kapalıdır ya da container'a bellek sınırı konmamıştır.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
           "noValue": "Veri yok",
-          "unit": "bytes",
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "max": 100,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 402653184 },
-              { "color": "red", "value": 469762048 }
+              { "color": "yellow", "value": 75 },
+              { "color": "red", "value": 90 }
             ]
           }
         },
         "overrides": []
       },
       "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "reduceOptions": { "calcs": ["last"], "fields": "", "values": false },
         "orientation": "auto",
         "textMode": "auto",
         "colorMode": "background",
@@ -315,10 +318,10 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(minio_node_process_resident_memory_bytes{engine=\"minio\"})",
+          "expr": "100 * sum(dbstack_container_memory_bytes{engine=\"minio\"}) / clamp_min(sum(dbstack_container_memory_limit_bytes{engine=\"minio\"}), 1)",
           "instant": false,
           "range": true,
-          "legendFormat": "Bellek",
+          "legendFormat": "Bellek kullanımı",
           "refId": "A"
         }
       ],
@@ -386,7 +389,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Hatalı İstekler",
-      "description": "Saniyede kaç isteğin hatayla sonuçlandığı. \"Sunucu hatası\" MinIO'nun kendi tarafındaki gerçek arızadır ve sıfıra yakın olmalıdır; sürekli görülüyorsa disk, yer veya kaynak sorunu vardır ve dosya yüklemeleri kayboluyor olabilir. \"İstemci hatası\" ise çoğu zaman normaldir (olmayan bir dosyanın sorulması, yanlış şifreyle erişim denemesi). Ancak istemci hataları birdenbire fırladıysa bir uygulamanın erişim anahtarı veya ayarları bozulmuş olabilir.",
+      "description": "Saniyede kaç isteğin hatayla sonuçlandığı. \"Sunucu hatası\" MinIO'nun kendi tarafındaki gerçek arızadır ve sıfıra yakın olmalıdır; sürekli görülüyorsa disk, yer veya kaynak sorunu vardır ve dosya yüklemeleri kayboluyor olabilir. \"İstemci hatası\" ise çoğu zaman normaldir (olmayan bir dosyanın sorulması, yanlış şifreyle erişim denemesi). Ancak istemci hataları birdenbire fırladıysa bir uygulamanın erişim anahtarı veya ayarları bozulmuş olabilir. Hiç hata yaşanmadıysa iki çizgi de düz 0'da durur; bu iyi haberdir. Dikkat: MinIO KAPALIYKEN de çizgiler 0 görünür — \"hata yok\" değil \"ölçüm yok\" demektir; önce üstteki \"Erişilebilir mi?\" kutusuna bakın.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
       "fieldConfig": {
@@ -441,7 +444,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rate(minio_s3_requests_errors_total{engine=\"minio\"}[5m])) - sum(rate(minio_s3_requests_4xx_errors_total{engine=\"minio\"}[5m]))",
+          "expr": "clamp_min(sum(rate(minio_s3_requests_errors_total{engine=\"minio\"}[5m])) - (sum(rate(minio_s3_requests_4xx_errors_total{engine=\"minio\"}[5m])) or vector(0)), 0) or vector(0)",
           "instant": false,
           "range": true,
           "legendFormat": "Sunucu hatası (MinIO kaynaklı)",
@@ -450,7 +453,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rate(minio_s3_requests_4xx_errors_total{engine=\"minio\"}[5m]))",
+          "expr": "sum(rate(minio_s3_requests_4xx_errors_total{engine=\"minio\"}[5m])) or vector(0)",
           "instant": false,
           "range": true,
           "legendFormat": "İstemci hatası (çoğunlukla normal)",

@@ -22,7 +22,7 @@
       "id": 1,
       "type": "stat",
       "title": "Durum",
-      "description": "Cassandra'nın izleme sistemine cevap verip vermediğini gösterir. \"Çalışıyor\" ise motor ayaktadır. \"Erişilemiyor\" yazıyorsa ve motoru siz kapatmadıysanız uygulamalarınız da bağlanamıyor olabilir; kayıtlara bakın: ./stack.sh logs cassandra . Motoru kendiniz kapattıysanız burada \"Veri yok\" yazması normaldir, arıza değildir.",
+      "description": "Cassandra'nın KENDİSİNİN cevap verip vermediğini gösterir. Yalnızca izleme aracının ayakta olmasına bakmaz: motorun içinden gerçek bir ölçüm okunabiliyorsa \"Çalışıyor\" yazar. \"Erişilemiyor\" yazıyorsa izleme aracı ayakta ama motor cevap vermiyordur (çökmüş ya da yeniden başlıyor olabilir) — uygulamalarınız da bağlanamıyor demektir; kayıtlara bakın: ./stack.sh logs cassandra . Motoru kendiniz kapattıysanız burada \"Veri yok\" yazması normaldir, arıza değildir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
       "targets": [
@@ -30,7 +30,7 @@
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "refId": "A",
           "editorMode": "code",
-          "expr": "up{job=\"databases\", engine=\"cassandra\"}",
+          "expr": "clamp_max(count(cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:storage:load:count\"}), 1) or (count(up{job=\"databases\", engine=\"cassandra\"}) * 0)",
           "instant": true,
           "range": false,
           "legendFormat": "Durum"
@@ -123,7 +123,7 @@
       "id": 3,
       "type": "stat",
       "title": "Java belleği kullanımı",
-      "description": "Cassandra'ya ayrılan Java belleğinin (heap) yüzde kaçının dolu olduğu. %75'in altı normaldir. Sürekli %90'ın üstünde kalıyorsa motor zamanının çoğunu bellek temizliğine harcar: sorgular yavaşlar ve en kötü durumda motor durur. Kalıcı olarak yüksekse .env dosyasındaki CASSANDRA_HEAP değerini artırıp motoru yeniden başlatın.",
+      "description": "Cassandra'ya ayrılan Java belleğinin (heap) yüzde kaçının dolu olduğu. %75'in altı normaldir. Sürekli %90'ın üstünde kalıyorsa motor zamanının çoğunu bellek temizliğine harcar: sorgular yavaşlar ve en kötü durumda motor durur. Kalıcı olarak yüksekse motora ayrılan bellek yetmiyor demektir; bu limit sunucunun toplam RAM'inden kendiliğinden hesaplanır ve Java belleği o limitin yarısıdır. Çözüm sunucuya RAM eklemek ya da başka motorları kapatıp Cassandra'yı yeniden aktif etmektir. .env dosyasını elle düzenlemeyin: bellek ayarları state/tuning.env dosyasına üretilir ve her aktivasyonda .env'deki değeri ezer.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
       "targets": [
@@ -131,7 +131,7 @@
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "refId": "A",
           "editorMode": "code",
-          "expr": "100 * cassandra_stats{engine=\"cassandra\", name=\"java:lang:memory:heapmemoryusage:used\"} / ignoring(name) cassandra_stats{engine=\"cassandra\", name=\"java:lang:memory:heapmemoryusage:max\"}",
+          "expr": "100 * cassandra_stats{engine=\"cassandra\", name=\"java:lang:memory:heapmemoryusage:used\"} / ignoring(name) (cassandra_stats{engine=\"cassandra\", name=\"java:lang:memory:heapmemoryusage:max\"} > 0)",
           "instant": false,
           "range": true,
           "legendFormat": "Bellek"
@@ -218,8 +218,8 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Saniyedeki okuma ve yazma",
-      "description": "Uygulamalarınızın saniyede kaç okuma ve kaç yazma isteği gönderdiği. Motorun ne kadar yüklendiğini gösterir; yüksek olması tek başına kötü değildir. Bu grafik yükselirken \"Sorgu süresi\" de yükseliyorsa motor gelen yüke yetişemiyor demektir. Uygulamalarınız çalışırken çizgiler beklenmedik biçimde sıfıra düşerse bağlantı kesilmiş olabilir.",
+      "title": "Saniyedeki okuma, tarama ve yazma",
+      "description": "Uygulamalarınızın saniyede kaç istek gönderdiği. \"Okuma\" tek bir satırı anahtarıyla getiren sorgulardır. \"Tarama\", anahtarın tamamı verilmeden yapılan SELECT'lerdir (örneğin SELECT * FROM tablo) — Cassandra'da en pahalı sorgu türüdür, bu çizgi sürekli yüksekse sorgularınızı anahtar üzerinden yazmayı düşünün. Yüksek olmak tek başına kötü değildir; bu grafik yükselirken \"Sorgu süresi\" de yükseliyorsa motor gelen yüke yetişemiyor demektir. Uygulamalarınız çalışırken çizgiler beklenmedik biçimde sıfıra düşerse bağlantı kesilmiş olabilir. Motor yeni açıldıysa ve henüz hiç sorgu almadıysa bu sayaçlar oluşmamıştır; \"Veri yok\" yazması normaldir, ilk sorgudan sonra çizilmeye başlar.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
       "targets": [
@@ -230,11 +230,20 @@
           "expr": "rate(cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:read:latency:count\"}[5m])",
           "instant": false,
           "range": true,
-          "legendFormat": "Okuma"
+          "legendFormat": "Okuma (anahtarla)"
         },
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "refId": "B",
+          "editorMode": "code",
+          "expr": "rate(cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:rangeslice:latency:count\"}[5m])",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Tarama (aralık okuma)"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "C",
           "editorMode": "code",
           "expr": "rate(cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:write:latency:count\"}[5m])",
           "instant": false,
@@ -284,7 +293,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Sorgu süresi (en yavaş sorgular)",
-      "description": "Sorguların ne kadar sürdüğü. Gösterilen değer şu demektir: her 100 sorgudan 99'u bu süreden daha hızlı tamamlandı — yani en yavaş sorguların bile üst sınırı. Birkaç milisaniye normaldir. Çizgi kesikli uyarı çizgilerinin üstüne çıkıyorsa kullanıcılar yavaşlığı fark eder; sebebi genellikle yükün artması ya da diskin yetişememesidir. Hiç sorgu gelmediğinde grafiğin boş kalması normaldir.",
+      "description": "Sorguların ne kadar sürdüğü. Gösterilen değer şu demektir: her 100 sorgudan 99'u bu süreden daha hızlı tamamlandı — yani en yavaş sorguların bile üst sınırı. Birkaç milisaniye normaldir. Çizgi kesikli uyarı çizgilerinin üstüne çıkıyorsa kullanıcılar yavaşlığı fark eder; sebebi genellikle yükün artması ya da diskin yetişememesidir. \"Tarama\" çizgisi genellikle diğerlerinin çok üstündedir: anahtar verilmeden yapılan SELECT'ler birden çok düğüm ve dosya taradığı için doğal olarak yavaştır. Çizgiler yalnızca gerçekten sorgu geldiği sürece çizilir; motor boştayken kaybolmaları normaldir ve \"0 mikrosaniye\" gibi yanıltıcı bir değer göstermemeleri için böyle yapılmıştır — yükün gerçekten var olup olmadığını yandaki \"Saniyedeki okuma, tarama ve yazma\" panelinden görebilirsiniz.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
       "targets": [
@@ -292,16 +301,25 @@
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "refId": "A",
           "editorMode": "code",
-          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:read:latency:99thpercentile\"}",
+          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:read:latency:99thpercentile\"} and on(instance) (rate(cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:read:latency:count\"}[5m]) > 0)",
           "instant": false,
           "range": true,
-          "legendFormat": "Okuma"
+          "legendFormat": "Okuma (anahtarla)"
         },
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "refId": "B",
           "editorMode": "code",
-          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:write:latency:99thpercentile\"}",
+          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:rangeslice:latency:99thpercentile\"} and on(instance) (rate(cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:rangeslice:latency:count\"}[5m]) > 0)",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Tarama (aralık okuma)"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "C",
+          "editorMode": "code",
+          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:write:latency:99thpercentile\"} and on(instance) (rate(cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:write:latency:count\"}[5m]) > 0)",
           "instant": false,
           "range": true,
           "legendFormat": "Yazma"
@@ -314,7 +332,7 @@
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
-          "noValue": "Veri yok",
+          "noValue": "Sorgu yok",
           "unit": "µs",
           "min": 0,
           "mappings": [],
@@ -355,7 +373,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "Hatalar ve zaman aşımları",
-      "description": "Karşılanamayan isteklerin saniyedeki sayısı. Sağlıklı bir motorda hepsi sıfırdır ve sıfırda kalmalıdır. Yeniden başlatma sırasındaki kısa bir sıçrama sorun değildir; ancak çizgiler dakikalarca sıfırın üstünde kalıyorsa uygulamalarınız hata alıyor, yazmak istediğiniz veri kaydedilmemiş olabilir. \"Yeterli kopya yok\", verinin kopyasını tutan düğümlerin yeterli sayıda ayakta olmadığını gösterir. \"Düşen iç mesaj\" ise motorun aşırı yüklendiğini ve yetişemediği işleri attığını gösterir.",
+      "description": "Karşılanamayan isteklerin saniyedeki sayısı; okuma, tarama ve yazma sorgularının hepsini kapsar. Sağlıklı bir motorda hepsi sıfırdır ve sıfırda kalmalıdır. Yeniden başlatma sırasındaki kısa bir sıçrama sorun değildir; ancak çizgiler dakikalarca sıfırın üstünde kalıyorsa uygulamalarınız hata alıyor, yazmak istediğiniz veri kaydedilmemiş olabilir. \"Yeterli kopya yok\", verinin kopyasını tutan düğümlerin yeterli sayıda ayakta olmadığını gösterir. \"Düşen iç mesaj\" ise motorun aşırı yüklendiğini ve yetişemediği işleri attığını gösterir. Motor yeni açıldıysa ve henüz hiç sorgu almadıysa sorgu hatası sayaçları oluşmamıştır; bu üç çizgide \"Veri yok\" yazması normaldir, ilk sorgudan sonra sıfırdan başlar (\"Düşen iç mesaj\" ilk andan itibaren çizilir).",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
       "targets": [
@@ -363,7 +381,7 @@
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "refId": "A",
           "editorMode": "code",
-          "expr": "sum(rate(cassandra_stats{engine=\"cassandra\", name=~\"org:apache:cassandra:metrics:clientrequest:(read|write):timeouts:count\"}[5m]))",
+          "expr": "sum(rate(cassandra_stats{engine=\"cassandra\", name=~\"org:apache:cassandra:metrics:clientrequest:(read|write|rangeslice):timeouts:count\"}[5m]))",
           "instant": false,
           "range": true,
           "legendFormat": "Zaman aşımı"
@@ -372,7 +390,7 @@
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "refId": "B",
           "editorMode": "code",
-          "expr": "sum(rate(cassandra_stats{engine=\"cassandra\", name=~\"org:apache:cassandra:metrics:clientrequest:(read|write):unavailables:count\"}[5m]))",
+          "expr": "sum(rate(cassandra_stats{engine=\"cassandra\", name=~\"org:apache:cassandra:metrics:clientrequest:(read|write|rangeslice):unavailables:count\"}[5m]))",
           "instant": false,
           "range": true,
           "legendFormat": "Yeterli kopya yok"
@@ -381,7 +399,7 @@
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "refId": "C",
           "editorMode": "code",
-          "expr": "sum(rate(cassandra_stats{engine=\"cassandra\", name=~\"org:apache:cassandra:metrics:clientrequest:(read|write):failures:count\"}[5m]))",
+          "expr": "sum(rate(cassandra_stats{engine=\"cassandra\", name=~\"org:apache:cassandra:metrics:clientrequest:(read|write|rangeslice):failures:count\"}[5m]))",
           "instant": false,
           "range": true,
           "legendFormat": "Başarısız istek"
@@ -455,7 +473,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Bekleyen iş kuyruğu",
-      "description": "Motorun sıraya aldığı ama henüz yapamadığı işler. Kısa süreli birikmeler normaldir ve kendiliğinden boşalır. Kuyruk sürekli büyüyor ve bir daha sıfıra dönmüyorsa motor gelen yüke yetişemiyor demektir: önce sorgular yavaşlar, sonra zaman aşımı hataları başlar. \"Bekleyen birleştirme\" uzun süre yüksek kalırsa okumalar yavaşlar ve veri diskte beklenenden çok yer kaplar.",
+      "description": "Motorun sıraya aldığı ama henüz yapamadığı işler. Kısa süreli birikmeler normaldir ve kendiliğinden boşalır. Kuyruk sürekli büyüyor ve bir daha sıfıra dönmüyorsa motor gelen yüke yetişemiyor demektir: önce sorgular yavaşlar, sonra zaman aşımı hataları başlar. \"Bekleyen birleştirme\" uzun süre yüksek kalırsa okumalar yavaşlar ve veri diskte beklenenden çok yer kaplar. Motor yeni açıldıysa ve henüz hiç sorgu almadıysa okuma/yazma kuyruğu sayaçları oluşmamıştır; o iki çizgide \"Veri yok\" yazıp yalnız \"Bekleyen birleştirme\" görünmesi normaldir, ilk sorgudan sonra sıfırdan başlarlar.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
       "targets": [
@@ -528,8 +546,8 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Önbellek isabet oranı",
-      "description": "Cassandra'nın aradığı bilgiyi diske gitmeden bellekten bulma oranı. Burada yüksek olmak iyidir: %90 ve üstü çok iyidir, %70'in altına düşerse motor çok sık diske gidiyor demektir ve sorgular yavaşlar. Bu durumda sunucuda boş RAM varsa motora ayrılan belleği artırmak yardımcı olur. Yeni açılmış ya da henüz hiç sorgu almamış bir motorda grafiğin boş görünmesi normaldir.",
+      "title": "Anahtar önbelleği isabet oranı (son 15 dakika)",
+      "description": "Cassandra'nın bir satırı diskte NEREDE arayacağını hatırlama oranı. Yüksek olmak iyidir: isabet ettiğinde arama adımı atlanır ve sorgu hızlanır — ama verinin kendisi yine diskten okunur, bu oran \"verilerim RAM'den geliyor\" anlamına gelmez. %90 ve üstü çok iyidir; %70'in altına düşerse okumalar yavaşlar, sunucuda boş RAM varsa motora ayrılan belleği artırmak yardımcı olur. Değer son 15 dakikanın ortalamasıdır, yani yakın geçmişteki bir bozulma grafikte hemen görünür. Motor yeni açıldıysa ve henüz hiç okuma yapılmadıysa oran hesaplanamaz; kısa süre boşluk görünmesi normaldir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 7, "w": 24, "x": 0, "y": 21 },
       "targets": [
@@ -537,10 +555,10 @@
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "refId": "A",
           "editorMode": "code",
-          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:cache:keycache:hitrate:value\"}",
+          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:cache:keycache:fifteenminutehitrate:value\"}",
           "instant": false,
           "range": true,
-          "legendFormat": "Bellekten karşılanan"
+          "legendFormat": "Aramadan bulunan"
         }
       ],
       "options": {

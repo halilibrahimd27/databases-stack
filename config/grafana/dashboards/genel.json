@@ -2,7 +2,7 @@
   "id": null,
   "uid": "dbstack-genel",
   "title": "Genel Bakış — Her Şey Yolunda mı?",
-  "description": "Tek ekranda 'her şey yolunda mı?' sorusunun cevabı. Üstteki dört kutu bakışta durumu söyler, tablo hangi motorun ayakta olduğunu gösterir, alttaki grafikler her motorun ne kadar bellek ve işlemci kullandığını ve sunucuda ne kadar yer kaldığını anlatır.",
+  "description": "Tek ekranda 'her şey yolunda mı?' sorusunun cevabı. Üstteki dört kutu bakışta durumu söyler, tablo izlenen her bileşenin cevap verip vermediğini gösterir, alttaki grafikler sunucunun belleğini, işlemcisini ve diskini zaman içinde anlatır. Motor başına ayrıntı (sorgu sayısı, bağlantılar, replikasyon) her motorun kendi panosundadır.",
   "tags": ["databases-stack", "genel"],
   "timezone": "browser",
   "schemaVersion": 39,
@@ -34,7 +34,7 @@
       "id": 1,
       "type": "stat",
       "title": "Cevap vermeyen bileşen sayısı",
-      "description": "İzlenen bileşenlerden kaç tanesi şu an cevap vermiyor. 0 ise her şey ayakta, yapacak bir şey yok. 1 ya da daha fazlaysa o motoru kullanan uygulamalar hata almaya başlar: hangisi olduğunu aşağıdaki tablodan görün, sonra kayıtlara bakın (./stack.sh logs <motor>). Kapattığınız motorlar burada sayılmaz — kapalı olmak arıza değildir.",
+      "description": "İzlemenin ulaşmaya çalıştığı adreslerden kaç tanesi şu an cevap vermiyor. Sayıya veritabanı ölçerleri kadar izlemenin kendisi de dahildir (Prometheus, sunucu ölçeri, denetleyici) — böylece izleme çökerse kutu bunu 'her şey yolunda' diye yutmaz. 0 ise yapacak bir şey yok. 1 ya da daha fazlaysa hangisi olduğunu yandaki tablodan görün, sonra kayıtlara bakın: ./stack.sh logs <motor>. Kapattığınız motorlar burada sayılmaz — kapalı olmak arıza değildir. Kutu turuncu zeminde 'İzleme hedefi yok' diyorsa arıza sayısı sıfır olduğu için değil, izleme hiçbir hedefe ulaşamadığı için boştur; bu da bir arızadır ve 0 ile aynı şey değildir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "fieldConfig": {
@@ -48,11 +48,12 @@
               }
             }
           ],
-          "noValue": "Veri yok",
+          "noValue": "İzleme hedefi yok",
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
+              { "color": "orange", "value": null },
+              { "color": "green", "value": 0 },
               { "color": "red", "value": 1 }
             ]
           },
@@ -77,7 +78,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "count(up{job=\"databases\"} == 0) or vector(0)",
+          "expr": "sum(up{job=~\"databases|host|controller|prometheus\"} == bool 0)",
           "instant": true,
           "range": false,
           "legendFormat": "Cevap vermeyen",
@@ -89,7 +90,7 @@
       "id": 2,
       "type": "stat",
       "title": "Sunucunun RAM doluluğu",
-      "description": "Sunucudaki toplam belleğin yüzde kaçı kullanılıyor. %75'in altı rahat. %90'ı geçtiyse sunucu darda demektir: yeni motor açmayın, açık motorlardan birini kapatmayı ya da sunucuya RAM eklemeyi düşünün. Bellek tamamen dolarsa işletim sistemi süreçleri kendiliğinden öldürmeye başlar ve veritabanları habersiz kapanabilir.",
+      "description": "Sunucudaki toplam belleğin yüzde kaçı kullanılıyor. %75'in altı rahat. %90'ı geçtiyse sunucu darda demektir: yeni motor açmayın, açık motorlardan birini kapatmayı ya da sunucuya RAM eklemeyi düşünün. Bellek tamamen dolarsa işletim sistemi süreçleri kendiliğinden öldürmeye başlar ve veritabanları habersiz kapanabilir. Bu kutunun verisi sunucu ölçerinden (node-exporter) gelir; izleme profili kapalıysa ya da o bileşen ayakta değilse kutu boş kalır — panel bozuk değildir, önce yandaki tabloya bakın.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
       "fieldConfig": {
@@ -102,7 +103,8 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
+              { "color": "text", "value": null },
+              { "color": "green", "value": 0 },
               { "color": "yellow", "value": 75 },
               { "color": "red", "value": 90 }
             ]
@@ -140,7 +142,7 @@
       "id": 3,
       "type": "stat",
       "title": "Diskin doluluğu",
-      "description": "Sunucunun ana diskinin yüzde kaçı dolu. Veritabanları için diskin dolması en sert arıza biçimidir: yazma durur, bazı motorlar bozuk durumda kalabilir. %80'i geçtiyse eski yedekleri temizlemeye başlayın (backups/ klasörü), %90'ı geçtiyse acildir — yer açın ya da disk ekleyin.",
+      "description": "Sunucunun ana diskinin yüzde kaçı dolu. Veritabanları için diskin dolması en sert arıza biçimidir: yazma durur, bazı motorlar bozuk durumda kalabilir. %80'i geçtiyse eski yedekleri temizlemeye başlayın (backups/ klasörü), %90'ı geçtiyse acildir — yer açın ya da disk ekleyin. Ne kadar süreniz kaldığını alttaki 'Diskte kalan boş alan ve gidişat' grafiğinden görebilirsiniz. Veri sunucu ölçerinden gelir; o bileşen ayakta değilse kutu boş kalır.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
       "fieldConfig": {
@@ -153,7 +155,8 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
+              { "color": "text", "value": null },
+              { "color": "green", "value": 0 },
               { "color": "yellow", "value": 80 },
               { "color": "red", "value": 90 }
             ]
@@ -190,8 +193,8 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "Belleği en dolu motor",
-      "description": "Kendisine ayrılan bellek sınırına en çok yaklaşan container ve doluluk oranı. Bu yığın belleği otomatik hesaplayıp dağıtır; buradaki oran hesabın tutup tutmadığını söyler. %90'ı geçen bir motor er ya da geç bellek yetersizliğinden kapanır: sunucuda boş RAM varsa o motoru kapatıp yeniden açın (bellek yeniden hesaplanır), yoksa başka bir motoru kapatın.",
+      "title": "Sunucunun işlemci doluluğu",
+      "description": "Sunucudaki tüm çekirdeklerin son 5 dakikadaki ortalama meşguliyeti. Yüksek olması tek başına kötü değildir — iş yapılıyor demektir. Endişelenmeniz gereken durum: değer uzun süre %95 civarında takılı kalıyorsa sunucu yetişemiyor, sorgular yavaşlar ve zaman aşımına düşebilir. O zaman alttaki işlemci grafiğinden bunun ne zaman başladığına, sonra ilgili motorun kendi panosundan hangi işin ağırlaştığına bakın. Veri sunucu ölçerinden gelir; o bileşen ayakta değilse kutu boş kalır.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
       "fieldConfig": {
@@ -204,9 +207,10 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 75 },
-              { "color": "red", "value": 90 }
+              { "color": "text", "value": null },
+              { "color": "green", "value": 0 },
+              { "color": "yellow", "value": 80 },
+              { "color": "red", "value": 95 }
             ]
           },
           "unit": "percent",
@@ -216,13 +220,13 @@
       },
       "options": {
         "colorMode": "background",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "showPercentChange": false,
-        "textMode": "value_and_name",
+        "textMode": "value",
         "wideLayout": true
       },
       "pluginVersion": "11.0.0",
@@ -230,10 +234,10 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "topk(1, 100 * sum by (name) (container_memory_usage_bytes{name=~\".+\"}) / sum by (name) (container_spec_memory_limit_bytes{name=~\".+\"} > 0))",
-          "instant": true,
-          "range": false,
-          "legendFormat": "{{name}}",
+          "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Meşgul",
           "refId": "A"
         }
       ]
@@ -241,8 +245,8 @@
     {
       "id": 5,
       "type": "table",
-      "title": "Motorların durumu",
-      "description": "Açık olan her bileşenin şu anki durumu. 'Çalışıyor' ise sorun yok. 'Erişilemiyor' yazan bir satır varsa o motora bağlanılamıyor demektir ve onu kullanan uygulamalar hata alır; kayıtlara bakın: ./stack.sh logs <motor>. Kapattığınız motorlar bu listede hiç görünmez — liste yalnız açık olanları izler. İzleme bileşenleri de (Prometheus gibi) burada görünebilir.",
+      "title": "İzlenen bileşenlerin durumu",
+      "description": "İzlemenin şu an ulaşmaya çalıştığı her adres ve sonucu. 'Çalışıyor' ise o adres cevap veriyor; 'Erişilemiyor' yazan bir satır varsa ulaşılamıyor demektir — kayıtlara bakın: ./stack.sh logs <motor>. 'Grup' sütunu satırın ne olduğunu söyler: databases = veritabanı motorlarının ölçerleri, host = sunucunun kendi ölçeri (üstteki RAM/disk/işlemci kutuları ve alttaki grafikler buradan gelir), controller = denetleyici, prometheus = izlemenin kendisi. İki önemli not: (1) Kapattığınız motorlar bu listede hiç görünmez, liste yalnız izlenmesi istenen adresleri gösterir; veritabanı satırları ancak motorların ölçerleri izleme hedef listesine kaydedildiğinde belirir — yalnız izleme bileşenlerini görüyorsanız panel bozuk değildir, henüz kayıtlı veritabanı ölçeri yok demektir. (2) 'Çalışıyor', o adresteki ÖLÇERİN cevap verdiği anlamına gelir; veritabanının sorgu alabildiğini kesin olarak göstermez — bundan emin olmak için motorun kendi panosuna bakın.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 9, "w": 10, "x": 0, "y": 4 },
       "fieldConfig": {
@@ -263,7 +267,7 @@
               }
             }
           ],
-          "noValue": "Veri yok",
+          "noValue": "İzleme hedefi yok",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -278,14 +282,18 @@
             "matcher": { "id": "byName", "options": "Durum" },
             "properties": [
               { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } },
-              { "id": "custom.width", "value": 160 }
+              { "id": "custom.width", "value": 150 }
             ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Grup" },
+            "properties": [{ "id": "custom.width", "value": 130 }]
           }
         ]
       },
       "options": {
         "cellHeight": "sm",
-        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "footer": { "countRows": true, "fields": "", "reducer": ["count"], "show": true },
         "showHeader": true,
         "sortBy": []
       },
@@ -294,7 +302,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "up{job=\"databases\"}",
+          "expr": "up{job=~\"databases|host|controller|prometheus\"}",
           "format": "table",
           "instant": true,
           "range": false,
@@ -304,88 +312,33 @@
       ],
       "transformations": [
         {
+          "id": "filterFieldsByName",
+          "options": { "include": { "names": ["instance", "job", "Value"] } }
+        },
+        {
           "id": "organize",
           "options": {
-            "excludeByName": {
-              "Time": true,
-              "__name__": true,
-              "instance": true,
-              "job": true,
-              "engine": true,
-              "stack": true
-            },
+            "excludeByName": {},
             "includeByName": {},
-            "indexByName": {},
-            "renameByName": { "engine_name": "Motor", "Value": "Durum" }
+            "indexByName": { "instance": 0, "job": 1, "Value": 2 },
+            "renameByName": { "instance": "Bileşen", "job": "Grup", "Value": "Durum" }
           }
         },
         {
           "id": "sortBy",
-          "options": { "fields": {}, "sort": [{ "field": "Motor", "desc": false }] }
+          "options": { "fields": {}, "sort": [{ "field": "Durum", "desc": false }] }
         }
       ]
     },
     {
       "id": 6,
-      "type": "bargauge",
-      "title": "Ayrılan belleğin ne kadarı kullanılıyor?",
-      "description": "Her container'ın kullandığı bellek, kendisine ayrılan sınırın yüzde kaçı. Bu panel bu ürünün can damarıdır: bellek otomatik hesaplanıp dağıtıldığı için hesabın doğru çıkıp çıkmadığını burada gözünüzle görürsünüz. %75'e kadar normaldir. Sürekli %90'ın üstünde duran bir motor günün birinde bellek yetersizliğinden kapanır: sunucuda boş RAM varsa motoru kapatıp yeniden açın, yoksa başka bir motoru kapatın. Sürekli %20'nin altında kalan bir motora ise gereğinden fazla bellek ayrılmış olabilir.",
+      "type": "timeseries",
+      "title": "Sunucunun bellek kullanımı",
+      "description": "Sunucunun tamamında kullanılan bellek ile takılı olan toplam bellek (kesikli çizgi). İki çizgi arasındaki boşluk, yeni bir motor açtığınızda kullanılabilecek yer kadardır; boşluk kapanıyorsa yeni motor açmayın, önce yer açın. Veritabanlarının önbellek için tuttuğu bellek de burada 'kullanılan' görünür, bu normaldir. Endişelenmeniz gereken durum: dolu çizgi kesikli çizgiye yaklaşıp orada kalıyorsa sunucu bellek sıkıntısındadır ve işletim sistemi süreç öldürmeye başlayabilir — bir motoru kapatın ya da RAM ekleyin. Veri sunucu ölçerinden gelir; o bileşen ayakta değilse grafik boş kalır.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 9, "w": 14, "x": 10, "y": 4 },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [],
-          "noValue": "Veri yok",
-          "max": 100,
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 75 },
-              { "color": "red", "value": 90 }
-            ]
-          },
-          "unit": "percent",
-          "decimals": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "displayMode": "gradient",
-        "maxVizHeight": 300,
-        "minVizHeight": 16,
-        "minVizWidth": 8,
-        "namePlacement": "left",
-        "orientation": "horizontal",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "showUnfilled": true,
-        "sizing": "auto",
-        "valueMode": "color"
-      },
-      "pluginVersion": "11.0.0",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-          "editorMode": "code",
-          "expr": "100 * sum by (name) (container_memory_usage_bytes{name=~\".+\"}) / sum by (name) (container_spec_memory_limit_bytes{name=~\".+\"} > 0)",
-          "instant": true,
-          "range": false,
-          "legendFormat": "{{name}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 7,
-      "type": "timeseries",
-      "title": "Motorların bellek kullanımı",
-      "description": "Her container'ın zaman içinde kullandığı bellek. Veritabanları belleği önbellek olarak kullanır; çizginin yavaşça yükselip bir yerde düzleşmesi normaldir, hatta beklenir. Endişelenmeniz gereken iki şey var: çizgi hiç düzleşmeden sürekli tırmanıyorsa ya da testere dişi gibi tepe yapıp birden dibe düşüyorsa (o motor bellek yetersizliğinden kapanıp yeniden başlıyor olabilir). Sınıra ne kadar yaklaşıldığını üstteki oran panelinden görebilirsiniz.",
-      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
-      "fieldConfig": {
-        "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": {
             "axisBorderShow": false,
@@ -411,139 +364,7 @@
           "mappings": [],
           "min": 0,
           "noValue": "Veri yok",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
-          },
-          "unit": "bytes"
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "calcs": ["lastNotNull", "max"],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "pluginVersion": "11.0.0",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-          "editorMode": "code",
-          "expr": "sum by (name) (container_memory_usage_bytes{name=~\".+\"})",
-          "instant": false,
-          "range": true,
-          "legendFormat": "{{name}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 8,
-      "type": "timeseries",
-      "title": "Motorların işlemci kullanımı",
-      "description": "Her container'ın işlemci kullanımı. %100, bir çekirdeğin tamamının kullanıldığı anlamına gelir; sunucuda birden çok çekirdek olduğu için %100'ün üstü tek başına sorun değildir. Yüksek olması iş yapıldığı anlamına gelir, kötü değildir. Dikkat edilecek durum: bir motor uzun süre yüksekte takılı kalıyorsa sorgular yavaşlar — ağır bir sorgu ya da döngüye girmiş bir uygulama olabilir. Çizginin sıfıra düşmesi ise o motora hiç iş gelmediğini gösterir.",
-      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "çekirdek kullanımı",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "opacity",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "insertNulls": false,
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "off" }
-          },
-          "mappings": [],
-          "min": 0,
-          "noValue": "Veri yok",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
-          },
-          "unit": "percent",
-          "decimals": 1
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "calcs": ["lastNotNull", "max"],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "pluginVersion": "11.0.0",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-          "editorMode": "code",
-          "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{name=~\".+\"}[5m]))",
-          "instant": false,
-          "range": true,
-          "legendFormat": "{{name}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "id": 9,
-      "type": "timeseries",
-      "title": "Sunucunun toplam bellek kullanımı",
-      "description": "Sunucunun tamamında kullanılan bellek ile takılı olan toplam bellek. İki çizgi arasındaki boşluk, yeni bir motor açtığınızda kullanılabilecek yer kadardır; boşluk kapanıyorsa yeni motor açmayın, önce yer açın. Not: veritabanlarının önbellek için tuttuğu bellek de burada 'kullanılan' görünür, bu normaldir — asıl bakılacak yer üstteki yüzde kutusudur.",
-      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "bellek",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "opacity",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "insertNulls": false,
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "off" }
-          },
-          "mappings": [],
-          "min": 0,
-          "noValue": "Veri yok",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
-          },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
           "unit": "bytes"
         },
         "overrides": [
@@ -558,12 +379,7 @@
         ]
       },
       "options": {
-        "legend": {
-          "calcs": ["lastNotNull"],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
+        "legend": { "calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "none" }
       },
       "pluginVersion": "11.0.0",
@@ -589,12 +405,79 @@
       ]
     },
     {
-      "id": 10,
+      "id": 7,
+      "type": "timeseries",
+      "title": "Sunucunun işlemci kullanımı",
+      "description": "İşlemci zaman içinde ne kadar meşguldü. 'Meşgul' tüm çekirdeklerin ortalamasıdır: %100, hepsinin dolu olduğu anlamına gelir. Yüksek olması iş yapıldığı anlamına gelir, kötü değildir; dikkat edilecek durum uzun süre tepede takılı kalmasıdır — o zaman sorgular yavaşlar. 'Diski bekleyen' çizgisi ise işlemcinin boşuna beklediğini, asıl darboğazın disk olduğunu gösterir: bu çizgi kalıcı olarak yükseliyorsa daha hızlı bir diske geçmek, işlemci eklemekten daha çok işe yarar. Veri sunucu ölçerinden gelir; o bileşen ayakta değilse grafik boş kalır.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "meşguliyet",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "noValue": "Veri yok",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "percent",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Meşgul",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "100 * avg(rate(node_cpu_seconds_total{mode=\"iowait\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Diski bekleyen",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 8,
       "type": "timeseries",
       "title": "Diskte kalan boş alan ve gidişat",
-      "description": "Ana diskte kalan boş alan. Kesikli çizgi, son 6 saatteki gidişat aynı hızda sürerse 24 saat sonra ne kadar yer kalacağını tahmin eder — 'disk ne zaman dolar' sorusunun cevabı budur. Kesikli çizgi sıfıra doğru iniyorsa beklemeyin: eski yedekleri temizleyin (backups/ klasörü) ya da disk ekleyin. Çizginin her gece basamak basamak inip yedek temizliğinde geri yükselmesi normaldir; asıl tehlike hiç geri yükselmemesidir.",
+      "description": "Ana diskte kalan boş alan. Kesikli turuncu çizgi, son 6 saatteki gidişat aynı hızda sürerse 24 saat sonra ne kadar yer kalacağını tahmin eder — 'disk ne zaman dolar' sorusunun cevabı budur. Kesikli çizgi sıfıra iniyorsa beklemeyin: eski yedekleri temizleyin (backups/ klasörü) ya da disk ekleyin. Çizginin her gece basamak basamak inip yedek temizliğinde geri yükselmesi normaldir; asıl tehlike hiç geri yükselmemesidir. Tahmin yalnız son 6 saate bakan kaba bir hesaptır: yeni açılmış bir sunucuda ya da tek seferlik büyük bir yedek sonrası abartılı çıkabilir, tek bir düşüşe bakıp panik yapmayın. Veri sunucu ölçerinden gelir; o bileşen ayakta değilse grafik boş kalır.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -622,10 +505,7 @@
           "mappings": [],
           "min": 0,
           "noValue": "Veri yok",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
-          },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
           "unit": "bytes"
         },
         "overrides": [
@@ -640,12 +520,7 @@
         ]
       },
       "options": {
-        "legend": {
-          "calcs": ["lastNotNull", "min"],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
+        "legend": { "calcs": ["lastNotNull", "min"], "displayMode": "table", "placement": "bottom", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "none" }
       },
       "pluginVersion": "11.0.0",
@@ -662,11 +537,159 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "avg(predict_linear(node_filesystem_avail_bytes{mountpoint=\"/\"}[6h], 24 * 3600))",
+          "expr": "clamp_min(avg(predict_linear(node_filesystem_avail_bytes{mountpoint=\"/\"}[6h], 24 * 3600)), 0)",
           "instant": false,
           "range": true,
           "legendFormat": "Bu hızla giderse 24 saat sonra",
           "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Diskin okuma ve yazma hızı",
+      "description": "Sunucunun diskinde saniyede kaç bayt okunuyor ve yazılıyor. Yedek alınırken, büyük bir veri yüklenirken ya da bir motor açılışta verisini okurken tepe yapması normaldir. Endişelenmeniz gereken durum: yazma çizgisi saatlerce tepede kalıyor ve aynı anda üstteki 'Diski bekleyen' çizgisi de yükseliyorsa disk darboğaz demektir — sorgular yavaşlar, bu durumda daha hızlı bir diske geçmek gerekir. Çizgilerin sıfıra inmesi sorun değildir, o an disk işi yok demektir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "hız",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "min": 0,
+          "noValue": "Veri yok",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(rate(node_disk_read_bytes_total{device!~\"loop.*|ram.*\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Okuma",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(rate(node_disk_written_bytes_total{device!~\"loop.*|ram.*\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Yazma",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Sunucunun iş yükü",
+      "description": "Sunucuda aynı anda sıra bekleyen iş sayısı (son 1 ve son 15 dakikanın ortalaması). Kesikli çizgi sunucudaki çekirdek sayısıdır: çizgilerin onun altında kalması, gelen işin yetiştiği anlamına gelir. Endişelenmeniz gereken durum: 15 dakikalık çizgi kesikli çizginin sürekli üstünde seyrediyorsa sunucu yetişemiyor demektir — kısa tepeler (yedek alma, veri yükleme) normaldir, kalıcı yükseklik değildir. Böyle bir durumda ya bir motoru kapatın ya da sunucuya çekirdek ekleyin. Veri sunucu ölçerinden gelir; o bileşen ayakta değilse grafik boş kalır.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "bekleyen iş",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "min": 0,
+          "noValue": "Veri yok",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short",
+          "decimals": 2
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Sunucudaki çekirdek sayısı" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "text" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "avg(node_load1)",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Son 1 dakika",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "avg(node_load15)",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Son 15 dakika",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "count(count by (cpu) (node_cpu_seconds_total))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Sunucudaki çekirdek sayısı",
+          "refId": "C"
         }
       ]
     }

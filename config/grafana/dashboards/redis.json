@@ -42,7 +42,7 @@
       "id": 1,
       "type": "stat",
       "title": "Redis çalışıyor mu?",
-      "description": "Redis'e bağlanılabiliyor mu, onu söyler. \"Çalışıyor\" yazıyorsa sorun yok. \"Erişilemiyor\" yazıyorsa Redis'i kullanan uygulamalar veri bulamaz; sayfalar yavaşlar ya da hata verir. Bu durumda kayıtlara bakın: ./stack.sh logs redis",
+      "description": "Redis'e bağlanılabiliyor mu, onu söyler. \"Çalışıyor\" yazıyorsa sorun yok. \"Erişilemiyor\" yazıyorsa Redis ayakta değil ya da parola/ağ yüzünden bağlanılamıyor: Redis'i kullanan uygulamalar veri bulamaz, sayfalar yavaşlar ya da hata verir — kayıtlara bakın: ./stack.sh logs redis. \"Bilgi yok\" yazıyorsa ölçüm hiç gelmiyordur; genellikle Redis profili tamamen kapalıdır (ölçüm toplayıcı da Redis ile birlikte durur). Bu kutu her zaman ANLIK durumu gösterir, motor kapandıktan sonra eski değeri ekranda tutmaz.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -117,9 +117,9 @@
           },
           "editorMode": "code",
           "expr": "redis_up{engine=\"redis\"}",
-          "instant": false,
+          "instant": true,
           "legendFormat": "Durum",
-          "range": true,
+          "range": false,
           "refId": "A"
         }
       ]
@@ -128,7 +128,7 @@
       "id": 2,
       "type": "stat",
       "title": "Açık bağlantı sayısı ve üst sınırı",
-      "description": "Şu an Redis'e bağlı olan uygulama sayısı ve izin verilen en yüksek bağlantı sayısı. Açık bağlantı üst sınıra dayanırsa yeni bağlantılar reddedilir ve uygulamalar hata alır. İki sayı arasında geniş bir boşluk olması normaldir; boşluk kapanmaya başladıysa aşağıdaki \"Reddedilen bağlantı\" grafiğini izleyin.",
+      "description": "Şu an Redis'e bağlı olan uygulama sayısı ve izin verilen en yüksek bağlantı sayısı. Açık bağlantı üst sınıra dayanırsa yeni bağlantılar reddedilir ve uygulamalar hata alır. İki sayı arasında geniş bir boşluk olması normaldir; boşluk kapanmaya başladıysa aşağıdaki \"Reddedilen bağlantı\" grafiğini izleyin. Sayılar anlık okunur: Redis kapalıyken burada eski bir değer değil \"Bilgi yok\" yazar.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -163,7 +163,7 @@
       },
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "horizontal",
         "percentChangeColorMode": "standard",
@@ -185,9 +185,9 @@
           },
           "editorMode": "code",
           "expr": "redis_connected_clients{engine=\"redis\"}",
-          "instant": false,
+          "instant": true,
           "legendFormat": "Açık bağlantı",
-          "range": true,
+          "range": false,
           "refId": "A"
         },
         {
@@ -197,9 +197,9 @@
           },
           "editorMode": "code",
           "expr": "redis_config_maxclients{engine=\"redis\"}",
-          "instant": false,
+          "instant": true,
           "legendFormat": "Üst sınır",
-          "range": true,
+          "range": false,
           "refId": "B"
         }
       ]
@@ -208,7 +208,7 @@
       "id": 3,
       "type": "stat",
       "title": "Bellek doluluk oranı",
-      "description": "Redis'e ayrılan belleğin yüzde kaçının dolu olduğu. Redis veriyi diskte değil bellekte tutar, bu yüzden en kritik sayı budur. %75'in altı rahat, %90'ın üstünde Redis yer açmak için eski kayıtları silmeye başlar. Önbellek olarak kullanıyorsanız bu normaldir; kuyruk ya da oturum saklıyorsanız veri kaybı demektir — belleği büyütün. Redis'e bellek sınırı konmamışsa burada \"Bilgi yok\" yazar.",
+      "description": "Redis'e ayrılan belleğin yüzde kaçının dolu olduğu. Redis veriyi diskte değil bellekte tutar, bu yüzden en kritik sayı budur. %75'in altı rahat, %90'ın üstünde Redis yer açmak için eski kayıtları silmeye başlar. Önbellek olarak kullanıyorsanız bu normaldir; kuyruk ya da oturum saklıyorsanız veri kaybı demektir — belleği büyütün. Redis'e bellek sınırı konmamışsa ya da Redis kapalıysa burada \"Bilgi yok\" yazar — oran anlık okunur, motor durduktan sonra eski yüzde ekranda asılı kalmaz.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -252,7 +252,7 @@
       },
       "options": {
         "colorMode": "background",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
@@ -274,9 +274,9 @@
           },
           "editorMode": "code",
           "expr": "100 * redis_memory_used_bytes{engine=\"redis\"} / (redis_memory_max_bytes{engine=\"redis\"} > 0)",
-          "instant": false,
+          "instant": true,
           "legendFormat": "Doluluk",
-          "range": true,
+          "range": false,
           "refId": "A"
         }
       ]
@@ -620,7 +620,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "Saklanan kayıt sayısı",
-      "description": "Redis'te duran toplam kayıt (anahtar) sayısı ve bunların kaç tanesinin son kullanma tarihi olduğu. İki çizgi birbirine yakınsa iyidir: kayıtlar zamanı gelince kendiliğinden silinir. Toplam sayı hiç düşmeden sürekli büyüyorsa kayıtlara son kullanma süresi verilmiyor demektir; er geç bellek dolar ve Redis veri atmaya başlar.",
+      "description": "Redis'te duran toplam kayıt (anahtar) sayısı ve bunların kaç tanesinin son kullanma tarihi olduğu. İki çizgi birbirine yakınsa iyidir: kayıtlar zamanı gelince kendiliğinden silinir. Toplam sayı hiç düşmeden sürekli büyüyorsa kayıtlara son kullanma süresi verilmiyor demektir; er geç bellek dolar ve Redis veri atmaya başlar. Sayılar tüm veritabanları (db0…db15) toplanarak bulunur; birden fazla Redis sunucusu izleniyorsa her sunucu ayrı çizgi olarak görünür.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -704,7 +704,7 @@
             "uid": "dbstack-prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(redis_db_keys{engine=\"redis\"})",
+          "expr": "sum without (db) (redis_db_keys{engine=\"redis\"})",
           "instant": false,
           "legendFormat": "Toplam kayıt",
           "range": true,
@@ -716,7 +716,7 @@
             "uid": "dbstack-prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(redis_db_keys_expiring{engine=\"redis\"})",
+          "expr": "sum without (db) (redis_db_keys_expiring{engine=\"redis\"})",
           "instant": false,
           "legendFormat": "Son kullanma tarihi olan kayıt",
           "range": true,
@@ -892,8 +892,8 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Yedek kopya gecikmesi",
-      "description": "Bu panel yalnızca bu Redis başka bir Redis'in yedek kopyası (replika) olarak kurulduysa dolar. Normal kurulumda \"No data\" yazması beklenen durumdur, hata değildir. Dolu olduğunda, yedeğin ana sunucuyla en son ne kadar süre önce haberleştiğini gösterir. 60 saniyeyi aşması dikkat, 300 saniyeyi aşması sorun demektir: o anda devir yapılırsa aradaki veri kaybolur. Ağ ya da disk darboğazına bakın.",
+      "title": "Bağlı yedek kopya sayısı",
+      "description": "Bu Redis'e o anda bağlı olan yedek kopya (replika) adedi. Yedek kopya kurmadıysanız çizgi sürekli 0'da durur — bu normaldir, hata değildir. \"./stack.sh replica on redis\" ile yedek kopya açtıysanız çizginin 1'e çıkması ve orada kalması gerekir. Asıl endişe işareti 1'den 0'a düşmesidir: o andan sonra yazılan veriler yedeğe geçmez, ana kopya bozulursa aradaki veri geri gelmez — yedeğin kayıtlarına bakın: ./stack.sh logs redis-replica. Not: yedeğin kaç saniye geride kaldığını gösteren ölçüm bu kurulumda toplanmaz, çünkü yedek kopya için ayrı bir ölçüm toplayıcı tanımlı değildir; burada gecikme değil yalnızca bağlantının kurulu olup olmadığı görünür.",
       "datasource": {
         "type": "prometheus",
         "uid": "dbstack-prometheus"
@@ -907,14 +907,16 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "mode": "fixed",
+            "fixedColor": "blue"
           },
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
             "axisColorMode": "text",
-            "axisLabel": "saniye",
+            "axisLabel": "yedek kopya adedi",
             "axisPlacement": "auto",
+            "axisSoftMax": 1,
             "barAlignment": 0,
             "drawStyle": "line",
             "fillOpacity": 10,
@@ -925,7 +927,7 @@
               "viz": false
             },
             "insertNulls": false,
-            "lineInterpolation": "smooth",
+            "lineInterpolation": "stepAfter",
             "lineWidth": 2,
             "pointSize": 5,
             "scaleDistribution": {
@@ -938,29 +940,22 @@
               "mode": "none"
             },
             "thresholdsStyle": {
-              "mode": "dashed"
+              "mode": "off"
             }
           },
           "mappings": [],
           "min": 0,
+          "decimals": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "blue",
                 "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 60
-              },
-              {
-                "color": "red",
-                "value": 300
               }
             ]
           },
-          "unit": "s"
+          "unit": "none"
         },
         "overrides": []
       },
@@ -984,9 +979,9 @@
             "uid": "dbstack-prometheus"
           },
           "editorMode": "code",
-          "expr": "redis_master_last_io_seconds_ago{engine=\"redis\"}",
+          "expr": "redis_connected_slaves{engine=\"redis\"}",
           "instant": false,
-          "legendFormat": "Ana sunucuyla son iletişimden geçen süre",
+          "legendFormat": "Bağlı yedek kopya",
           "range": true,
           "refId": "A"
         }

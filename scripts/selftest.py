@@ -184,11 +184,15 @@ ck("/api/status token'sız reddedilir", call("/api/status", token=None)[0] == 40
 ck("yanlış token reddedilir", call("/api/status", token="yanlis")[0] == 401)
 
 s, b = call("/api/catalog")
-ck("/api/catalog", s == 200 and len(b["engines"]) == 12, "%d motor" % len(b["engines"]))
+# Sayı kataloğdan türetiliyor: sabit yazılınca kataloğa motor eklemek
+# alakasız üç testi birden kırıyor ve ekleyen kişi hatayı kendi
+# değişikliğinde arıyor.
+_MOTOR = len(app.CATALOG.engines)
+ck("/api/catalog", s == 200 and len(b["engines"]) == _MOTOR, "%d motor" % len(b["engines"]))
 s, b = call("/api/status")
-ck("/api/status", s == 200 and len(b["engines"]) == 12)
+ck("/api/status", s == 200 and len(b["engines"]) == _MOTOR)
 s, b = call("/api/plans")
-ck("/api/plans tüm motorlar için plan üretir", s == 200 and len(b["plans"]) == 12)
+ck("/api/plans tüm motorlar için plan üretir", s == 200 and len(b["plans"]) == _MOTOR)
 s, b = call("/api/engines/mariadb/plan")
 ck("tekil plan", s == 200 and b.get("ok"))
 s, b = call("/api/engines/mariadb/connection")
@@ -452,12 +456,18 @@ ck("MariaDB CHANGE MASTER hedefi de env'den geliyor",
    and "MASTER_HOST='mariadb'" not in _mdb_rep_code)
 # Yön yine de ters verilebilir (controller'daki bir hata, betiği elle
 # çalıştırma). Betik bu yüzden iş yapmadan önce kendi kendini denetler:
-# kaynak yazılabilir primary mi, hedef ondan farklı mı, kaynak boşken hedefte
-# veri var mı — sonuncusu "ters yön" demektir ve durmak zorundadır.
+# hedef kaynaktan farklı mı, kaynakta hiç TABLO yokken hedefte veri var mı,
+# hedef kaynaktan daha GÜNCEL mi.
+#
+# "Kaynakta hiç kullanıcı ŞEMASI yok" ölçütü işe yaramıyordu: compose
+# MARIADB_DATABASE=defaultdb verdiği için az önce silinip sıfırdan açılmış bir
+# düğümde bile o şema hep vardır — kemer hiç ateşlemiyordu. read_only de yönün
+# göstergesi değildir (döküm yalnız okur; yükseltilmiş düğüm her yeniden
+# başlayışta read_only=ON gelir), o yüzden yön kararını GTID güncelliği verir.
 ck("MariaDB tohumlaması ters yöne karşı kendini koruyor",
-   "@@read_only" in _mdb_rep_code
-   and '"$PRIMARY" = "$STANDBY"' in _mdb_rep_code
-   and "user_dbs m_replica" in _mdb_rep_code)
+   '"$PRIMARY" = "$STANDBY"' in _mdb_rep_code
+   and "user_tables m_replica" in _mdb_rep_code
+   and "gtid_current_pos" in _mdb_rep_code)
 _ready_blk = _mdb_fo.split(chr(10) + "ready)", 1)[1].split(chr(10) + "promote)", 1)[0]
 _ready_blk = chr(10).join(ln for ln in _ready_blk.splitlines()
                           if not ln.lstrip().startswith("#"))
@@ -466,6 +476,85 @@ ck("MariaDB 'ready' önce replikasyon durumuna, sonra 'zaten primary'ye bakar",
    and _ready_blk.index("Slave_SQL_Running: Yes") < _ready_blk.index("zaten primary"))
 ck("MariaDB tohumlamasında aktarım hataları sessizce yutulmuyor",
    "err_log" in _mdb_rep)
+# Boru hattının çıkış kodu SON komuttan (yüklemeyi yapan istemciden) gelir;
+# POSIX sh'te pipefail yoktur. Sinyalle ölen bir döküm (OOM, exit 137) stderr'e
+# tek satır bile yazmaz, dolayısıyla "error" taraması da göremez: yükleme yarıda
+# kesilir ama betik "✓ replikasyon çalışıyor" der. Geriye SESSİZCE YARIM bir
+# replika kalır ve sonraki devir onu primary'ye yükseltirse veri kaybolur.
+ck("MariaDB dökümünün çıkış kodu boru hattından ayrı okunuyor",
+   "dump_rc" in _mdb_rep_code)
+# "Zaten akışta" kısayolu, bir kez YANLIŞ yönde kurulmuş topolojiyi de sağlıklı
+# raporluyordu. Akan bir replikada yönün gerçek kanıtı Master_Host'tur.
+ck("MariaDB 'zaten akışta' kısayolu kaynağı da doğruluyor",
+   "Master_Host" in _mdb_rep_code)
+
+
+def _sh_branch(src, name):
+    """`case` dalının gövdesi — betiği çalıştırmadan fazın ne yaptığını görmek için."""
+    out, inside = [], False
+    for ln in src.splitlines():
+        s = ln.strip()
+        if s == name + ")":
+            inside = True
+            continue
+        if inside and s == ";;":
+            break
+        if inside:
+            out.append(ln)
+    return chr(10).join(out)
+
+
+# prepare, kullanıcının replikasyon kurarken çarptığı İLK aşamadır ve attach ile
+# aynı yönü izler. Kemersizken yön ters verildiğinde replikasyon kullanıcısı
+# SESSİZCE yanlış düğümde açılıyor (root SUPER olduğu için read_only engellemez),
+# betik "hazır" diyordu; arıza çok sonra replikada sebebi görünmeyen bir
+# "Access denied" olarak patlıyordu.
+_mdb_prep = _sh_branch(_mdb_rep_code, "prepare")
+ck("MariaDB 'prepare' fazı da yönü denetliyor",
+   '"$PRIMARY" = "$STANDBY"' in _mdb_prep and "bağlanılamadı" in _mdb_prep)
+# Container kapalıyken `SELECT @@log_bin` boş döner; eski sürüm buna da
+# "log_bin kapalı, my.cnf'e bakın" diyordu. my.cnf DOĞRU olduğu için kullanıcı
+# doğru dosyayı defalarca düzenleyip aynı hatayı alıyor, gerçek sebebi
+# ("container çalışmıyor") hiç öğrenmiyordu.
+ck("MariaDB 'prepare' bağlantı hatasını ayar hatasından ayırıyor",
+   "my.cnf" in _mdb_prep and _mdb_prep.index("bağlanılamadı") < _mdb_prep.index("my.cnf"))
+
+# --- Replikasyon betiklerinde FAZ denetimi -----------------------------------
+# Redis betiğinde `cleanup` dalı YOKTU: betik yalnız `prepare`i ayırıp geri
+# kalan her şeyi attach doğrulama döngüsüne düşürüyordu. "Replikayı kapat"
+# demek, replikanın bağlanmasını 90 saniye beklemek ve 1 dönmek oluyordu;
+# controller da bunu "temizlik başarısız" sayıp yedeği KALDIRMIYOR ve panele
+# kritik bir olay yazıyordu. Yani düğme, hiç devir olmamış sıradan bir
+# kurulumda bile tamamen kırıktı.
+_rep_dir = os.path.join(ROOT, "scripts", "replication")
+_rep_src = {}
+for _f in sorted(os.listdir(_rep_dir)):
+    if not _f.endswith(".sh"):
+        continue
+    _rep_src[_f] = open(os.path.join(_rep_dir, _f), encoding="utf-8").read()
+    ck("%s 'cleanup' fazını tanıyor" % _f, bool(_sh_branch(_rep_src[_f], "cleanup")))
+    # cleanup, attach'ın bekleme döngüsüne DÜŞMEMELİ — regresyonun imzası buydu.
+    ck("%s 'cleanup' bekleme döngüsüne düşmüyor" % _f,
+       "while" not in _sh_branch(_rep_src[_f], "cleanup"))
+    # Tanınmayan faz sessizce 0 DÖNMEZ: `case` hiçbir dala uymayınca 0 döner ve
+    # controller bunu "yapıldı" sayıp bir sonraki adıma geçer.
+    ck("%s bilinmeyen fazda hata veriyor" % _f,
+       any(ln.strip() == "*)" for ln in _rep_src[_f].splitlines()))
+
+_redis_clean = _sh_branch(_rep_src["redis.sh"], "cleanup")
+ck("Redis 'cleanup' kendi işini yapıyor (attach doğrulaması değil)",
+   "REPLICAOF NO ONE" in _redis_clean and "master_link_status" not in _redis_clean)
+
+# Boşta kalan bir replikasyon slot'u PostgreSQL'e "bu WAL'ı hâlâ biri okuyacak"
+# der; WAL sonsuza dek birikir, disk dolar ve ANA KOPYA DURUR. Temizlik dalı
+# eskiden bütün psql çağrılarını `>/dev/null 2>&1 || true` ile maskeleyip `echo`
+# ile bitiyordu, yani DAİMA 0 dönüyordu — controller'ın "temizlik başarısızsa
+# replikayı kaldırma" koruması bu yüzden ölü koddu.
+_pg_clean = _sh_branch(_rep_src["postgresql.sh"], "cleanup")
+ck("PostgreSQL temizliği slot'un silindiğini doğrulayıp başarısızsa hata veriyor",
+   "drop_slot" in _pg_clean and "exit 1" in _pg_clean)
+ck("PostgreSQL temizliği slot sayısını gerçekten okuyor",
+   "count(*) FROM pg_replication_slots" in _rep_src["postgresql.sh"])
 
 # Sonraki bölümler için sahte run()'ı sıfırla
 _reset_topo(); calls[:] = []
@@ -525,9 +614,33 @@ ck("gerçekten sağlıksız ana kopya sayaca girer",
 ck("durmuş ana kopya sayaca girer", app.health_verdict("t-dead", "exited", "none") == "bad")
 ck("sağlıklı ana kopya sayacı sıfırlar",
    app.health_verdict("t-ok", "running", "healthy") == "ok")
-app._STARTING_SINCE["t-hung"] = time.time() - (app.FAILOVER_STARTING_GRACE + 10)
+app._STARTING_SINCE["t-hung"] = ("nod", time.time() - (app.FAILOVER_STARTING_GRACE + 10))
 ck("sonsuza dek 'açılıyor' kalan motor arıza sayılır (devir yine de mümkün)",
-   app.health_verdict("t-hung", "running", "starting") == "bad")
+   app.health_verdict("t-hung", "running", "starting", "nod") == "bad")
+# Damga SERVİSE bağlıdır. Motor kimliğine bağlıyken devirden hemen sonra şu
+# oluyordu: eski ana kopyanın bayat damgası kayıtta kalıyor, yükseltilen YENİ
+# ana kopya "starting" dediğinde setdefault o damgayı koruyor ve düğüm açılış
+# lütfundan HİÇ yararlanmadan anında "bad" sayılıyordu — yani düzeltmenin asıl
+# vaadi tam da en çok gerektiği anda geçersiz kalıyordu.
+app._STARTING_SINCE["t-swap"] = ("mariadb", time.time() - (app.FAILOVER_STARTING_GRACE + 10))
+ck("devirden sonra bayat 'açılıyor' damgası yeni ana kopyaya taşınmıyor",
+   app.health_verdict("t-swap", "running", "starting", "mariadb-replica") == "starting")
+ck("aynı düğüm için lütuf süresi yine de dolabiliyor",
+   app.health_verdict("t-swap", "running", "starting", "mariadb-replica") == "starting"
+   and app.health_verdict("t-hung", "running", "starting", "nod") == "bad")
+
+# "docker'a SORAMADIK" ile "container YOK" aynı şey değildir. run() zaman
+# aşımını artık sonuç olarak döndürdüğü için yoğun bir docker daemon'ında liste
+# boş kalıyor, denetleyici her motoru "absent" görüp sayaç işletiyor ve üst üste
+# 3 turda gereksiz bir devir denemesi başlatabiliyordu.
+_saved_run, _saved_conts = app.run, app.docker_containers
+app.run = lambda cmd, timeout=900, env=None: (app.RC_TIMEOUT, "", "zaman aşımı")
+app._docker_containers_uncached()
+ck("docker listesi alınamayınca 'container yok' denmiyor", not app.docker_snapshot_ok())
+app.run = lambda cmd, timeout=900, env=None: (0, "", "")
+app._docker_containers_uncached()
+ck("docker cevap verince bayrak temizleniyor", app.docker_snapshot_ok())
+app.run, app.docker_containers = _saved_run, _saved_conts
 
 # Devir bekleme süresi diske yazılmalı: devir çoğu zaman controller'ın da
 # yeniden başladığı bir olayda (reboot) yaşanır; bellekteki sayaç sıfırlanınca
@@ -620,30 +733,136 @@ try:
     okk, reason = app.perform_failover("mariadb", "test: kilit")
     ck("aynı motorda ikinci bir devir REDDEDİLİR", not okk and "sürüyor" in (reason or ""))
     ck("kilit meşgulken hiçbir komut çalıştırılmaz", not _rb)
+
+    # Aç/kapat/replikasyon uçları da AYNI sırada yürümeli. Kilitsiz kaldıkları
+    # sürece şu senaryo açıktı: devir başladı (eski primary fence edilmiş,
+    # topology HENÜZ yazılmamış), operatör panelde "çalışmıyor" görüp Durdur'a
+    # ya da "Replikayı kapat"a bastı → o an primary'ye yükseltilmekte olan düğüm
+    # `compose rm -f` ile silindi ve ayakta tek bir veritabanı kalmadı.
+    for _act, _fn in (("Durdur", lambda j: app.do_deactivate(j, "mariadb")),
+                      ("Replikayı kapat", lambda j: app.do_replication(j, "mariadb", False)),
+                      ("Aktif Et", lambda j: app.do_activate(j, "mariadb"))):
+        _jid = app.new_job("test", "mariadb")
+        _fn(_jid)
+        ck("devir sürerken '%s' REDDEDİLİR" % _act,
+           app.JOBS[_jid]["state"] == "failed"
+           and "sürüyor" in (app.JOBS[_jid].get("reason") or ""),
+           (app.JOBS[_jid].get("reason") or "")[:50])
+    ck("kilit meşgulken hiçbir container'a dokunulmuyor", not _rb)
 finally:
     _lk.release()
 
+# --- Devir → yeniden kurma → NORMAL AKIŞ ------------------------------------
+# Yeniden kurma topolojiye hiç dokunmadığı sürece kayıt sonsuza dek "devir
+# yapıldı, eski kopya durduruldu" diyordu: dashboard aynı uyarıyı ve aynı düğmeyi
+# göstermeye devam ediyor, "Replikayı kapat"/"Replika kur" ise "önce eski kopyayı
+# yeniden kurun" diye reddediliyordu — oysa o işlem az önce BAŞARIYLA bitmişti.
+# Veritabanı bilmeyen kullanıcı için çıkışı olmayan bir döngüydü.
+_topo_mdb = app.load_topology().get("mariadb", {})
+ck("başarılı yeniden kurulum topolojiye işleniyor (roller tutarlı)",
+   bool(_topo_mdb.get("rebuilt_at")) and _topo_mdb.get("standby") == "mariadb"
+   and _topo_mdb.get("primary") == "mariadb-replica",
+   json.dumps(_topo_mdb, ensure_ascii=False)[:90])
+_st_mdb = [e for e in app.status()["engines"] if e["id"] == "mariadb"][0]
+ck("yeniden kurulduktan sonra 'Devir yapıldı' uyarısı/düğmesi ekranda kalmıyor",
+   _st_mdb["failed_over"] is False and _st_mdb["roles_swapped"] is True)
+
 # Devir sonrası "replikayı kapat", kataloğa bakıp CANLI ANA KOPYAYI siliyordu.
+# Silinecek düğüm kataloğun replica_service'i değil, o anki YEDEKTİR.
+_stt = app.load_state()
+_stt["auto_failover"] = ["mariadb"]
+app.save_state(_stt)
 _jid = app.new_job("replication-disable", "mariadb")
 app.run = _rebuild_run()
 _rb[:] = []
 app.do_replication(_jid, "mariadb", False)
-ck("devir sonrası 'replikayı kapat' canlı ana kopyayı SİLMEZ",
-   app.JOBS[_jid]["state"] == "failed"
-   and "ANA KOPYA" in (app.JOBS[_jid].get("reason") or ""))
-ck("reddedilen replikasyon işlemi hiçbir container'a dokunmuyor", not _rb)
+_targets = [c["cmd"][-1] for c in _rb
+            if "stop" in c["cmd"] or ("rm" in c["cmd"] and "-f" in c["cmd"])]
+ck("devir sonrası 'Replikayı kapat' canlı ana kopyayı değil YEDEĞİ kaldırır",
+   app.JOBS[_jid]["state"] == "done" and bool(_targets)
+   and all(t == "mariadb" for t in _targets),
+   "durum=%s hedefler=%s" % (app.JOBS[_jid]["state"], ", ".join(_targets)))
+# Yedek yokken "Otomatik devir açık" rozeti yalan söyler: yükseltilecek düğüm
+# kalmadı. Giriş kapısındaki kontrol yalnız AÇARKEN çalışıyordu.
+ck("yedek kaldırılınca otomatik devir de kapatılır",
+   "mariadb" not in app.load_state().get("auto_failover", []))
+app.save_state({"profiles": ["mariadb", "mariadb-replica"], "overrides": []})
+
+# Devir olmuş ama yedek HENÜZ yeniden kurulmamışken "Replika Kur" yanlış
+# düğmedir: hedef düğüm eskimiş veriyi taşıyan eski ana kopyadır ve bu yol onun
+# hacmini silmeden açar → dolu veri dizini yüzünden klonlama atlanır, düğüm
+# ikinci bir YAZILABİLİR ana kopya olarak gelir. Red mesajı, GERÇEKTEN çalışan
+# bir yol göstermeli.
+_topo = app.load_topology()
+_topo["mariadb"].pop("rebuilt_at", None)
+app.save_topology(_topo)
+_jid = app.new_job("replication-enable", "mariadb")
+_rb[:] = []
+app.do_replication(_jid, "mariadb", True)
+_reason = app.JOBS[_jid].get("reason") or ""
+ck("devir sonrası 'Replika Kur' eskimiş düğümü açmaz, yapılabilir bir yol gösterir",
+   app.JOBS[_jid]["state"] == "failed" and "yeniden kur" in _reason, _reason[:70])
+ck("bu redde hiçbir container'a/hacme dokunulmuyor", not _rb)
 
 # Devir sonrası "Aktif Et", kataloğun ilk servisini (eskimiş, fence edilmiş
 # düğümü) açıyordu: hem eski veriyle ikinci bir yazılabilir kopya oluyor hem de
 # gateway gerçek ana kopyayı gösterdiği için kullanıcı hiçbir yere bağlanamıyordu.
+# Servisi listeden çıkarmak TEK BAŞINA yetmiyor: panel/exporter/replika
+# servislerinin hepsi compose'da `depends_on: <asıl primary>: service_healthy`
+# taşıdığı için compose onu YİNE başlatıyordu. Bu yüzden argv'ye değil,
+# compose'un depends_on grafiğiyle hesaplanan EFEKTİF servis kümesine bakıyoruz.
+import yaml as _yaml_dep  # noqa: E402
+
+_cyaml = _yaml_dep.safe_load(open("docker-compose.yml", encoding="utf-8"))
+_DEPS = {}
+for _n, _sv in (_cyaml.get("services") or {}).items():
+    _d = (_sv or {}).get("depends_on") or {}
+    _DEPS[_n] = list(_d.keys()) if isinstance(_d, dict) else list(_d)
+
+
+def _effective_services(cmd):
+    """compose'un bu komutla GERÇEKTEN başlatacağı servisler (bağımlılıklar dahil)."""
+    if "up" not in cmd:
+        return set()
+    named = [x for x in cmd[cmd.index("up") + 1:] if not x.startswith("-")]
+    eff, queue, no_deps = set(), list(named), "--no-deps" in cmd
+    while queue:
+        s = queue.pop()
+        if s in eff:
+            continue
+        eff.add(s)
+        if not no_deps:
+            queue += _DEPS.get(s, [])
+    return eff
+
+
 _jid = app.new_job("activate", "mariadb")
 app.run = _rebuild_run()
 _rb[:] = []
 app.do_activate(_jid, "mariadb")
-_up = [c["cmd"] for c in _rb if "up" in c["cmd"]]
-_svcs = _up[0][_up[0].index("--remove-orphans") + 1:] if _up else []
-ck("devir sonrası 'Aktif Et' eskimiş kopyayı değil güncel ana kopyayı açar",
-   "mariadb-replica" in _svcs and "mariadb" not in _svcs, " ".join(_svcs))
+_eff = set()
+for _c in _rb:
+    _eff |= _effective_services(_c["cmd"])
+ck("devir sonrası 'Aktif Et' eskimiş kopyayı compose bağımlılığıyla bile açmaz",
+   "mariadb-replica" in _eff and "mariadb" not in _eff, " ".join(sorted(_eff)))
+ck("panel ve exporter yine de açılıyor (bağımlılık iptali işlevi kesmiyor)",
+   {"phpmyadmin", "mariadb-exporter"} <= _eff, " ".join(sorted(_eff)))
+
+# Yönlendirme tablosu gateway'e uygulanamadıysa iş "✅ Tamamlandı" DEMEZ:
+# uygulamalar hâlâ eski/ölü hedefe gider, kullanıcı ise iş penceresine bakar.
+_saved_reload = app.reload_gateway
+app.reload_gateway = lambda attempts=3: False
+_jid = app.new_job("activate", "mariadb")
+_rb[:] = []
+app.do_activate(_jid, "mariadb")
+ck("gateway tazelenemezse 'Aktif Et' sessizce başarılı demiyor",
+   app.JOBS[_jid]["state"] == "failed"
+   and "docker restart gateway" in (app.JOBS[_jid].get("reason") or ""),
+   (app.JOBS[_jid].get("reason") or "")[:60])
+app.reload_gateway = _saved_reload
+_topo = app.load_topology()
+_topo["mariadb"]["rebuilt_at"] = int(time.time())
+app.save_topology(_topo)
 
 _evs = app.read_events()
 ck("devir reddedildiğinde kritik olay yazılıyor (sessiz kalınmıyor)",
@@ -719,8 +938,14 @@ ck("tüm proxy_pass'ler değişkenli — kapalı motor nginx'i çökertmez",
    not fixed, "%d proxy_pass" % len(passes))
 
 blocks = re.split(r"\nserver \{", tpl)[1:]
+# Bu liste iki kontrolün kapsamını belirliyor (aşağıda "pasif sayfası" ve
+# "yinelenen direktif"). proxy-api.conf sonradan eklendi: /api/ kendi düz metin
+# hata sayfalarına geçerken proxy.conf yerine proxy-api.conf include etmeye
+# başladı, liste güncellenmeyince 443 server'ı ve /api/ location'ı iki
+# kontrolün de DIŞINDA kaldı — testler yeşil, koruma yok. Buraya yeni bir proxy
+# snippet'i eklerken bu listeyi de güncelleyin.
 PROXY_SNIPPETS = ("snippets/proxy.conf", "snippets/proxy-metrics.conf",
-                  "snippets/proxy-panel.conf")
+                  "snippets/proxy-panel.conf", "snippets/proxy-api.conf")
 miss = [re.search(r"listen\s+(\d+)", b).group(1) for b in blocks
         if any(x in b for x in PROXY_SNIPPETS) and "snippets/inactive.conf" not in b]
 ck("proxy kullanan her server'da 'pasif' sayfası tanımlı", not miss, str(miss))
@@ -746,8 +971,20 @@ _setup = open("gateway/html/setup.html", encoding="utf-8").read()
 ck("kurulum rehberi sertifika kuruluysa panele yönlendiriyor",
    "fetch(panel + 'health'" in _setup and "location.replace(panel)" in _setup)
 
-ck("envsubst yalnız STACK_ değişkenlerine dokunur",
-   set(re.findall(r"\$\{([A-Za-z_]+)\}", tpl)) == {"STACK_CONTROLLER_TOKEN", "STACK_RESOLVER"})
+# Sabit bir liste yerine DEĞİŞMEZİ sınıyoruz. Liste yazılınca şablona meşru
+# bir değişken eklemek alakasız bir testi kırıyor ve ekleyen kişi hatayı kendi
+# değişikliğinde arıyor.
+_tpl_vars = set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", tpl))
+ck("şablondaki tüm ${} değişkenleri STACK_ önekli (NGINX_ENVSUBST_FILTER)",
+   all(v.startswith("STACK_") for v in _tpl_vars), ", ".join(sorted(_tpl_vars)))
+# Şablonun beklediği bir değişkeni compose vermezse envsubst onu SESSİZCE boş
+# dizeyle değiştirir. Sonuç yapılandırma geçerli kalır ama davranış bozulur:
+# boş bir token'la /api/ çağrıları 401 alır, boş bir sırla panel çerezi hiçbir
+# şeye eşleşmez. Hiçbir hata mesajı çıkmaz — bu yüzden burada yakalıyoruz.
+_compose_txt = open("docker-compose.yml", encoding="utf-8").read()
+_env_eksik = sorted(v for v in _tpl_vars if (v + ":") not in _compose_txt)
+ck("şablonun beklediği her STACK_ değişkeni compose'da gateway'e veriliyor",
+   not _env_eksik, ", ".join(_env_eksik))
 
 cat = json.load(open("catalog.json", encoding="utf-8"))
 missing = [e["id"] for e in cat["engines"]
@@ -775,19 +1012,153 @@ ck("tüm metrik location'ları metrik snippet'ini kullanıyor",
 for f in ("index.html", "app.js", "style.css", "inactive.html"):
     ck("statik dosya: %s" % f, os.path.exists("gateway/html/" + f))
 
+
+# --- Dashboard JavaScript'i ayrıştırılabiliyor mu? --------------------------
+# Yarım kalmış bir app.js sunucu tarafında HİÇBİR belirti vermez: nginx dosyayı
+# seve seve servis eder, /api/status 200 döner, container'lar sağlıklı görünür.
+# Tarayıcıda ise script hiç çalışmaz ve panel sonsuza dek "Yükleniyor…" kalır.
+# Gerçek bir olaydı: dosya düzenlenmekte olduğu bir anda commit'lendi, tıklama
+# dinleyicisinin kapanışı hiç yazılmamıştı ve panel tamamen kullanılamaz hâle
+# geldi. Node her ortamda bulunmadığı için burada kendi tarayıcımızla
+# bakıyoruz — tam bir ayrıştırıcı değil, ama kesilmeyi/dengesizliği yakalar.
+def _js_dengesizlik(src):
+    i, n = 0, len(src)
+    stack, satir, prev = [], 1, ""
+    esler = {")": "(", "]": "[", "}": "{"}
+    while i < n:
+        c = src[i]
+        if c == "\n":
+            satir += 1; i += 1; continue
+        if c == "/" and i + 1 < n and src[i + 1] == "/":
+            j = src.find("\n", i); i = n if j < 0 else j; continue
+        if c == "/" and i + 1 < n and src[i + 1] == "*":
+            j = src.find("*/", i + 2)
+            if j < 0:
+                return "satır %d: kapanmamış /* yorumu" % satir
+            satir += src.count("\n", i, j); i = j + 2; continue
+        # Bölme mi regex mi: JavaScript'in klasik belirsizliği. Bir önceki
+        # anlamlı karakter operatör/açılış ise gelen '/' regex başlatır.
+        # Bu ayrım olmadan /[&<>"']/g gibi bir regex içindeki tırnak,
+        # tarayıcıyı "dize başladı" sanıp bütün dosyayı yanlış okuturdu.
+        if c == "/" and prev in "(,=:[!&|?{};+-*%~^<>":
+            j, kacis, sinif = i + 1, False, False
+            while j < n:
+                d = src[j]
+                if kacis: kacis = False
+                elif d == "\\": kacis = True
+                elif d == "[": sinif = True
+                elif d == "]": sinif = False
+                elif d == "\n": break
+                elif d == "/" and not sinif: break
+                j += 1
+            if j < n and src[j] == "/":
+                i = j + 1; prev = "/"; continue
+        if c in "'\"`":
+            tirnak, j, kacis = c, i + 1, False
+            while j < n:
+                d = src[j]
+                if kacis: kacis = False
+                elif d == "\\": kacis = True
+                elif tirnak == "`" and d == "$" and j + 1 < n and src[j + 1] == "{":
+                    derinlik, k = 1, j + 2
+                    while k < n and derinlik:
+                        if src[k] == "{": derinlik += 1
+                        elif src[k] == "}": derinlik -= 1
+                        elif src[k] in "'\"`":
+                            t2, k2, e2 = src[k], k + 1, False
+                            while k2 < n:
+                                if e2: e2 = False
+                                elif src[k2] == "\\": e2 = True
+                                elif src[k2] == t2: break
+                                k2 += 1
+                            k = k2
+                        k += 1
+                    j = k - 1
+                elif d == tirnak: break
+                elif d == "\n" and tirnak != "`":
+                    return "satır %d: kapanmamış %s dizesi" % (satir, tirnak)
+                j += 1
+            if j >= n:
+                return "satır %d: kapanmamış %s dizesi (dosya sonu)" % (satir, tirnak)
+            satir += src.count("\n", i, j); i = j + 1; prev = tirnak; continue
+        if c in "([{":
+            stack.append((c, satir))
+        elif c in ")]}":
+            if not stack:
+                return "satır %d: fazladan %s" % (satir, c)
+            acik, acik_satir = stack.pop()
+            if acik != esler[c]:
+                return ("satır %d: %s ile kapanan blok satır %d'de %s ile açılmış"
+                        % (satir, c, acik_satir, acik))
+        if not c.isspace():
+            prev = c
+        i += 1
+    if stack:
+        acik, acik_satir = stack[-1]
+        return "dosya bitti ama satır %d'deki '%s' hiç kapanmamış" % (acik_satir, acik)
+    return ""
+
+
+_js_sorun = _js_dengesizlik(open("gateway/html/app.js", encoding="utf-8").read())
+ck("dashboard app.js dengeli (yarım commit yakalanır)", not _js_sorun, _js_sorun)
+# Denetimin kendisi de doğrulanıyor: kasten bozulmuş bir örneği yakalayamıyorsa
+# kontrol sessizce hiçbir şey doğrulamıyor demektir.
+ck("bu denetim bozuk dosyayı gerçekten yakalıyor",
+   bool(_js_dengesizlik("document.addEventListener('click', (ev) => {\n  const a = 1;\n")))
+
 # nginx aynı blokta yinelenen direktifi REDDEDER ve hiç açılmaz. Snippet bir
 # location'ın içine include edildiği için, snippet'teki bir direktifi aynı
 # location'da tekrar yazmak gateway'i tamamen çökertir.
+
+
+def location_bodies(conf):
+    """location gövdelerini iç içe süslü parantezleri SAYARAK çıkarır.
+
+    Eskiden bu iş `location[^{]*\\{([^}]*)\\}` regex'iyle yapılıyordu ve o regex
+    ilk `}` işaretinde duruyordu: /api/ location'ına `if ($csrf_site_ok = 0)
+    { return 403; }` eklendiği anda gövde include satırından ÖNCE kesildi, blok
+    hiçbir PROXY_SNIPPETS adını içermez oldu ve aşağıdaki kontrolün dışına
+    düştü. Bedeli somut: /api/ içine proxy.conf'ta zaten var olan bir direktif
+    (ör. `proxy_buffering off;`) yazılırsa nginx "directive is duplicate" ile
+    HİÇ açılmaz — dashboard, veritabanı portları ve tüm paneller birden
+    erişilemez olur — ama selftest yeşil kalırdı.
+    """
+    out = []
+    # "location" YORUM İÇİNDE de geçiyor (şablonda ödünleşimleri anlatan
+    # satırlar var). Satır başına demirlemezsek `[^{]*` yorumdan sonraki ilk
+    # `{`e kadar uzayıp bambaşka bir bloğu "location gövdesi" sanıyor: aşağıdaki
+    # sayaç 22 yerine 24 gösteriyordu.
+    for m in re.finditer(r"^[ \t]*location[^{]*\{", conf, re.M):
+        depth, i = 1, m.end()
+        while i < len(conf) and depth:
+            if conf[i] == "{":
+                depth += 1
+            elif conf[i] == "}":
+                depth -= 1
+            i += 1
+        out.append(conf[m.end():i - 1])
+    return out
+
+
 snip_directives = set()
 for fn in ("proxy", "proxy-metrics", "proxy-panel"):
     for line in open("gateway/snippets/%s.conf" % fn, encoding="utf-8"):
         line = line.strip()
         if line and not line.startswith("#") and line.endswith(";")                 and not line.startswith("include "):
             snip_directives.add(line.split()[0])
+# nginx'te "dizi" direktifleri aynı blokta birden çok kez YAZILABİLİR; onlar
+# yinelenme değildir. proxy_set_header hem snippet'ten gelir hem location kendi
+# başlığını ekler (/api/'deki X-Api-Token), error_page de birikimlidir. Bunları
+# ayıklamazsak kontrol çalışan bir yapılandırmayı kırmızıya boyar ve ilk yapılan
+# şey kontrolü kapatmak olur.
+snip_directives -= {"proxy_set_header", "error_page", "add_header",
+                    "proxy_hide_header", "set", "rewrite"}
 dupes = []
-for blk in re.findall(r"location[^{]*\{([^}]*)\}", tpl):
+audited = 0
+for blk in location_bodies(tpl):
     if not any(x in blk for x in PROXY_SNIPPETS):
         continue
+    audited += 1
     for line in blk.splitlines():
         line = line.strip()
         if line and not line.startswith("#") and line.endswith(";"):
@@ -796,6 +1167,11 @@ for blk in re.findall(r"location[^{]*\{([^}]*)\}", tpl):
                 dupes.append(d)
 ck("snippet direktifleri location'da tekrar edilmiyor (nginx duplicate hatası)",
    not dupes, ", ".join(sorted(set(dupes))))
+# Yukarıdaki kontrol yalnız GÖRDÜĞÜ blokları koruyor; kapsamı bir daha sessizce
+# düşmesin diye blok sayısını da iddia ediyoruz. /api/ ayrı snippet'e geçtiğinde
+# bu sayı 22'den 21'e inmişti ve testler yeşil kaldığı için kimse fark etmedi.
+ck("duplicate kontrolü proxy location'larının tamamını görüyor", audited >= 22,
+   "%d location denetlendi" % audited)
 
 # nginx imajı yalnız access.log/error.log'u /dev/stdout'a symlink eder. stream
 # logları gerçek dosyaya yazılıyordu: docker'ın rotasyonu (json-file 10m x 3)
@@ -816,6 +1192,17 @@ ck("zaman aşımı (504) 'pasif' sayfasına DEĞİL kendi sayfasına bağlı",
    "error_page 502 503 =503 /_inactive.html;" in _px
    and "error_page 504 /_timeout.html;" in _px
    and "location = /_timeout.html" in _inact and "auth_basic off" in _inact)
+
+# Bu sayfa neredeyse her zaman bir POST'un (import / ALTER) cevabıdır. Sayfa bir
+# yandan "aynı işlemi tekrar başlatmayın" derken diğer yandan "sayfayı yenileyip
+# bakın" diyordu — POST cevabında yenilemek tarayıcıda "Formu yeniden gönder"
+# onayını çıkarır, yani sayfanın uyardığı şeyin ta kendisini yaptırır. Metin
+# artık yenilemeyi yasaklıyor ve tek güvenli eylemi (panelin köküne GET) bir
+# düğmeyle veriyor.
+_t504 = _inact[_inact.index("location = /_timeout.html"):]
+ck("zaman aşımı sayfası 'yenileyin' demiyor, güvenli bir çıkış düğmesi veriyor",
+   "yenilemeyin" in _t504 and "yenileyip" not in _t504
+   and "sayfayı yenileyin" not in _t504 and "<a href='/'" in _t504)
 
 _slow_panels = {"8081": "phpMyAdmin", "8082": "pgAdmin", "8085": "Adminer"}
 _short = []
@@ -846,6 +1233,27 @@ ck("panelin kendi sayfası ve başlıksız istemciler geçiyor",
    _rows.get('"same-origin"') == "1" and _rows.get('"none"') == "1"
    and _rows.get("''") == "1")
 
+# Mongo Express, Basic auth başlığını arka uca İLETEN tek panel (kendi girişi
+# gateway ile aynı kimlik bilgisini kullanıyor). HTTP auth çerez olmadığı için
+# SameSite kuralları ona işlemez: kötü niyetli bir sayfanın buraya attığı gizli
+# form POST'u da "kimliği doğrulanmış" sayılır ve mongo-express 1.0.2'de bunu
+# durduracak bir CSRF jetonu yok. Kontrolü canlı doğruladık: POST + Sec-Fetch-Site
+# cross-site → 403, GET → 503 (panel açılıyor).
+_m8083 = tpl[tpl.index("8083 Mongo Express"):tpl.index("8084 RedisInsight")]
+ck("Mongo Express'te çapraz-site YAZMA isteği reddediliyor",
+   'set $panel_deny "$panel_write$csrf_site_ok";' in _m8083
+   and 'if ($panel_deny = "10")' in _m8083
+   and 'if ($csrf_origin_host = "$host")' in _m8083
+   and 'if ($panel_origin_deny = 1)' in _m8083)
+# Panelde OKUMA serbest kalmalı: dashboard'dan panele geçiş (:443 → :8083) ayrı
+# porta gittiği için tarayıcı "same-site" der, $csrf_site_ok bunu 0 sayar. GET'i
+# de engelleseydik "Panel" düğmesi her seferinde 403 verirdi.
+_pw = re.search(r"map \$request_method \$panel_write \{([^}]*)\}", tpl)
+_pwrows = dict(re.findall(r"^\s*(\S+)\s+([01]);", _pw.group(1), re.M)) if _pw else {}
+ck("panele okuma (GET/HEAD) serbest — 'Panel' düğmesi 403 vermiyor",
+   _pwrows.get("GET") == "0" and _pwrows.get("HEAD") == "0"
+   and _pwrows.get("default") == "1")
+
 # Dashboard hata gövdesini kullanıcıya OLDUĞU GİBİ gösteriyor (app.js: r.text()).
 # Ortak HTML sayfaları döndüğünde kullanıcı hata penceresinde koca bir HTML
 # kaynağı görüyordu — üstelik "veritabanı kapalı" diyerek, oysa kapalı olan
@@ -860,6 +1268,29 @@ ck("/api/ hata gövdeleri düz metin (dashboard'a HTML dönmüyor)",
    and all("internal;" in b and "text/plain" in b and "auth_basic off" in b
            for _, b in _apitxt),
    "%d hata ucu" % len(_apitxt))
+
+# 504 metni /api/'nin TAMAMINA bağlı, dashboard ise 5 saniyede bir /api/status,
+# /api/plans, /api/events yokluyor. "İşlem başlatıldı ama sonucu beklerken süre
+# doldu" diye başlayan metin, hiçbir düğmeye basmamış kullanıcıya olmayan bir
+# işlemi haber veriyordu (üstelik app.js başına "Kontrol servisine ulaşılamıyor:"
+# ekliyor). Metin iki duruma da doğru gelmeli: uyarı "başlattıysanız" koşullu.
+_apitimeout = dict(_apitxt).get("/_api_timeout.txt", "")
+ck("/api/ zaman aşımı metni salt-okunur yoklamalarda da doğru",
+   "İşlem başlatıldı ama" not in _apitimeout and "başlattıysanız" in _apitimeout)
+
+# Bu düz metinlerin kullanıcıya ULAŞMASI da gerekiyor. Düğme işleyicileri
+# (activate/deactivate/toggle*/rebuild) async; tek çağrı yerleri olan click
+# dinleyicisi ise async değil. Dallar "return activate(engine)" derken api()'nin
+# 403/504'te attığı hata yakalanmamış promise reddine dönüşüyor, onay penceresi
+# kapanıyor ve ekranda hiçbir şey olmuyordu — kullanıcı düğmeye tekrar basıyordu.
+_app = open("gateway/html/app.js", encoding="utf-8").read()
+ck("düğme hataları kullanıcıya gösteriliyor (sessiz promise reddi yok)",
+   "p.catch(" in _app and "İşlem yapılamadı" in _app
+   and "p = activate(engine);" in _app and "p = rebuildStandby(engine);" in _app
+   # dalların hiçbiri promise'i doğrudan return edip yakalanmadan bırakmamalı
+   and not re.search(r"case '[\w-]+':\s*return "
+                     r"(activate|deactivate|toggleReplication|toggleAutoFailover"
+                     r"|rebuildStandby|showConnection)\(", _app))
 
 # =============================================================================
 # 6. YEDEKLEME BETİĞİ
@@ -910,6 +1341,14 @@ ck("PostgreSQL geri yüklemesi eleme sonrası kalan hatada BAŞARISIZ diyor",
    "cluster YARIM kalmış olabilir" in _pg_restore and "return 1" in _pg_restore)
 ck("doğrulamayı geçemeyen dosya kurtarma noktası sayılmıyor",
    "finalize_backup" in _bk and ".bozuk" in _bk)
+# Dosya üreten HER motor finalize_backup'tan geçmeli. mongodb'de bu atlanmıştı:
+# arşiv üretilirken hiç doğrulanmıyor, doğrulamayı geçemediğinde kenara da
+# alınmıyordu — list/stats onu geçerli kurtarma noktası sayıyor, sync-remote.sh
+# uzak sunucuya kopyalıyordu. Tek motorun atlanması gözden kaçtığı için kural
+# tek tek değil, üreten fonksiyonların tamamı üzerinden aranıyor.
+_finalsiz = [n for n, body in _fn
+             if n.startswith("backup_") and "out_path" in body and "finalize_backup" not in body]
+ck("dosya üreten her motor finalize_backup'tan geçiyor", not _finalsiz, ", ".join(_finalsiz))
 
 # Kapalı kalan bir motorun TÜM yedekleri silinmemeli: kapalıyken yeni yedek
 # üretilmediği için hepsi tarih eşiğini geçer ve son kurtarma noktası da gider.
@@ -963,11 +1402,78 @@ if _bash:
     with _gzip.open(os.path.join(_tmp, "redis_full_yanlis.rdb.gz"), "wb") as _g:
         _g.write(b"bu bir RDB dosyasi degil")
 
+    # ---- çok parçalı arşivler: "en az bir dosya var" ölçütü yetmiyor -------
+    # Cassandra arşivi schema.cql + SSTable'lardan oluşur. tar'ın içindeki find
+    # snapshot dizinlerini bulamazsa yalnız schema.cql paketlenir ve 0 ile
+    # çıkar; o schema.cql 0 bayt bile olabilir. Eski ölçüt bu dosyaya
+    # "1 dosya, Bütünlük doğrulandı" diyordu — elde sıfır veri vardı.
+    def _mkdir(*parca):
+        d = os.path.join(_tmp, *parca)
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def _yaz(d, ad, icerik=b"veri"):
+        with open(os.path.join(d, ad), "wb") as fh:
+            fh.write(icerik)
+
+    def _tarla(ad, kok):
+        with _tar.open(os.path.join(_tmp, ad), "w:gz") as t:
+            t.add(kok, arcname=".")
+
+    _c_bos = _mkdir("c_bos")
+    _yaz(_c_bos, "schema.cql", b"")                       # 0 baytlık şema, SSTable yok
+    _tarla("cassandra_full_semasiz.tar.gz", _c_bos)
+
+    _c_sema = _mkdir("c_sema")
+    _yaz(_c_sema, "schema.cql", b"CREATE KEYSPACE app;\n")  # şema var, SSTable YOK
+    _tarla("cassandra_full_snapsiz.tar.gz", _c_sema)
+
+    _c_dolu = _mkdir("c_dolu")
+    _yaz(_c_dolu, "schema.cql", b"CREATE KEYSPACE app;\n")
+    _yaz(_mkdir("c_dolu", "app", "t-abc", "snapshots", "bk_1"), "nb-1-big-Data.db", b"x" * 512)
+    _tarla("cassandra_full_dolu.tar.gz", _c_dolu)
+
+    # ES'te depo budaması bugünün snapshot'ını da götürürse arşivde yalnız depo
+    # üstverisi (index-0, index.latest) kalır: dosya sayısı 2'dir ama içinde
+    # tek indeks yoktur.
+    _e_meta = _mkdir("e_meta")
+    _yaz(_e_meta, "index-0", b"repo ustverisi")
+    _yaz(_e_meta, "index.latest", b"0")
+    _tarla("elasticsearch_full_metaonly.tar.gz", _e_meta)
+
+    _e_dolu = _mkdir("e_dolu")
+    _yaz(_e_dolu, "index-0", b"repo ustverisi")
+    _yaz(_mkdir("e_dolu", "indices", "xyz", "0"), "__abc", b"x" * 512)
+    _tarla("elasticsearch_full_dolu.tar.gz", _e_dolu)
+
+    # mongodump --archive akışı ilk saniyede kesilirse elde yalnız 4 baytlık
+    # imza kalır; imza kontrolü tek başına buna "geçerli" diyordu.
+    with open(os.path.join(_tmp, "mongodb_full_kisa.archive.gz"), "wb") as _fh:
+        _fh.write(b"\x6d\xe2\x99\x81")
+    # Betiğin KENDİ kenara aldığı dosya kendi verify'ından yeşil tik almamalı:
+    # operatör uzantıyı geri alıp o dosyayla geri yüklemeye kalkıyordu.
+    with _gzip.open(os.path.join(_tmp, "mariadb_full_kenara.sql.gz.bozuk"), "wb") as _g:
+        _g.write(b"CREATE DATABASE app;\n")
+
     ck("boş arşiv 'doğrulandı' demiyor", _verify("mssql_full_bos.tar.gz") != 0)
     ck("dolu arşiv doğrulanıyor", _verify("mssql_full_dolu.tar.gz") == 0)
     ck("boş dump 'doğrulandı' demiyor", _verify("mariadb_full_bos.sql.gz") != 0)
     ck("dolu dump doğrulanıyor", _verify("mariadb_full_dolu.sql.gz") == 0)
     ck("RDB olmayan dosya Redis yedeği sayılmıyor", _verify("redis_full_yanlis.rdb.gz") != 0)
+    ck("içi 0 bayt dosyalardan ibaret arşiv 'doğrulandı' demiyor",
+       _verify("cassandra_full_semasiz.tar.gz") != 0)
+    ck("SSTable'sız Cassandra arşivi 'doğrulandı' demiyor (şema tek başına veri değil)",
+       _verify("cassandra_full_snapsiz.tar.gz") != 0)
+    ck("şema + SSTable taşıyan Cassandra arşivi doğrulanıyor",
+       _verify("cassandra_full_dolu.tar.gz") == 0)
+    ck("yalnız depo üstverisi taşıyan ES arşivi 'doğrulandı' demiyor",
+       _verify("elasticsearch_full_metaonly.tar.gz") != 0)
+    ck("indeks verisi taşıyan ES arşivi doğrulanıyor",
+       _verify("elasticsearch_full_dolu.tar.gz") == 0)
+    ck("4 baytlık MongoDB arşivi imzadan geçse de 'doğrulandı' demiyor",
+       _verify("mongodb_full_kisa.archive.gz") != 0)
+    ck("kenara alınmış (.bozuk) dosya verify'dan yeşil tik almıyor",
+       _verify("mariadb_full_kenara.sql.gz.bozuk") != 0)
     _shutil.rmtree(_tmp, ignore_errors=True)
 
 # =============================================================================

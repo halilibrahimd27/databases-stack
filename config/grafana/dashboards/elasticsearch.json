@@ -34,7 +34,7 @@
       "id": 1,
       "type": "stat",
       "title": "Elasticsearch erişilebilir mi?",
-      "description": "Elasticsearch'ün izleme sistemine cevap verip vermediğini gösterir. \"Çalışıyor\" yazıyorsa motor ayaktadır ve uygulamalarınız arama yapabilir. \"Kapalı\" yazıyorsa arama yapan her uygulama hata alır: bu panel kırmızıysa önce Elasticsearch'ü yeniden başlatmayı deneyin. Panel boşsa motor hiç açılmamış demektir.",
+      "description": "Elasticsearch motorunun KENDİSİNE erişilip erişilemediğini gösterir. \"Çalışıyor\" yazıyorsa motor cevap veriyor ve uygulamalarınız arama yapabilir. \"Kapalı\" yazıyorsa Elasticsearch durmuş ya da cevap veremiyor demektir: arama yapan her uygulama hata alır, önce Elasticsearch'ü yeniden başlatmayı deneyin. \"Veri yok\" yazıyorsa Elasticsearch bu yığında hiç etkinleştirilmemiştir — bu bir arıza değildir. Not: ölçülen şey izleme ajanının ayakta olması değil, ajanın Elasticsearch'e gerçekten bağlanabilmesidir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "pluginVersion": "11.0.0",
@@ -77,7 +77,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "max(up{job=\"databases\", engine=\"elasticsearch\"})",
+          "expr": "min(elasticsearch_node_stats_up{engine=\"elasticsearch\"}) or max(up{job=\"databases\", engine=\"elasticsearch\"}) * 0",
           "instant": false,
           "legendFormat": "Durum",
           "range": true,
@@ -198,7 +198,7 @@
       "id": 4,
       "type": "stat",
       "title": "Disk doluluğu",
-      "description": "Elasticsearch verisinin durduğu diskin yüzde kaçının dolduğu. %85'i geçtiğinde Elasticsearch kendini korumak için yeni veri yazmayı durdurur ve dizinleri salt-okunur yapar — o noktada uygulamanız kayıt ekleyemez. Sarıya döndüğünde (%75) disk büyütmeyi ya da eski verileri silmeyi planlayın; kırmızıya dönmeden müdahale edin.",
+      "description": "Elasticsearch verisinin durduğu diskin yüzde kaçının dolduğu. Elasticsearch üç kademede tepki verir: %85'i geçince bu diske YENİ veri parçası yerleştirmeyi bırakır (yazma sürer), %90'da var olan parçaları başka yere taşımaya çalışır, %95'te ise dizinleri salt-okunur yapar ve yazma tamamen durur — asıl tehlikeli eşik budur. Turuncuya döndüğünde disk büyütmeyi ya da eski verileri silmeyi planlayın; %95'e varmadan müdahale edin.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
       "pluginVersion": "11.0.0",
@@ -215,8 +215,8 @@
             "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "orange", "value": 75 },
-              { "color": "red", "value": 85 }
+              { "color": "orange", "value": 85 },
+              { "color": "red", "value": 90 }
             ]
           }
         },
@@ -249,7 +249,7 @@
       "id": 5,
       "type": "stat",
       "title": "Yerleştirilememiş veri parçası",
-      "description": "Elasticsearch veriyi \"parça\" denen bloklara böler ve mümkünse her parçanın bir yedek kopyasını başka bir sunucuda tutar. Bu sayı, şu anda hiçbir sunucuya yerleştirilememiş parçaları gösterir. Tek sunuculu kurulumda yedek kopyalara yer olmadığı için sayı sıfırdan büyük olabilir ve bu beklenen bir durumdur — küme rengi de bu yüzden sarı görünür. Çok sunuculu kurulumda sayı sıfırdan büyük kalıp düşmüyorsa bir sunucu kaybolmuş ya da diski dolmuş olabilir.",
+      "description": "Elasticsearch veriyi \"parça\" denen bloklara böler ve mümkünse her parçanın bir yedek kopyasını başka bir sunucuda tutar. Bu sayı, şu anda hiçbir sunucuya yerleştirilememiş parçaları gösterir. Bu yığın Elasticsearch'ü TEK sunucuda çalıştırır: yedek kopyayı koyacak ikinci sunucu olmadığı için sayının sıfırdan büyük olması NORMALDİR ve küme rengi bu yüzden sarı görünür — panel de bu yüzden bilerek renk alarmı vermez, sadece sayıyı ve eğilimi gösterir. Endişelenmeniz gereken tek durum: çok sunuculu bir kurulumda bu sayı aniden yükselip saatlerce düşmüyorsa bir sunucu kaybolmuş ya da diski dolmuş olabilir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 4, "w": 12, "x": 0, "y": 4 },
       "pluginVersion": "11.0.0",
@@ -269,16 +269,14 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "orange", "value": 1 },
-              { "color": "red", "value": 5 }
+              { "color": "blue", "value": null }
             ]
           }
         },
         "overrides": []
       },
       "options": {
-        "colorMode": "background",
+        "colorMode": "value",
         "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
@@ -491,13 +489,13 @@
       "id": 9,
       "type": "timeseries",
       "title": "Önbellek isabet oranı",
-      "description": "Elasticsearch sık tekrarlanan aramaların cevabını hafızasında saklar. Bu oran, aramaların yüzde kaçının diske hiç gitmeden hafızadan karşılandığını gösterir — yüksek olması iyidir. Oran sürekli düşükse ya her arama birbirinden farklıdır (bu normaldir, endişelenmeyin) ya da önbelleğe ayrılan bellek yetersizdir. Aramalar da yavaşlıyorsa ikinci ihtimali düşünün. Hiç arama yapılmadığı dönemlerde grafik boş kalır.",
+      "description": "Elasticsearch sık tekrarlanan filtrelerin cevabını hafızasında saklar; bu oran aramaların yüzde kaçının diske hiç gitmeden hafızadan karşılandığını gösterir. DÜŞÜK OLMASI TEK BAŞINA ARIZA DEĞİLDİR: Elasticsearch bu önbelleği yalnızca büyük dizinlerde ve aynı filtre defalarca tekrarlandığında kullanır; küçük dizinlerde ya da her seferinde farklı aramalarda oran uzun süre %0 görünebilir — panel bu yüzden renk alarmı vermez. Şu durumda endişelenin: aramalar yavaşladıysa VE oran eskiden yüksekken düştüyse önbelleğe ayrılan bellek yetersiz kalmış olabilir. Hiç arama yapılmayan dönemlerde grafik boş kalır, normaldir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
       "pluginVersion": "11.0.0",
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "thresholds" },
+          "color": { "mode": "fixed", "fixedColor": "blue" },
           "unit": "percent",
           "min": 0,
           "max": 100,
@@ -526,11 +524,7 @@
           },
           "thresholds": {
             "mode": "absolute",
-            "steps": [
-              { "color": "red", "value": null },
-              { "color": "orange", "value": 40 },
-              { "color": "green", "value": 70 }
-            ]
+            "steps": [{ "color": "blue", "value": null }]
           }
         },
         "overrides": []
@@ -548,7 +542,7 @@
         {
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "100 * sum(rate(elasticsearch_indices_query_cache_count{engine=\"elasticsearch\", cache=\"hit\"}[5m])) / (sum(rate(elasticsearch_indices_query_cache_count{engine=\"elasticsearch\", cache=\"hit\"}[5m])) + sum(rate(elasticsearch_indices_query_cache_count{engine=\"elasticsearch\", cache=\"miss\"}[5m])))",
+          "expr": "100 * sum(rate(elasticsearch_indices_query_cache_count{engine=\"elasticsearch\"}[5m])) / (sum(rate(elasticsearch_indices_query_cache_count{engine=\"elasticsearch\"}[5m])) + sum(rate(elasticsearch_indices_query_miss_count{engine=\"elasticsearch\"}[5m])))",
           "instant": false,
           "legendFormat": "Hafızadan karşılanan arama oranı",
           "range": true,

@@ -490,14 +490,33 @@ def _k8s_workloads():
     return res
 
 
+# "docker'a SORAMADIK" ile "container YOK" aynı şey değildir. run() zaman
+# aşımını artık bir sonuç (rc=124) olarak döndürdüğü için, yoğun/askıda bir
+# docker daemon'ında `docker ps` boş çıktıyla dönüyor ve liste BOŞ kalıyordu:
+# denetleyici her motoru "absent" görüp sayaç işletiyor, üst üste 3 turda
+# gereksiz bir devir denemesi başlatıyordu (eskiden istisna dış except'e
+# düşerdi ve sayaç hiç artmazdı). Bu bayrak, listenin gerçekten docker'dan
+# gelip gelmediğini söyler; denetleyici soramadığı turu atlar.
+_DOCKER_PROBE = {"ok": True}
+
+
+def docker_snapshot_ok():
+    """En son container listesi docker'dan GERÇEKTEN alınabildi mi?"""
+    return _DOCKER_PROBE["ok"]
+
+
 def _docker_containers_uncached():
     if BACKEND == "kubernetes":
         return _k8s_workloads()
     rc, out, _ = run(
         ["docker", "ps", "-a", "--filter", "label=com.docker.compose.project=" + PROJECT,
          "--format", "{{.ID}}"], timeout=30)
+    if rc != 0:
+        _DOCKER_PROBE["ok"] = False     # cevap alamadık — "hiç container yok" DEĞİL
+        return []
     ids = [x for x in out.split() if x]
-    if rc != 0 or not ids:
+    _DOCKER_PROBE["ok"] = True
+    if not ids:
         return []
     tmpl = ("{{.Name}}\t{{.State.Status}}\t"
             "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}\t"
@@ -516,6 +535,8 @@ def _docker_containers_uncached():
             mem_mb = 0
         res.append({"name": name.lstrip("/"), "service": service, "status": status,
                     "health": health, "memory_mb": mem_mb})
+    if rc != 0 and not res:
+        _DOCKER_PROBE["ok"] = False     # inspect de cevap vermedi
     return res
 
 
@@ -862,7 +883,10 @@ FAILOVER_STARTING_GRACE = int(os.environ.get("FAILOVER_STARTING_GRACE", "300"))
 NOTIFY_WEBHOOK = os.environ.get("NOTIFY_WEBHOOK", "").strip()
 
 _STARTED_AT = time.time()
-_STARTING_SINCE = {}   # eid → healthcheck'in "starting" demeye başladığı an
+# eid → (servis, healthcheck'in "starting" demeye başladığı an). Servis adı
+# ŞART: devirden sonra ana kopya başka bir container olur ve bayat damga yeni
+# düğümü lütuf süresinden mahrum bırakırdı.
+_STARTING_SINCE = {}
 _ALERTED = {}          # (eid, konu) → son bildirim zamanı (aynı uyarıyı susturur)
 
 
@@ -1036,9 +1060,12 @@ def gateway_reload_or_alert(eid, what):
     kalınacak bir hata değil; olay akışına kritik olarak düşüyor."""
     if reload_gateway():
         return True, None
-    msg = ("Yönlendirme tablosu gateway'e uygulanamadı — uygulamalar hâlâ ESKİ "
-           "adrese gidiyor. Sunucuda `docker restart gateway` çalıştırın; "
-           "veritabanı tarafında yapılacak bir şey yok (%s)." % what)
+    # Bağlam CÜMLENİN BAŞINDA veriliyor: "(mariadb yedeğinin yeniden kurulumu)"
+    # parantezi, "veritabanı tarafında yapılacak bir şey yok" cümlesinin ardına
+    # geldiğinde havada kalan bir parça gibi okunuyordu.
+    msg = ("%s sırasında yönlendirme tablosu gateway'e uygulanamadı — uygulamalar "
+           "hâlâ ESKİ adrese gidiyor. Sunucuda `docker restart gateway` "
+           "çalıştırın; veritabanı tarafında yapılacak bir şey yok." % what)
     record_event("gateway_reload_failed", eid, msg, level="critical")
     return False, msg
 
@@ -1105,6 +1132,50 @@ def script_env():
     return env
 
 
+def script_has_phase(script, phase):
+    """Betikte `<faz>)` diye bir case dalı GERÇEKTEN var mı?
+
+    Çıkış kodu bu soruyu cevaplayamıyor: `case` eşleşmeyen bir fazda sessizce 0
+    döner (yani "yapıldı" sanılır), bazı betiklerde ise akış alakasız bir dala
+    düşüp hata döndürür — Redis'te `cleanup` çağrısı replikanın bağlanmasını
+    bekleyen döngüye düşüyor, 90 saniye sonra 1 dönüyor ve controller bunu
+    "temizlik başarısız" sayıp yedeği hiç kaldırmıyordu. Fazı çağırmadan önce
+    dosyada arıyoruz: yoksa çağırmıyoruz.
+    """
+    try:
+        with open(script, encoding="utf-8") as f:
+            for line in f:
+                s = line.split("#", 1)[0].strip()
+                if s.startswith(phase + ")") or s.startswith('"%s")' % phase) \
+                        or s.startswith(phase + "|"):
+                    return True
+    except OSError as e:
+        log("betik okunamadı:", script, e)
+    return False
+
+
+def _pg_slots_left(primary, env):
+    """Ana kopyada GERİDE KALAN replikasyon slot'larının adları.
+
+    [] = temiz, [ad, …] = kalıntı var, None = soramadık.
+
+    Neden betiğin çıkış koduna güvenmiyoruz: temizlik dalındaki psql çağrıları
+    `>/dev/null 2>&1 || true` ile bitiyor ve dal `echo` ile kapanıyor; docker
+    exec tamamen başarısız olsa bile betik 0 döner. Üstelik betik tek bir slot
+    adı biliyor (POSTGRES_REPLICATION_SLOT), oysa devirden sonra yeniden kurulan
+    yedek ana kopyada BAŞKA adlı bir slot açar (POSTGRES_SLOT_PRIMARY) — adı ne
+    olursa olsun geride kalan her slot WAL biriktirir, o yüzden hepsini sayarız.
+    """
+    pw = env.get("POSTGRES_PASSWORD") or env.get("DB_PASSWORD", "")
+    su = env.get("POSTGRES_USER", "root")
+    rc, out, _ = run(["docker", "exec", "-e", "PGPASSWORD=" + pw, primary,
+                      "psql", "-U", su, "-d", "postgres", "-tAc",
+                      "SELECT slot_name FROM pg_replication_slots"], timeout=60)
+    if rc != 0:
+        return None
+    return [x.strip() for x in out.splitlines() if x.strip()]
+
+
 def auto_failover_engines():
     return set(load_state().get("auto_failover", []))
 
@@ -1125,8 +1196,9 @@ def _health_of(service):
 # olduğu için elde tek bir sağlam kopya bile kalmıyordu.
 _ENGINE_LOCKS = {}
 _ENGINE_LOCKS_GUARD = threading.Lock()
-BUSY_MSG = ("%s için zaten bir devir/kurtarma işlemi sürüyor. Bitmesini bekleyin; "
-            "aynı anda ikisini birden çalıştırmak veri kaybına yol açabilir.")
+BUSY_MSG = ("%s için şu anda başka bir işlem sürüyor (aç/durdur, yedek kopya kurma "
+            "ya da devir). Bitmesini bekleyip tekrar deneyin; aynı anda ikisini "
+            "birden çalıştırmak veri kaybına yol açabilir.")
 
 
 def engine_lock(eid):
@@ -1313,6 +1385,9 @@ def _perform_failover_locked(engine, eid, fo, reason, jid, refuse):
                  "failovers": int(prev.get("failovers", 0)) + 1,
                  "previous_primary": old, "reason": reason}
     save_topology(topo)
+    # Ana kopya artık BAŞKA bir container. "açılıyor" (starting) damgası eski
+    # düğüme aitti; taşınırsa yeni ana kopya açılış lütfundan hiç yararlanamaz.
+    _STARTING_SINCE.pop(eid, None)
     write_roles()      # roller yer değiştirdi — yeni rol dosyasını üret
     write_routes()
     routed, route_err = gateway_reload_or_alert(eid, "%s → %s devri" % (old, new))
@@ -1364,6 +1439,15 @@ def verify_standby(engine, service, jl):
     İki durumda da işlem "başarılı" görünüyordu. Artık ölçüyoruz:
       • failover betiğinin `check`i 0 dönerse düğüm YAZILABİLİR primary'dir → felaket,
       • `ready` 0 dönerse düğüm gerçekten veri almış bir yedektir → tamam.
+
+    ⚠️ `ready` TEK BAŞINA KANIT DEĞİLDİR: üç betikte de "zaten primary/zaten
+    master" hâli 0 döner, çünkü `ready` "yükseltmeye hazır mısın" sorusudur,
+    "yedek misin" sorusu değil. Tüm güvenlik `check`in ondan önce çalışmasına
+    bağlıydı; `check` bir tur boyunca düğüme ulaşamazsa (motor tam o anda
+    bağlantı kabul etmeye başlıyor, MariaDB'de is_primary iki ayrı sorgu yapar
+    ve ilki geçici olarak düşebiliyor) doğrulama, hacmi AZ ÖNCE SİLİNMİŞ boş bir
+    yazılabilir düğümü "yedek kuruldu" diye geçiriyordu. Bu yüzden 0 cevabını
+    kabul etmeden önce ölçümü BİR KEZ DAHA yapıyoruz.
     """
     fo = engine.get("failover", {})
     script = script_path("failover", fo.get("promote_script") or engine["id"])
@@ -1379,9 +1463,19 @@ def verify_standby(engine, service, jl):
         rrc, rout, rerr = run(["sh", script, "ready", service], timeout=120, env=env)
         last = (rout + rerr).strip()[-400:]
         if rrc == 0:
+            low = last.lower()
+            if ("zaten primary" in low or "zaten master" in low
+                    or node_is_writable_primary(engine, service, None) is True):
+                return False, ("%s yedek olarak değil, İKİNCİ BİR YAZILABİLİR ANA "
+                               "KOPYA olarak açıldı (betik: %s)" % (service, last))
             return True, last
         if time.time() >= deadline:
-            return False, ("%s %d saniyede yedek konumuna geçmedi. Son durum: %s"
+            # Bu düğüm yarım kalmış bir kopya taşıyor olabilir; ne yapılacağını
+            # söylemek zorundayız (durum bildirmek yetmiyor).
+            return False, ("%s %d saniyede yedek konumuna geçmedi. Son durum: %s. "
+                           "Büyük veritabanlarında ilk kopyalama bu süreyi aşabilir: "
+                           "STANDBY_VERIFY_TIMEOUT değerini .env'de artırıp tekrar "
+                           "deneyebilirsiniz."
                            % (service, STANDBY_VERIFY_TIMEOUT, last or "(çıktı yok)"))
         turn += 1
         if turn % 6 == 1:
@@ -1450,7 +1544,9 @@ def _rebuild_standby_locked(engine, eid, rep, jid, jl, refuse):
     if node_is_writable_primary(engine, prim, jl) is False:
         return refuse("Ana kopya (%s) yazma kabul etmiyor (hâlâ yedek/read-only "
                       "durumda olabilir). Kopyanın alınacağı kaynak sağlam "
-                      "değilken yedeği silmiyoruz." % prim, "critical")
+                      "değilken yedeği silmiyoruz. Sunucuda `docker logs %s` "
+                      "çıktısına bakın; ana kopya yazmaya açıldıktan sonra bu "
+                      "düğmeye tekrar basın." % (prim, prim), "critical")
 
     jl("Eski primary yeni primary'nin replikası olarak kuruluyor:", old)
     jl("   kopya kaynağı (ana kopya):", prim, " hedef (yeniden kurulacak):", old)
@@ -1530,13 +1626,39 @@ def _rebuild_standby_locked(engine, eid, rep, jid, jl, refuse):
         # Doğrulanamayan düğüm AYAKTA BIRAKILMAZ: yazılabilir olabilir ve
         # replika okuma portundan eski veriyi sunar.
         run(["docker", "stop", "-t", "15", old], timeout=120)
+        # Yarıda kesilmiş bir kopyalama (pg_basebackup) DİSKTE KALIR ve
+        # entrypoint klonlamayı yalnız veri dizini BOŞKEN yapar: düğüm olduğu
+        # gibi açılırsa eksik veri dizinini açmaya çalışıp crash-loop'a girer.
+        # Kurtarma yolu bu düğmenin kendisidir (hacmi silip baştan kopyalar);
+        # kullanıcıya bunu açıkça söylüyoruz.
         return refuse("%s. Düğüm güvenlik için durduruldu; veri kaybı olmasın diye "
-                      "ana kopyaya dokunulmadı." % detail, "critical")
+                      "ana kopyaya dokunulmadı. Sunucuda `docker logs %s` çıktısına "
+                      "bakıp sorunu giderin, sonra 'Eski kopyayı yeniden kur'a "
+                      "tekrar basın: bu işlem yarım kalan kopyayı silip baştan "
+                      "alır." % (detail, old), "critical")
     jl("   doğrulandı:", detail)
+
+    # ROLLER ARTIK TUTARLI — topolojiye bunu YAZIYORUZ. Eskiden rebuild
+    # topolojiye hiç dokunmuyordu; devirden sonra kayıt sonsuza dek "devir
+    # yapıldı, eski kopya durduruldu" diyor, dashboard aynı uyarıyı ve aynı
+    # düğmeyi göstermeye devam ediyor, "Replikayı kapat"/"Replika kur" ise
+    # "önce eski kopyayı yeniden kurun" diye reddediliyordu — oysa o işlem az
+    # önce BAŞARIYLA bitmişti. Kullanıcı çıkışı olmayan bir döngüye giriyordu.
+    # Devir kaydını SİLMİYORUZ (hangi düğümün güncel veriyi taşıdığını yalnız o
+    # biliyor); yanına "yedek yeniden kuruldu" damgasını basıyoruz.
+    topo = load_topology()
+    ent = dict(topo.get(eid, {}))
+    ent["primary"] = prim
+    ent["standby"] = old
+    ent["rebuilt_at"] = int(time.time())
+    topo[eid] = ent
+    save_topology(topo)
+    _STARTING_SINCE.pop(eid, None)   # roller değişti, açılış damgası eskidi
 
     write_routes()
     routed, route_err = gateway_reload_or_alert(eid, "%s yedeğinin yeniden kurulumu" % old)
-    record_event("rebuild", eid, "%s yeniden replika olarak kuruldu" % old, level="info")
+    record_event("rebuild", eid, "%s yeniden replika olarak kuruldu; roller tutarlı "
+                                 "(ana kopya: %s)" % (old, prim), level="info")
     if not routed:
         jl("UYARI:", route_err)
         return False, ("Yedek kopya (%s) kuruldu ve ana kopyayı takip ediyor, ancak %s"
@@ -1544,7 +1666,7 @@ def _rebuild_standby_locked(engine, eid, rep, jid, jl, refuse):
     return True, None
 
 
-def health_verdict(eid, pstat, phealth):
+def health_verdict(eid, pstat, phealth, service=None):
     """Denetleyicinin sağlık yorumu: "ok" | "starting" | "bad".
 
     "starting" HATA DEĞİLDİR — motor daha açılıyor demektir. Docker healthcheck'i
@@ -1553,13 +1675,24 @@ def health_verdict(eid, pstat, phealth):
     denetleyici 30 saniyede 3 vuruşu doldurup açılışını yapan ana kopyayı
     ortasından kesiyor, daha kendisi de açılmamış yedeği yükseltmeye çalışıyordu.
     Artık sayaç DONDURULUYOR — ama sonsuza kadar değil: açılış makul süreyi
-    aşarsa (motor gerçekten açılamıyorsa) yeniden sağlıksızlık sayılır."""
+    aşarsa (motor gerçekten açılamıyorsa) yeniden sağlıksızlık sayılır.
+
+    Damga HANGİ SERVİSE ait olduğuyla birlikte tutulur. Motor kimliğine göre
+    tutulduğunda devirden hemen sonra şu oluyordu: eski ana kopyanın bayat
+    damgası kayıtta kalıyor, yükseltilen YENİ ana kopya "starting" dediğinde
+    setdefault o bayat damgayı koruyor ve düğüm lütuf süresinden HİÇ
+    yararlanmadan anında "bad" sayılıyordu — yani düzeltmenin asıl vaadi
+    ("açılmakta olan ana kopyayı kesme") tam da en çok gerektiği anda
+    geçersiz kalıyordu."""
     if pstat == "running" and phealth in ("healthy", "none"):
         _STARTING_SINCE.pop(eid, None)
         return "ok"
     if pstat == "running" and phealth == "starting":
-        since = _STARTING_SINCE.setdefault(eid, time.time())
-        return "starting" if (time.time() - since) < FAILOVER_STARTING_GRACE else "bad"
+        rec = _STARTING_SINCE.get(eid)
+        if not rec or rec[0] != service:   # başka bir düğüm açılıyor → damgayı sıfırla
+            rec = (service, time.time())
+            _STARTING_SINCE[eid] = rec
+        return "starting" if (time.time() - rec[1]) < FAILOVER_STARTING_GRACE else "bad"
     _STARTING_SINCE.pop(eid, None)
     return "bad"
 
@@ -1604,6 +1737,14 @@ def failover_supervisor():
                         % int(grace_left))
                 _STRIKES.clear()
                 continue
+            # Bu turun container görüntüsü GERÇEKTEN docker'dan mı geldi?
+            # "Soramadık" ile "container yok" karıştırılırsa yavaş bir docker
+            # daemon'ı üst üste 3 vuruş üretip devir denemesi başlatır.
+            docker_containers()
+            if not docker_snapshot_ok():
+                log("docker container listesi alınamadı (daemon yanıt vermiyor) — "
+                    "bu tur atlandı, sayaçlara dokunulmadı")
+                continue
             for eid in list(enabled):
                 engine = CATALOG.engine(eid)
                 if not engine or not engine.get("failover", {}).get("supported"):
@@ -1621,15 +1762,20 @@ def failover_supervisor():
                     # da ölüyse sistem eskiden tamamen sessiz kalıyordu: dashboard
                     # "otomatik devir açık" yazdığı için sahte bir güven veriyor,
                     # kimse durumu öğrenmiyordu. Artık düzenli olarak haber veriyoruz.
-                    if pstat != "running":
+                    # Koşul `pstat != "running"` DEĞİL, sağlık yorumudur: devrin
+                    # asıl sebebi (disk dolu, bozuk tablo) container'ı çalışır
+                    # bırakır, yalnız healthcheck'i düşürür — tam o durumda
+                    # sistem yine sessiz kalıyordu.
+                    if health_verdict(eid, pstat, phealth, prim) == "bad":
                         _alert_once(eid, "no-standby",
-                                    "%s ana kopyası çalışmıyor (%s) ve devredilecek "
+                                    "%s ana kopyası sağlıksız (%s/%s) ve devredilecek "
                                     "bir yedek kopya YOK — otomatik devir yapılamıyor. "
-                                    "Elle müdahale gerekiyor."
-                                    % (engine["name"], pstat))
+                                    "Elle müdahale gerekiyor: önce 'Yedek Kopya Kur' "
+                                    "ile bir replika kurun."
+                                    % (engine["name"], pstat, phealth))
                     continue
 
-                verdict = health_verdict(eid, pstat, phealth)
+                verdict = health_verdict(eid, pstat, phealth, prim)
                 if verdict == "ok":
                     if _STRIKES.get(eid):
                         log("%s: primary toparlandı, sayaç sıfırlandı" % eid)
@@ -1657,7 +1803,7 @@ def failover_supervisor():
 
                 # Motor açılıyorsa (health=starting) sayaç DONDURULUR; devir
                 # kararı vermek için ortada bir arıza yok.
-                waited = int(time.time() - _STARTING_SINCE.get(eid, time.time()))
+                waited = int(time.time() - _STARTING_SINCE.get(eid, (None, time.time()))[1])
                 if verdict == "starting":
                     if waited % 60 < FAILOVER_INTERVAL:
                         log("%s: ana kopya açılıyor (%d sn) — sayaç dondu"
@@ -1768,8 +1914,19 @@ def _k8s_scale(engine, replicas, limit_mb=None, tuning=None):
 
 
 def do_activate(jid, eid, requested_mb=None):
+    engine = CATALOG.engine(eid)
+    # HTTP ucu motor kimliğini zaten katalogla doğruluyor; buradaki kontrol,
+    # doğrudan çağrılan bir iş thread'inin sessizce "devam ediyor" kalmasını önler.
+    if not engine:
+        return job_done(jid, False, "Bilinmeyen motor: %s" % eid)
+    # Aç/kapat da devir/kurtarma ile AYNI SIRADA yürür. Devir sürerken (eski
+    # primary fence edilmiş, yükseltme henüz bitmemiş, topology HENÜZ YAZILMAMIŞ)
+    # panelden basılan bir düğme, kilitsiz okunan eski topolojiye göre yanlış
+    # düğüme dokunuyordu.
+    lock = engine_lock(eid)
+    if not lock.acquire(blocking=False):
+        return job_done(jid, False, BUSY_MSG % engine["name"])
     try:
-        engine = CATALOG.engine(eid)
         err = preflight()
         if err:
             return job_done(jid, False, err)
@@ -1829,7 +1986,8 @@ def do_activate(jid, eid, requested_mb=None):
         # açıyoruz; eski düğüm ancak "Eski kopyayı yeniden kur" ile geri gelir.
         prim = current_primary(engine)
         rep = engine.get("replication", {})
-        if prim != engine["primary_service"] and rep.get("profile"):
+        failed_over = prim != engine["primary_service"] and bool(rep.get("profile"))
+        if failed_over:
             services = [s for s in services if s != engine["primary_service"]] + [prim]
             profiles.append(rep["profile"])
             write_roles()   # container doğru rolle yaratılsın
@@ -1852,9 +2010,36 @@ def do_activate(jid, eid, requested_mb=None):
             args = []
             for pr in profiles:
                 args += ["--profile", pr]
-            cmd = compose_base() + args + ["up", "-d", "--remove-orphans"] + services
-            job_log(jid, "$", " ".join(cmd[-8:]))
-            rc, out, errout = run(cmd, timeout=1800)
+            if failed_over:
+                # `--no-deps` BURADA ŞART. Yukarıda eskimiş primary'yi servis
+                # listesinden çıkarmak TEK BAŞINA İŞE YARAMIYOR: panel, exporter
+                # ve replika servislerinin hepsi compose'da
+                # `depends_on: <asıl primary>: service_healthy` taşıyor, yani
+                # compose onu YİNE yaratır ve sağlıklı olmasını bekler. O düğümün
+                # veri hacmi dolu olduğu için entrypoint klonlamayı atlar ve düğüm
+                # ESKİMİŞ veriyle yazılabilir İKİNCİ BİR ANA KOPYA olarak açılır
+                # (replika okuma portu host'a açık olduğundan uygulamalar oraya
+                # yazmaya bile başlayabilir) — engellemeye çalıştığımız
+                # split-brain'in ta kendisi. Bayrak yalnız devir durumunda
+                # veriliyor; normal açılışta depends_on'un sıralaması (önce
+                # veritabanı, sonra panel) işimize yarıyor.
+                #
+                # Bayrak sıralamayı da iptal ettiği için sırayı kendimiz kuruyoruz:
+                # önce güncel ana kopya, sonra panel/exporter.
+                rest = [s for s in services if s != prim]
+                cmd = compose_base() + args + ["up", "-d", "--no-deps", prim]
+                job_log(jid, "$", " ".join(cmd[-8:]))
+                rc, out, errout = run(cmd, timeout=1800)
+                if rc == 0 and rest:
+                    cmd2 = compose_base() + args + ["up", "-d", "--no-deps",
+                                                    "--remove-orphans"] + rest
+                    job_log(jid, "$", " ".join(cmd2[-8:]))
+                    rc, o2, e2 = run(cmd2, timeout=1800)
+                    out, errout = out + o2, errout + e2
+            else:
+                cmd = compose_base() + args + ["up", "-d", "--remove-orphans"] + services
+                job_log(jid, "$", " ".join(cmd[-8:]))
+                rc, out, errout = run(cmd, timeout=1800)
         for line in (out + errout).splitlines()[-40:]:
             job_log(jid, line)
         if rc != 0:
@@ -1863,25 +2048,68 @@ def do_activate(jid, eid, requested_mb=None):
         st = load_state()
         st["profiles"] = list(set(st.get("profiles", [])) | set(profiles))
         save_state(st)
-        # Yönlendirme tablosu açık motorları da göstermeli; devir sonrası
-        # yeniden açılan motorda gateway'in hedefi tazelenmezse istekler
-        # var olmayan container'a gider.
-        if prim != engine["primary_service"]:
+        route_err = None
+        if failed_over:
+            # EMNİYET KEMERİ: eskimiş asıl primary bir şekilde ayaktaysa (elle
+            # başlatılmış, restart politikasıyla geri gelmiş) ve YAZMA KABUL
+            # EDİYORSA ortada iki ana kopya var demektir. Ölçüp durduruyoruz —
+            # yeniden kurulmuş, read-only bir yedek bundan etkilenmez.
+            stale = engine["primary_service"]
+            if any(c["service"] == stale and c["status"] == "running"
+                   for c in docker_containers(force=True)) \
+                    and node_is_writable_primary(engine, stale) is True:
+                job_log(jid, "UYARI: eskimiş kopya (%s) yazılabilir durumda ayakta — "
+                             "durduruluyor" % stale)
+                run(["docker", "stop", "-t", "15", stale], timeout=120)
+                record_event("split_brain_prevented", eid,
+                             "%s eskimiş verisiyle yazılabilir durumda ayaktaydı ve "
+                             "durduruldu; güncel ana kopya %s. Eski kopyayı geri "
+                             "almak için 'Eski kopyayı yeniden kur' düğmesini "
+                             "kullanın." % (stale, prim), level="critical")
+            # Yönlendirme tablosu açık motorları da göstermeli; devir sonrası
+            # yeniden açılan motorda gateway'in hedefi tazelenmezse istekler
+            # var olmayan container'a gider.
             write_routes()
-            gateway_reload_or_alert(eid, "%s yeniden açıldı" % engine["name"])
+            routed, route_err = gateway_reload_or_alert(
+                eid, "%s yeniden açılışı" % engine["name"])
+            if not routed:
+                # Dönüş değerini ATMIYORUZ. Atıldığında iş "✅ Tamamlandı"
+                # görünüyor, kullanıcı veritabanının açıldığını sanıyor, oysa
+                # gateway hâlâ ölü hedefe yönlendirdiği için hiçbir uygulama
+                # bağlanamıyordu. Devir ve yeniden kurma yollarında bu karar
+                # zaten böyle verilmişti; burada da aynısını yapıyoruz.
+                job_log(jid, "UYARI:", route_err)
         record_event("activate", eid,
                      "%s açıldı — %d MB ayrıldı%s"
                      % (engine["name"], p["limit_mb"],
                         "" if p.get("with_panel", True) else " (bellek dar, web paneli atlandı)"))
+        if route_err:
+            return job_done(jid, False, "Motor açıldı ancak " + route_err, {"plan": p})
         job_done(jid, True, None, {"plan": p})
     except Exception as e:
         job_log(jid, "HATA:", repr(e))
         job_done(jid, False, repr(e))
+    finally:
+        lock.release()
 
 
 def do_deactivate(jid, eid):
+    engine = CATALOG.engine(eid)
+    # HTTP ucu motor kimliğini zaten katalogla doğruluyor; buradaki kontrol,
+    # doğrudan çağrılan bir iş thread'inin sessizce "devam ediyor" kalmasını önler.
+    if not engine:
+        return job_done(jid, False, "Bilinmeyen motor: %s" % eid)
+    # "Durdur" da container SİLER. Kilitsiz kaldığı sürece şu senaryo açıktı:
+    # otomatik devir başlar (eski primary fence edilmiş, yükseltme sürüyor,
+    # topology henüz yazılmamış), operatör panelde "postgresql çalışmıyor"
+    # görüp Durdur'a basar ve tam o anda primary'ye YÜKSELTİLMEKTE olan düğüm
+    # `compose rm -f` ile silinir. Elde tek bir çalışan veritabanı kalmaz;
+    # üstelik devrin geri alma yolu (`docker start <eski primary>`) da artık
+    # var olmayan bir container'ı arar.
+    lock = engine_lock(eid)
+    if not lock.acquire(blocking=False):
+        return job_done(jid, False, BUSY_MSG % engine["name"])
     try:
-        engine = CATALOG.engine(eid)
         err = preflight()
         if err:
             return job_done(jid, False, err)
@@ -1931,16 +2159,33 @@ def do_deactivate(jid, eid):
             record_event("deactivate", eid,
                          "%s kapatıldı — belleği serbest bırakıldı (veriler duruyor)"
                          % engine["name"])
-        job_done(jid, rc == 0, None if rc == 0 else "stop başarısız")
+        job_done(jid, rc == 0, None if rc == 0 else
+                 "Motor durdurulamadı (compose 'stop' çıkış %d). Sunucuda "
+                 "`docker ps` ile container'ların durumuna bakın, sonra tekrar "
+                 "deneyin." % rc)
     except Exception as e:
         job_log(jid, "HATA:", repr(e))
         job_done(jid, False, repr(e))
+    finally:
+        lock.release()
 
 
 def do_replication(jid, eid, enable):
+    engine = CATALOG.engine(eid)
+    # HTTP ucu motor kimliğini zaten katalogla doğruluyor; buradaki kontrol,
+    # doğrudan çağrılan bir iş thread'inin sessizce "devam ediyor" kalmasını önler.
+    if not engine:
+        return job_done(jid, False, "Bilinmeyen motor: %s" % eid)
+    rep = engine.get("replication", {})
+    # Bu yol da container SİLİYOR; devirle aynı sırada yürümesi ŞART. Aşağıdaki
+    # "silinecek düğüm şu anki ana kopya mı" kontrolü kilitsiz yapıldığında
+    # klasik bir TOCTOU'ydu: devir sürerken topology henüz eski primary'yi
+    # gösterdiği için kapı AÇIK kalıyor ve tam o anda yükseltilmekte olan düğüm
+    # siliniyordu. Kapıyı artık kilidi ALDIKTAN SONRA okuyoruz.
+    lock = engine_lock(eid)
+    if not lock.acquire(blocking=False):
+        return job_done(jid, False, BUSY_MSG % engine["name"])
     try:
-        engine = CATALOG.engine(eid)
-        rep = engine.get("replication", {})
         if rep.get("mode") in ("unsupported", "native-cluster"):
             return job_done(jid, False,
                             "Bu motorda primary-replica desteklenmiyor: " + rep.get("note", ""))
@@ -1951,20 +2196,30 @@ def do_replication(jid, eid, enable):
             return job_done(jid, rc == 0, None if rc == 0 else errout.strip())
 
         profile = rep["profile"]
-        svc = rep["replica_service"]
         override = "%s-replica" % eid  # overrides/<eid>-replica.yml (varsa)
 
-        # DEVİRDEN SONRA ROLLER TERSTİR: replika servisi (ör. postgresql-replica)
-        # artık CANLI ANA KOPYADIR. Bu kontrol olmadan "replikasyonu kapat",
-        # kataloğa bakıp o servisi durdurup container'ını siliyordu — eski
+        # DEVİRDEN SONRA ROLLER TERSTİR: kataloğun "replica_service"i (ör.
+        # postgresql-replica) artık CANLI ANA KOPYADIR, yedek olan düğüm ise
+        # kataloğun "primary_service"idir. Bu yüzden hedefi katalogdan değil
+        # standby_of()'tan alıyoruz: kataloğa bakan sürüm "replikasyonu kapat"
+        # derken canlı ana kopyayı durdurup container'ını siliyordu (eski
         # primary zaten fence edilmiş olduğu için ortada çalışan hiçbir
-        # veritabanı kalmıyordu. "Replikayı kur" tarafı ise aynı düğümün
-        # HACMİNİ siliyordu. İkisi de tek komutla toplam veri kaybı demek.
+        # veritabanı kalmıyordu), "replikayı kur" tarafı ise aynı düğümün
+        # HACMİNİ siliyordu.
+        #
+        # Bunu bir REDLE kapatmak da işe yaramıyordu: red mesajı "önce Eski
+        # kopyayı yeniden kur deyin" diyor, ama o işlem topolojiyi geri
+        # almadığı (alması da doğru olmazdı — güncel veri gerçekten yedekte)
+        # için koşul hiç değişmiyor ve kullanıcı sonsuz döngüye giriyordu.
         prim = current_primary(engine)
+        svc = standby_of(engine) or rep["replica_service"]
         if svc == prim:
-            msg = ("%s için devir yapılmış durumda: şu anki ANA KOPYA '%s'. "
-                   "Bu işlem ana kopyayı silerdi. Önce 'Eski kopyayı yeniden kur' "
-                   "ile rolleri eski hâline getirin." % (engine["name"], prim))
+            # Buraya ancak topoloji tutarsızsa düşülür (primary alanı iki
+            # düğümden hiçbiri değil gibi). Son emniyet olarak duruyor.
+            msg = ("%s için topoloji kaydı tutarsız: yedek kopya olarak da ana "
+                   "kopya olarak da '%s' görünüyor. Yanlış düğümü silmemek için "
+                   "işlem durduruldu. Sunucuda state/topology.json dosyasına "
+                   "bakın." % (engine["name"], prim))
             record_event("replication_blocked", eid, msg, level="critical")
             return job_done(jid, False, msg)
 
@@ -1978,12 +2233,33 @@ def do_replication(jid, eid, enable):
             if engine["profile"] not in load_state().get("profiles", []):
                 return job_done(jid, False, "Önce %s motorunu aktif edin." % engine["name"])
 
+            # DEVİRDEN SONRA "Replika Kur" YANLIŞ DÜĞMEDİR: yedek olarak
+            # kurulacak düğüm (svc) artık eskimiş veriyi taşıyan eski ana
+            # kopyadır. Bu yol onun hacmini SİLMEDEN container'ı açar (temiz
+            # hacim adımı yalnız ilk kurulumda çalışıyor), yani düğüm dolu veri
+            # dizini yüzünden klonlamayı atlar ve ikinci bir YAZILABİLİR ana
+            # kopya olarak gelir. Doğru işlem, hacmi silip baştan kopyalayan
+            # "Eski kopyayı yeniden kur"dur — ve o işlem BİTTİĞİNDE topolojiye
+            # rebuilt_at damgası düştüğü için bu kapı da açılır; kullanıcı
+            # yapamayacağı bir şeye yönlendirilmiş olmuyor.
+            if prim != engine["primary_service"] \
+                    and not load_topology().get(eid, {}).get("rebuilt_at"):
+                msg = ("%s için devir yapılmış: güncel veri artık %s üzerinde. "
+                       "Yedek kopyayı geri getirmek için 'Eski kopyayı yeniden kur' "
+                       "düğmesini kullanın — o işlem %s'in eskimiş verisini silip "
+                       "ana kopyadan baştan kopyalar. Bu düğme eski veriyi silmeden "
+                       "açacağı için ikinci bir ana kopya oluşurdu."
+                       % (engine["name"], prim, svc))
+                record_event("replication_blocked", eid, msg, level="warning")
+                return job_done(jid, False, msg)
+
             # Replika, devirden sonra AYNI yükü taşıyacağı için primary kadar
             # bellek ister. Yer yoksa yarıda kalmış bir kurulum bırakmak yerine
-            # baştan reddediyoruz.
+            # baştan reddediyoruz. (Ölçüm ŞU ANKİ ana kopyadan alınır; devirden
+            # sonra kataloğun primary_service'i çalışmıyor olabilir.)
             prim_mb = 0
             for c in docker_containers():
-                if c["service"] == engine["primary_service"] and c["status"] == "running":
+                if c["service"] == prim and c["status"] == "running":
                     prim_mb = c["memory_mb"]
             if prim_mb:
                 p = plan_engine(eid)
@@ -2060,8 +2336,7 @@ def do_replication(jid, eid, enable):
             st["profiles"] = list(set(st["profiles"]) | {profile})
             save_state(st)
             record_event("replication", eid,
-                         "%s için yedek kopya kuruldu (%s)"
-                         % (engine["name"], rep.get("replica_service", "")))
+                         "%s için yedek kopya kuruldu (%s)" % (engine["name"], svc))
             return job_done(jid, True)
 
         # devre dışı bırak
@@ -2069,50 +2344,95 @@ def do_replication(jid, eid, enable):
         # slot'u WAL'ı sonsuza dek biriktirip diski doldurur ve primary'yi
         # durdurur. Replika container'ı silinmeden önce yapılmalı.
         script = script_path("replication", eid)
-        if os.path.exists(script):
+        if os.path.exists(script) and script_has_phase(script, "cleanup"):
             job_log(jid, "replikasyon kalıntıları temizleniyor…")
             rc, out, err = run(["sh", script, "cleanup"], timeout=300, env=rep_env)
             job_log(jid, (out + err).strip()[-2000:])
-            if rc != 0:
-                # Temizlik çıkış kodu eskiden hiç okunmuyordu. PostgreSQL'de
-                # kalan slot, "bu WAL'ı hâlâ biri okuyacak" anlamına gelir ve
-                # disk dolana kadar WAL biriktirir — sonu ana kopyanın durması.
-                # Ana kopya ayaktayken bu iş her zaman yeniden denenebilir, o
-                # yüzden replikayı silmeden duruyoruz.
+            detail = (err or out).strip()[-300:]
+            # KAPI ARTIK ÖLÇÜME DAYANIYOR, ÇIKIŞ KODUNA DEĞİL. Betiğin çıkış
+            # kodu bu soruyu cevaplayamıyordu: temizlik dallarındaki psql/mysql
+            # çağrıları `|| true` ile maskeli olduğu ve dal `echo` ile kapandığı
+            # için PostgreSQL'de kapı ASLA tetiklenmiyordu (yani korumanın asıl
+            # gerekçesi ölü koddu), buna karşılık cleanup fazı hiç tanımlı
+            # olmayan motorlarda betik alakasız bir dala düşüp hata döndürüyor
+            # ve "Replikayı kapat" kalıcı olarak kırılıyordu. Kalıntının pahalı
+            # olduğu tek yer PostgreSQL'in slot'u; onu da burada SAYIYORUZ.
+            leftover = _pg_slots_left(prim, rep_env) if eid == "postgresql" else None
+            if leftover:
                 pstat, _ = _health_of(prim)
-                detail = (err or out).strip()[-300:]
+                msg = ("Replikasyon kalıntısı temizlenemedi — ana kopyada (%s) hâlâ "
+                       "replikasyon slot'u duruyor: %s. Yedek kopya KALDIRILMADI: "
+                       "kalan slot, WAL kayıtlarını sonsuza dek biriktirip ana "
+                       "kopyanın diskini doldurur ve onu durdurur. %s"
+                       % (prim, ", ".join(leftover), detail))
                 if pstat == "running":
-                    msg = ("Replikasyon kalıntıları temizlenemedi (%s). Yedek kopya "
-                           "KALDIRILMADI: temizlenmemiş bir kalıntı, ana kopyanın "
-                           "diskini doldurup onu durdurabilir. Birkaç dakika sonra "
-                           "tekrar deneyin." % detail)
+                    msg += (" Birkaç dakika sonra tekrar deneyin; sürerse sunucuda "
+                            "`docker exec -it %s psql -U %s -d postgres -c \"SELECT "
+                            "pg_drop_replication_slot('%s');\"` komutuyla slot'u elle "
+                            "silip bu düğmeye yeniden basın."
+                            % (prim, rep_env.get("POSTGRES_USER", "root"), leftover[0]))
                     record_event("replication_blocked", eid, msg, level="critical")
                     return job_done(jid, False, msg)
+                # Ana kopya çalışmıyorsa slot zaten WAL biriktiremez (motor
+                # kapalı); yedeği kaldırmayı engellemenin anlamı yok, ama
+                # kullanıcı motoru açtığında bu işi tekrarlamalı.
                 record_event("replication", eid,
-                             "Ana kopya (%s) çalışmadığı için replikasyon kalıntıları "
-                             "temizlenemedi (%s). Ana kopya açıldıktan sonra 'Yedek "
-                             "Kopya Kur / Kapat' işlemini bir kez daha çalıştırın."
+                             "Ana kopya (%s) çalışmadığı için replikasyon slot'u "
+                             "silinemedi (%s). Motoru açtıktan sonra 'Yedek Kopya "
+                             "Kur / Kapat' işlemini bir kez daha çalıştırın."
                              % (prim, detail), level="warning")
+            elif rc != 0:
+                # Temizlik hata verdi ama geride diski dolduracak bir kalıntı
+                # YOK (Redis'te repl-backlog sabit boyutludur, MariaDB'de binlog
+                # kendi süresiyle silinir, MongoDB'de karşılığı yoktur). Burada
+                # durmak, kullanıcıyı bozuk bir replikayı kaldıramaz hâle
+                # sokardı — oysa replikayı kaldırmak istemesinin sebebi zaten
+                # çoğu zaman replikanın bozuk olmasıdır.
+                job_log(jid, "temizlik betiği hata verdi (çıkış %d) ama bu motorda "
+                             "geride kalıcı bir kalıntı bırakmıyor — kaldırmaya "
+                             "devam ediliyor" % rc)
+                record_event("replication", eid,
+                             "%s temizlik adımı hata verdi (%s); yedek kopya yine de "
+                             "kaldırıldı — bu motorda ana kopyayı etkileyecek bir "
+                             "kalıntı kalmıyor." % (engine["name"], detail),
+                             level="warning")
+        elif os.path.exists(script):
+            job_log(jid, "bu motorda temizlenecek replikasyon kalıntısı yok")
 
         with ACTION_LOCK:
             args = ["--profile", engine["profile"], "--profile", profile]
+            job_log(jid, "yedek kopya kaldırılıyor:", svc)
             run(compose_base() + args + ["stop", svc], timeout=600)
             rc, out, errout = run(compose_base() + args + ["rm", "-f", svc], timeout=600)
         job_log(jid, (out + errout).strip()[-2000:])
         st = load_state()
         st["profiles"] = [x for x in st["profiles"] if x != profile]
+        # OTOMATİK DEVİR DE KAPANIR. Yedek kopya yokken devredilecek bir düğüm
+        # de yoktur; rozet ekranda kalırsa kullanıcı korunduğunu sanmaya devam
+        # eder (giriş kapısındaki kontrol yalnız AÇARKEN çalışıyor, bu durumu
+        # düzeltmiyordu).
+        if eid in set(st.get("auto_failover", [])):
+            st["auto_failover"] = [x for x in st.get("auto_failover", []) if x != eid]
+            record_event("config", eid,
+                         "Yedek kopya kaldırıldığı için otomatik devir de kapatıldı — "
+                         "yükseltilecek bir düğüm kalmadı. Yeniden korunmak için "
+                         "'Yedek Kopya Kur' deyip otomatik devri tekrar açın.",
+                         level="warning")
         if override in st.get("overrides", []):
             st["overrides"] = [x for x in st["overrides"] if x != override]
             save_state(st)
             with ACTION_LOCK:  # primary'i override'sız haline geri al
                 run(compose_base() + ["--profile", engine["profile"], "up", "-d",
-                                      engine["primary_service"]], timeout=900)
+                                      prim], timeout=900)
         save_state(st)
-        record_event("replication", eid, "%s yedek kopyası kaldırıldı" % engine["name"])
+        record_event("replication", eid,
+                     "%s yedek kopyası kaldırıldı (%s)" % (engine["name"], svc))
         job_done(jid, True)
     except Exception as e:
         job_log(jid, "HATA:", repr(e))
         job_done(jid, False, repr(e))
+    finally:
+        lock.release()
 
 
 # =============================================================================
@@ -2153,7 +2473,17 @@ def status():
             "tuning": tun.get(e["id"], {}),
             "replication_active": bool(rep_svc and rep_svc["status"] == "running"),
             "primary_service": prim_name,
-            "failed_over": prim_name != e["primary_service"],
+            # "failed_over" dashboard'da "Devir yapıldı — eski kopya durduruldu"
+            # uyarısını ve "Eski kopyayı yeniden kur" düğmesini açar. Yalnız
+            # topolojiye bakınca bu ikisi BAŞARILI bir yeniden kurulumdan sonra
+            # da ekranda kalıyordu: uyarı artık yanlıştı (eski kopya çalışıyor ve
+            # yedek durumda), düğmeye tekrar basmak ise çalışan yedeğin hacmini
+            # yeniden silip 15+ dakika yedeksiz kalmak demekti. Roller yer
+            # değiştirmiş olabilir (roles_swapped) ama iş bitmiştir.
+            "failed_over": (prim_name != e["primary_service"]
+                            and not topo.get(e["id"], {}).get("rebuilt_at")),
+            "roles_swapped": prim_name != e["primary_service"],
+            "standby_rebuilt_at": topo.get(e["id"], {}).get("rebuilt_at", 0),
             "failover_count": topo.get(e["id"], {}).get("failovers", 0),
             "auto_failover": e["id"] in auto_fo,
         })

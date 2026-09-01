@@ -93,22 +93,82 @@ verify_backup() {
     local base detay=""; base="$(basename "$f")"
 
     case "$base" in
+        *.bozuk)
+            # Bu dosyayı BU BETİK kenara aldı (finalize_backup). Uzantısı
+            # aşağıdaki dalların hiçbirine uymadığı için case'in sonundaki
+            # koşulsuz "Bütünlük doğrulandı" satırına düşüyordu: gece
+            # "Doğrulamayı geçemedi, kenara alındı" uyarısını gören operatör
+            # dosyayı elle doğrulayınca YEŞİL TİK görüyor, uzantıyı geri alıp
+            # o dosyayla geri yüklemeye kalkıyordu.
+            berr "Bu dosya doğrulamayı geçemediği için kenara alınmıştı: $base"
+            berr "  Kurtarma noktası DEĞİLDİR, geri yüklemede kullanmayın. Neden düştüğü: $LOG_FILE"
+            return 1
+            ;;
         *.tar.gz)
-            # Tek geçiş: hem arşivin sağlamlığı hem içindeki dosya sayısı aynı
-            # okumada çıkıyor (büyük yedeklerde arşivi ikinci kez açmak boşuna
-            # dakikalar demek). Alt kabuğun sonundaki `exit`, tar'ın çıkış
-            # kodunu dışarı taşır — grep'inki değil.
-            # Boş bir dizinin arşivinde yalnızca "./" girdisi vardır; dizin
-            # olmayan tek bir üye bile yoksa arşivin içi gerçekten boştur.
-            local files trc
-            files="$(tar -tzf "$f" 2>/dev/null | grep -vc '/$'; exit "${PIPESTATUS[0]}")"; trc=$?
+            # "Dizin olmayan EN AZ BİR üye" ölçütü yetmiyordu: bu arşivlerin
+            # hiçbiri tek dosyadan ibaret değil, hepsi çok parçalı. Cassandra
+            # arşivi schema.cql + SSTable'lardan oluşur; snapshot dizinleri
+            # bulunamazsa (özel data_file_directories) tar YALNIZ schema.cql'i
+            # paketleyip 0 ile çıkar. Üstelik o schema.cql 0 bayt bile
+            # olabiliyor — ve bu dosya ekranda "1 dosya, Bütünlük doğrulandı"
+            # damgası alıyordu; elde sıfır veri vardı. Aynısı ES'te de var:
+            # arşivde yalnız depo üstverisi (index-0, index.latest) kalırsa
+            # "2 dosya" görünür ama içinde tek indeks yoktur.
+            # Bu yüzden artık üç şey birden aranıyor:
+            #   1) dizin olmayan bir üye,
+            #   2) en az bir üyenin 0 bayttan büyük olması (yalnız dosya
+            #      ADLARI taşıyan arşiv veri taşımıyor demektir),
+            #   3) motorun geri yüklemede GERÇEKTEN okuduğu dosya türünün
+            #      arşivde bulunması (restore_mssql zaten arşivde .bak yoksa
+            #      duruyor; aynı ölçütü yedek alınırken uygulamamak için bir
+            #      sebep yok).
+            local gerek="" gerek_ad=""
+            case "$base" in
+                # Desenlerde ters bölü YOK: awk -v ile geçen değerde `\.`
+                # kaçış olarak ÇÖZÜLÜR ("escape sequence treated as plain .")
+                # ve her koşumda stderr'e uyarı basar — cron mail'inde her gece
+                # görünecek bir gürültü. `[.]` aynı işi sessizce yapıyor.
+                mssql_*)         gerek='[.]bak$';       gerek_ad='veritabanı yedeği (*.bak)' ;;
+                clickhouse_*)    gerek='[.]zip$';       gerek_ad='veritabanı yedeği (*.zip)' ;;
+                cassandra_*)     gerek='/snapshots/';   gerek_ad='SSTable snapshot dosyası (*/snapshots/*)' ;;
+                elasticsearch_*) gerek='(^|/)indices/'; gerek_ad='indeks verisi (indices/…)' ;;
+            esac
+            # Tek geçiş: arşivin sağlamlığı, üye sayısı, boyutları ve adları
+            # aynı okumadan çıkıyor (büyük yedeklerde arşivi ikinci kez açmak
+            # boşuna dakikalar demek). Alt kabuğun sonundaki `exit`, tar'ın
+            # çıkış kodunu dışarı taşır — awk'ınkini değil.
+            # awk desenleri SATIRIN TAMAMINA uygulanıyor, alan numarasına
+            # değil: `tar -tv` çıktısının alan düzeni GNU/BSD tar arasında
+            # değişir, ama ad her zaman satırın sonundadır ve izin/sahip/tarih
+            # alanlarında "/snapshots/" gibi bir dizi geçmez. Boyut alanı ($3)
+            # GNU tar'da sayıdır; sayı değilse boyut ölçütü sessizce devre dışı
+            # kalır (yanlış yere "bozuk" demek, kaçırmaktan daha pahalıdır).
+            local sayim trc uye sayilir dolu esles
+            sayim="$(tar -tzvf "$f" 2>/dev/null | awk -v d="$gerek" '
+                $0 ~ /\/$/ { next }                       # dizin üyesi
+                { uye++
+                  if ($3 ~ /^[0-9]+$/) { sayilir++; if ($3 + 0 > 0) dolu++ }
+                  if (d != "" && $0 ~ d) esles++ }
+                END { printf "%d %d %d %d", uye, sayilir, dolu, esles }'
+                exit "${PIPESTATUS[0]}")"; trc=$?
             [ "$trc" -eq 0 ] || { berr "Bozuk arşiv: $base — bu yedek KULLANILAMAZ."; return 1; }
-            if [ "${files:-0}" -lt 1 ]; then
+            read -r uye sayilir dolu esles <<< "${sayim:-0 0 0 0}"
+            if [ "${uye:-0}" -lt 1 ]; then
                 berr "Yedeğin İÇİ BOŞ: $base — arşivde tek dosya bile yok, geri yüklenemez."
                 berr "  Motorun o anki hatası burada: $LOG_FILE"
                 return 1
             fi
-            detay=", $files dosya"
+            if [ "${sayilir:-0}" -gt 0 ] && [ "${dolu:-0}" -eq 0 ]; then
+                berr "Yedeğin İÇİ BOŞ: $base — arşivdeki $uye dosyanın hepsi 0 bayt, geri yüklenemez."
+                berr "  Motorun o anki hatası burada: $LOG_FILE"
+                return 1
+            fi
+            if [ -n "$gerek" ] && [ "${esles:-0}" -eq 0 ]; then
+                berr "Yedek EKSİK: $base — arşivde $gerek_ad yok, yalnızca üstveri var."
+                berr "  Bu dosyadan geri yükleme YAPILAMAZ; motorun o anki hatası burada: $LOG_FILE"
+                return 1
+            fi
+            detay=", $uye dosya"
             ;;
         *.archive.gz)
             # mongodump --archive --gzip çıktısı GZIP DOSYASI DEĞİLDİR: kendi
@@ -120,6 +180,18 @@ verify_backup() {
                     6de29981|1f8b*) ;;
                     *) berr "MongoDB arşivi tanınmıyor: $base — mongodump çıktısı değil."; return 1 ;;
                 esac
+            fi
+            # İmza tek başına yetmez: akış daha ilk saniyede kesildiyse (docker
+            # exec düşer, disk dolar) elde 4 baytlık bir dosya kalır ve o dosya
+            # imzadan GEÇER. Gerçek bir arşiv, tek bir koleksiyonu olan mongo'da
+            # bile arşiv başlığı + koleksiyon üstverisiyle birlikte kilobayt
+            # mertebesindedir; eşik bilerek düşük tutuldu, çünkü sağlam bir
+            # yedeğe yanlışlıkla "bozuk" demek yedeği YOK saymak demektir.
+            local bayt; bayt="$(wc -c < "$f" | tr -d ' ')"
+            if [ "${bayt:-0}" -lt 256 ]; then
+                berr "MongoDB arşivi yarım: $base — yalnızca $bayt bayt, dump başlamadan kesilmiş."
+                berr "  Motorun o anki hatası burada: $LOG_FILE"
+                return 1
             fi
             ;;
         *.gz)
@@ -153,6 +225,15 @@ verify_backup() {
                         *) berr "RabbitMQ tanımları JSON değil: $base — dışa aktarma yarım kalmış."; return 1 ;;
                     esac ;;
             esac
+            ;;
+        *)
+            # Tanınmayan uzantı da case'in sonundaki koşulsuz "Bütünlük
+            # doğrulandı" satırına düşüyordu: düz bir metin dosyası bile yeşil
+            # tik alıyordu. Doğrulanmamış bir dosyaya doğrulandı demektense
+            # kullanıcıya ne KONTROL EDİLMEDİĞİNİ söylüyoruz.
+            warn "Tanınmayan biçim: $base — bu betiğin ürettiği bir yedek değil."
+            log  "  Yalnızca 'dosya var ve boş değil' kontrol edildi; İÇERİĞİ DOĞRULANMADI."
+            return 0
             ;;
     esac
     bok "Bütünlük doğrulandı: $base ($(du -h "$f" | cut -f1)$detay)"
@@ -237,8 +318,15 @@ backup_mongodb() {
         --username "${MONGO_USER:-root}" --password "${MONGO_PASSWORD:-$DB_PASSWORD}" \
         --authenticationDatabase admin --archive --gzip --quiet \
         2>>"$LOG_FILE" > "$f"
-    [ "${PIPESTATUS[0]}" -eq 0 ] && [ -s "$f" ] || { berr "MongoDB dump başarısız"; rm -f "$f"; return 1; }
-    bok "MongoDB yedeklendi ($(du -h "$f" | cut -f1))"
+    # Diğer dokuz motor finalize_backup'a çevrilirken mongodb ATLANMIŞTI: kendi
+    # `[ -s "$f" ]` kontrolüyle yetiniyor, "MongoDB yedeklendi" deyip
+    # geçiyordu. Sonuç, *.archive.gz için yazılan imza/boyut kontrolünün yedek
+    # ALMA yolunda ÖLÜ KOD kalmasıydı — hata ancak aylar sonra, geri yükleme
+    # denenirken görülecekti. Üstelik doğrulamayı geçemeyen dosya kenara
+    # alınmadığı için `list`, `stats` ve sync-remote.sh onu geçerli bir
+    # kurtarma noktası sayıp uzak sunucuya da kopyalıyordu.
+    [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "MongoDB dump başarısız. Ayrıntı: $LOG_FILE"; rm -f "$f"; return 1; }
+    finalize_backup "$f"
 }
 
 backup_redis() {
@@ -338,6 +426,21 @@ backup_cassandra() {
     # damgası alıyordu. Boşluk hatası değilse de kullanıcıyı uyar.
     docker exec cassandra sh -c '[ -s /tmp/schema.cql ]' 2>/dev/null \
         || warn "Cassandra şema dökümü boş — bu düğümde kullanıcı keyspace'i yok gibi görünüyor."
+    # Aşağıdaki tar'ın içindeki `find` hiçbir snapshot dizini bulamazsa (veri
+    # dizini standart yerde değilse: data_file_directories özelleştirilmiş)
+    # komut ikamesi BOŞ döner ve tar yalnız schema.cql'i paketleyip 0 ile
+    # çıkar: `||` yedek dalı hiç çalışmaz, hata da verilmez. İçinde SSTable
+    # olmayan bir Cassandra arşivi GERİ YÜKLENEMEZ. Bunu arşivi üretmeden önce
+    # söylüyoruz — verify_backup aynı durumu arşiv tarafında da yakalıyor ama
+    # NEDENİNİ yalnız burası bilir.
+    local snapdir
+    snapdir="$(docker exec cassandra find /var/lib/cassandra/data -type d -name "$snap" -print -quit 2>>"$LOG_FILE")"
+    if [ -z "$snapdir" ]; then
+        berr "Cassandra snapshot dosyaları bulunamadı: /var/lib/cassandra/data altında '$snap' yok."
+        berr "  Bu arşivde VERİ olmazdı, yedek alınmadı. Veri dizini özelleştirildiyse docs/BACKUP.md'ye bakın."
+        docker exec cassandra nodetool clearsnapshot -t "$snap" >>"$LOG_FILE" 2>&1
+        return 1
+    fi
     "${IO_NICE[@]}" docker exec cassandra sh -c \
         "tar -cf - -C /tmp schema.cql \$(find /var/lib/cassandra/data -type d -name '$snap' -printf '%P\n' 2>/dev/null | sed 's|^|-C /var/lib/cassandra/data |') 2>/dev/null || tar -cf - -C /var/lib/cassandra/data . --wildcards '*/snapshots/$snap/*'" \
         2>>"$LOG_FILE" | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"

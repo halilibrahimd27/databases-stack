@@ -2,7 +2,7 @@
   "id": null,
   "uid": "dbstack-rabbitmq",
   "title": "RabbitMQ — Mesaj Kuyruğu Durumu",
-  "description": "RabbitMQ mesaj kuyruğunun sağlık durumu. Üstteki dört kutu 'her şey yolunda mı' sorusuna bakışta cevap verir; altındaki grafikler yükün zaman içinde nasıl değiştiğini gösterir.",
+  "description": "RabbitMQ mesaj kuyruğunun sağlık durumu. Üstteki dört kutu 'her şey yolunda mı' sorusuna bakışta cevap verir; altındaki grafikler yükün zaman içinde nasıl değiştiğini gösterir. Tüm paneller aynı anda boşsa sorun panoda değildir: Prometheus RabbitMQ'dan hiç ölçüm toplamıyordur (motor kapalı olabilir ya da izleme hedef listesi üretilmemiştir). Önce soldaki 'Erişilebilir mi?' kutusuna bakın.",
   "tags": ["databases-stack", "rabbitmq"],
   "timezone": "browser",
   "editable": false,
@@ -22,14 +22,14 @@
       "id": 1,
       "type": "stat",
       "title": "Erişilebilir mi?",
-      "description": "RabbitMQ ayakta mı ve izleme sistemi ona ulaşabiliyor mu? \"Çalışıyor\" beklenen durumdur. \"Erişilemiyor\" yazıyorsa mesaj gönderen ve okuyan uygulamalar hata almaya başlar. Motoru kasten kapattıysanız bu normaldir; açık olması gerekiyorsa kayıtlara bakın: ./stack.sh logs rabbitmq",
+      "description": "RabbitMQ ayakta mı ve izleme sistemi ondan ölçüm alabiliyor mu? Ölçümleri RabbitMQ'nun kendisi yayımlar (aracı bir yardımcı program yoktur), bu yüzden ölçüm geliyorsa motor gerçekten çalışıyordur. \"Çalışıyor\" beklenen durumdur. \"Erişilemiyor\" yazıyorsa mesaj gönderen ve okuyan uygulamalar hata almaya başlar ve bu panodaki diğer paneller de boş kalır. Motoru kasten kapattıysanız bu normaldir; açık olması gerekiyorsa kayıtlara bakın: ./stack.sh logs rabbitmq",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
       "pluginVersion": "11.3.1",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
-          "noValue": "Veri yok",
+          "noValue": "Erişilemiyor",
           "unit": "short",
           "decimals": 0,
           "mappings": [
@@ -38,6 +38,13 @@
               "options": {
                 "0": { "text": "Erişilemiyor", "color": "red", "index": 0 },
                 "1": { "text": "Çalışıyor", "color": "green", "index": 1 }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": { "text": "Kapalı ya da erişilemiyor", "color": "red", "index": 2 }
               }
             }
           ],
@@ -67,7 +74,7 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "max(up{job=\"databases\", engine=\"rabbitmq\"})",
+          "expr": "clamp_max(count({__name__=~\"rabbitmq_identity_info|rabbitmq_build_info|rabbitmq_resident_memory_limit_bytes\"}), 1) or vector(0)",
           "instant": false,
           "range": true,
           "legendFormat": "Durum"
@@ -78,14 +85,14 @@
       "id": 2,
       "type": "stat",
       "title": "Mesaj kabul ediyor mu?",
-      "description": "RabbitMQ belleği ya da diski sınıra dayandığında kendini korumak için yeni mesaj kabul etmeyi durdurur. \"Sorun yok\" beklenen durumdur. \"Mesaj kabulü durdu\" görürseniz mesaj gönderen uygulamalar donmuş gibi bekler: aşağıdaki bellek ve disk grafiklerine bakın. Nedeni çoğu zaman, mesajları okuyan uygulamanın çalışmaması ve kuyruğun şişmesidir.",
+      "description": "RabbitMQ belleği, diski ya da açabildiği dosya sayısı sınıra dayandığında kendini korumak için yeni mesaj kabul etmeyi durdurur. Bu kutu üç sınırın üçünü de izler; hangisi devreye girerse girsin kırmızı yanar. \"Sorun yok\" beklenen durumdur. \"Mesaj kabulü durdu\" görürseniz mesaj gönderen uygulamalar donmuş gibi bekler: aşağıdaki bellek ve disk grafiklerine bakın. Nedeni çoğu zaman, mesajları okuyan uygulamanın çalışmaması ve kuyruğun şişmesidir. Motor kapalıyken kutu \"Motor kapalı\" der ve kırmızı yanmaz; kasten kapatılmış bir motor arıza değildir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
       "pluginVersion": "11.3.1",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
-          "noValue": "Veri yok",
+          "noValue": "Motor kapalı",
           "unit": "short",
           "decimals": 0,
           "mappings": [
@@ -94,6 +101,13 @@
               "options": {
                 "0": { "text": "Sorun yok", "color": "green", "index": 0 },
                 "1": { "text": "Mesaj kabulü durdu", "color": "red", "index": 1 }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": { "text": "Motor kapalı", "color": "text", "index": 2 }
               }
             }
           ],
@@ -123,7 +137,7 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "max(rabbitmq_alarms_memory_used_watermark{engine=\"rabbitmq\"} or rabbitmq_alarms_free_disk_space_watermark{engine=\"rabbitmq\"} or rabbitmq_alarms_file_descriptor_limit{engine=\"rabbitmq\"})",
+          "expr": "max({__name__=~\"rabbitmq_alarms_(memory_used_watermark|free_disk_space_watermark|file_descriptor_limit)\"})",
           "instant": false,
           "range": true,
           "legendFormat": "Alarm"
@@ -134,35 +148,52 @@
       "id": 3,
       "type": "stat",
       "title": "Bağlı uygulama sayısı",
-      "description": "Şu anda RabbitMQ'ya bağlı olan uygulama sayısı. Sıfır ise hiçbir uygulama bağlı değildir; mesaj gitmiyor ya da gelmiyorsa ilk buraya bakın. Sayı sürekli artıp hiç düşmüyorsa uygulama açtığı bağlantıları kapatmıyordur. Bu böyle sürerse RabbitMQ yeni bağlantı kabul edemez ve uygulamalar bağlanma hatası alır.",
+      "description": "Üstteki sayı şu anda RabbitMQ'ya bağlı uygulama adedi; altındaki yüzde ise bu sayının RabbitMQ'nun kendi bildirdiği bağlantı tavanına (izin verilen azami TCP soketi) oranıdır — uydurma bir sınır değildir. Sıfır bağlantı, hiçbir uygulamanın bağlı olmadığı anlamına gelir; mesaj gitmiyor ya da gelmiyorsa ilk buraya bakın. Yüzde %70'i geçerse (sarı) tavana yaklaşılıyordur, %90 (kırmızı) yeni bağlantıların reddedilmesine çok yakın demektir. Yüzde düşükken bile sayı hiç düşmeden sürekli artıyorsa uygulama açtığı bağlantıları kapatmıyordur; bu, tavana varmadan belleği tüketir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
       "pluginVersion": "11.3.1",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
-          "noValue": "Veri yok",
+          "noValue": "Motor kapalı",
           "unit": "suffix: bağlantı",
           "decimals": 0,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 200 },
-              { "color": "red", "value": 500 }
-            ]
+            "steps": [{ "color": "green", "value": null }]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": { "id": "byFrameRefID", "options": "B" },
+            "properties": [
+              { "id": "unit", "value": "percent" },
+              { "id": "decimals", "value": 1 },
+              { "id": "min", "value": 0 },
+              { "id": "max", "value": 100 },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 70 },
+                    { "color": "red", "value": 90 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "orientation": "auto",
-        "textMode": "auto",
+        "textMode": "value_and_name",
         "wideLayout": true,
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "showPercentChange": false,
         "percentChangeColorMode": "standard"
@@ -172,10 +203,19 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rabbitmq_connections{engine=\"rabbitmq\"})",
+          "expr": "sum(rabbitmq_connections)",
           "instant": false,
           "range": true,
-          "legendFormat": "Bağlantı"
+          "legendFormat": "Bağlı uygulama"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "100 * sum(rabbitmq_connections) / max(rabbitmq_process_max_tcp_sockets > 0)",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Tavan doluluğu"
         }
       ]
     },
@@ -183,14 +223,14 @@
       "id": 4,
       "type": "stat",
       "title": "Bellek kullanımı",
-      "description": "RabbitMQ'nun kullandığı belleğin, kendi üst sınırına oranı. Yeşil bölgede sorun yoktur. Sarı (%70 üstü) birikme başladığını, kırmızı (%90 üstü) sınıra dayanıldığını gösterir; sınıra ulaşınca RabbitMQ yeni mesaj almayı durdurur. Kalıcı olarak yüksekse kuyrukta mesaj birikiyordur: mesajları okuyan uygulamayı çalıştırın ya da RABBITMQ_MEM_LIMIT değerini artırın.",
+      "description": "RabbitMQ'nun kullandığı belleğin, kendi üst sınırına oranı. Yeşil bölgede sorun yoktur. Sarı (%70 üstü) birikme başladığını, kırmızı (%90 üstü) sınıra dayanıldığını gösterir; sınıra ulaşınca RabbitMQ yeni mesaj almayı durdurur. Kalıcı olarak yüksekse kuyrukta mesaj birikiyordur: mesajları okuyan uygulamayı çalıştırın ya da RABBITMQ_MEM_LIMIT değerini artırın. Bellek sınırı okunamadığında kutu bilerek boş kalır; sahte bir %100 kırmızısı, gerçek bir bellek sorunundan ayırt edilemezdi.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
       "pluginVersion": "11.3.1",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
-          "noValue": "Veri yok",
+          "noValue": "Motor kapalı",
           "unit": "percent",
           "decimals": 0,
           "min": 0,
@@ -223,7 +263,7 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "100 * rabbitmq_process_resident_memory_bytes{engine=\"rabbitmq\"} / rabbitmq_resident_memory_limit_bytes{engine=\"rabbitmq\"}",
+          "expr": "max(100 * rabbitmq_process_resident_memory_bytes / (rabbitmq_resident_memory_limit_bytes > 0))",
           "instant": false,
           "range": true,
           "legendFormat": "Bellek"
@@ -234,7 +274,7 @@
       "id": 5,
       "type": "timeseries",
       "title": "Kuyrukta bekleyen mesajlar",
-      "description": "Kuyruklarda duran mesaj sayısı. \"Bekleyen\", henüz kimsenin almadığı mesajlardır. \"İşlenmekte olan\", bir uygulamaya verilmiş ama işi bitmediği için henüz onaylanmamış mesajlardır. Sıfıra yakın seyretmesi sağlıklıdır. Bekleyen çizgisinin sürekli yükselmesi bu panodaki en önemli uyarı işaretidir: mesajları işleyen uygulama gelen hıza yetişemiyor ya da hiç çalışmıyor demektir.",
+      "description": "Kuyruklarda duran mesaj sayısı. \"Bekleyen\", henüz kimsenin almadığı mesajlardır. \"İşlenmekte olan\", bir uygulamaya verilmiş ama işi bitmediği için henüz onaylanmamış mesajlardır. Sıfıra yakın seyretmesi sağlıklıdır. Bekleyen çizgisinin sürekli yükselmesi bu panodaki en önemli uyarı işaretidir: mesajları işleyen uygulama gelen hıza yetişemiyor ya da hiç çalışmıyor demektir. Henüz hiç kuyruk oluşturulmamışsa çizgiler sıfırda düz gider; bu normaldir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
       "pluginVersion": "11.3.1",
@@ -282,7 +322,7 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rabbitmq_queue_messages_ready{engine=\"rabbitmq\"})",
+          "expr": "sum(rabbitmq_queue_messages_ready)",
           "instant": false,
           "range": true,
           "legendFormat": "Bekleyen (henüz alınmamış)"
@@ -291,7 +331,7 @@
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rabbitmq_queue_messages_unacked{engine=\"rabbitmq\"})",
+          "expr": "sum(rabbitmq_queue_messages_unacked)",
           "instant": false,
           "range": true,
           "legendFormat": "İşlenmekte olan (onay bekliyor)"
@@ -302,7 +342,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Saniyedeki mesaj akışı",
-      "description": "Saniyede kaç mesaj geldi, kaçı okuyan uygulamalara teslim edildi ve kaçı \"işim bitti\" diye onaylandı. \"Gelen\" çizgisi \"teslim edilen\" çizgisinin sürekli üstündeyse kuyrukta birikme olur; yandaki bekleyen mesaj grafiği de yükseliyorsa durum budur. Üç çizginin de sıfır olması o an hiç mesaj trafiği olmadığı anlamına gelir, tek başına arıza değildir.",
+      "description": "Saniyede kaç mesaj geldi, kaçı okuyan uygulamalara teslim edildi ve kaçı \"işim bitti\" diye onaylandı. Toplam sayaç değil, sayacın artış hızı çizilir. \"Gelen\" çizgisi \"teslim edilen\" çizgisinin sürekli üstündeyse kuyrukta birikme olur; yandaki bekleyen mesaj grafiği de yükseliyorsa durum budur. Üç çizginin de sıfır olması o an hiç mesaj trafiği olmadığı anlamına gelir, tek başına arıza değildir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
       "pluginVersion": "11.3.1",
@@ -350,7 +390,7 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rate(rabbitmq_global_messages_received_total{engine=\"rabbitmq\"}[5m]))",
+          "expr": "sum(rate(rabbitmq_global_messages_received_total[5m]))",
           "instant": false,
           "range": true,
           "legendFormat": "Gelen (gönderilen)"
@@ -359,7 +399,7 @@
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rate(rabbitmq_global_messages_delivered_total{engine=\"rabbitmq\"}[5m]))",
+          "expr": "sum(rate(rabbitmq_global_messages_delivered_total[5m]))",
           "instant": false,
           "range": true,
           "legendFormat": "Teslim edilen (okunan)"
@@ -368,7 +408,7 @@
           "refId": "C",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rate(rabbitmq_global_messages_acknowledged_total{engine=\"rabbitmq\"}[5m]))",
+          "expr": "sum(rate(rabbitmq_global_messages_acknowledged_total[5m]))",
           "instant": false,
           "range": true,
           "legendFormat": "Onaylanan (işi biten)"
@@ -427,7 +467,7 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rabbitmq_connections{engine=\"rabbitmq\"})",
+          "expr": "sum(rabbitmq_connections)",
           "instant": false,
           "range": true,
           "legendFormat": "Bağlı uygulama"
@@ -436,7 +476,7 @@
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rabbitmq_channels{engine=\"rabbitmq\"})",
+          "expr": "sum(rabbitmq_channels)",
           "instant": false,
           "range": true,
           "legendFormat": "Oturum (kanal)"
@@ -445,7 +485,7 @@
           "refId": "C",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rabbitmq_consumers{engine=\"rabbitmq\"})",
+          "expr": "sum(rabbitmq_consumers)",
           "instant": false,
           "range": true,
           "legendFormat": "Mesaj okuyucu"
@@ -454,7 +494,7 @@
           "refId": "D",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rabbitmq_queues{engine=\"rabbitmq\"})",
+          "expr": "sum(rabbitmq_queues)",
           "instant": false,
           "range": true,
           "legendFormat": "Kuyruk"
@@ -465,7 +505,7 @@
       "id": 8,
       "type": "timeseries",
       "title": "Bellek kullanımı ve sınırı",
-      "description": "RabbitMQ'nun kullandığı bellek ile kendi üst sınırı. İki çizgi birbirine yaklaşıyorsa RabbitMQ mesaj kabul etmeyi durdurmak üzeredir; çizgiler değdiği anda mesaj gönderen uygulamalar bekletilir. Kullanılan bellek genelde kuyrukta bekleyen mesaj sayısıyla birlikte artar; bu yüzden önce mesajların neden biriktiğine bakın, belleği büyütmek çoğu zaman sadece zaman kazandırır.",
+      "description": "RabbitMQ'nun kullandığı bellek ile kendi üst sınırı. İki çizgi birbirine yaklaşıyorsa RabbitMQ mesaj kabul etmeyi durdurmak üzeredir; çizgiler değdiği anda mesaj gönderen uygulamalar bekletilir. Kullanılan bellek genelde kuyrukta bekleyen mesaj sayısıyla birlikte artar; bu yüzden önce mesajların neden biriktiğine bakın, belleği büyütmek çoğu zaman sadece zaman kazandırır. Motor yeniden başlatıldığında çizgide kısa bir boşluk olabilir; bu normaldir.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
       "pluginVersion": "11.3.1",
@@ -522,7 +562,7 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "rabbitmq_process_resident_memory_bytes{engine=\"rabbitmq\"}",
+          "expr": "max(rabbitmq_process_resident_memory_bytes)",
           "instant": false,
           "range": true,
           "legendFormat": "Kullanılan bellek"
@@ -531,7 +571,7 @@
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "rabbitmq_resident_memory_limit_bytes{engine=\"rabbitmq\"}",
+          "expr": "max(rabbitmq_resident_memory_limit_bytes > 0)",
           "instant": false,
           "range": true,
           "legendFormat": "Üst sınır (aşılırsa mesaj kabulü durur)"
@@ -542,7 +582,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "Diskte kalan boş alan",
-      "description": "Mesajların saklandığı diskte kalan boş alan ve RabbitMQ'nun güvenlik alt sınırı. Boş alan çizgisi alt sınırın altına inerse RabbitMQ yeni mesaj kabul etmeyi durdurur ve gönderen uygulamalar bekler. Çizgi yavaş yavaş aşağı gidiyorsa bitmesini beklemeyin: eski yedekleri temizleyin, birikmiş kuyrukları boşaltın ya da diski büyütün.",
+      "description": "Mesajların saklandığı diskte kalan boş alan ve RabbitMQ'nun güvenlik alt sınırı (bu kurulumda 2 GiB). Boş alan çizgisi alt sınırın altına inerse RabbitMQ yeni mesaj kabul etmeyi durdurur ve gönderen uygulamalar bekler. Çizgi yavaş yavaş aşağı gidiyorsa bitmesini beklemeyin: eski yedekleri temizleyin, birikmiş kuyrukları boşaltın ya da diski büyütün. RabbitMQ boş alanı henüz ölçemediğinde \"bilinmiyor\" işareti (-1) yayımlar; o işaret çizilmez, grafikte kısa bir boşluk görürsünüz — bu normaldir, eksi disk alanı diye bir şey yoktur.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
       "pluginVersion": "11.3.1",
@@ -599,7 +639,7 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "rabbitmq_disk_space_available_bytes{engine=\"rabbitmq\"}",
+          "expr": "max(rabbitmq_disk_space_available_bytes >= 0)",
           "instant": false,
           "range": true,
           "legendFormat": "Kalan boş alan"
@@ -608,7 +648,7 @@
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "rabbitmq_disk_space_available_limit_bytes{engine=\"rabbitmq\"}",
+          "expr": "max(rabbitmq_disk_space_available_limit_bytes >= 0)",
           "instant": false,
           "range": true,
           "legendFormat": "Alt sınır (altına inerse mesaj kabulü durur)"
@@ -619,7 +659,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "Hedefine ulaşamayan mesajlar",
-      "description": "Normalde bu çizgilerin sıfırda durması beklenir. \"Adresi bulunamayan\", hiçbir kuyruğa düşmeden silinen mesajdır; genelde uygulamanın yanlış adres kullanmasından olur ve o mesaj kalıcı olarak kaybolur. \"Gönderene iade edilen\", teslim edilemeyip geri yollanan mesajdır. \"Yeniden denenen\", işlenirken hata alınıp kuyruğa geri konan mesajdır; bu çizgi sürekli yükseliyorsa mesajları işleyen uygulama hata veriyordur, önce onun kayıtlarına bakın.",
+      "description": "Normalde bu çizgilerin sıfırda durması beklenir; toplam sayaç değil, sayacın artış hızı çizilir. \"Adresi bulunamayan\", hiçbir kuyruğa düşmeden silinen mesajdır; genelde uygulamanın yanlış adres kullanmasından olur ve o mesaj kalıcı olarak kaybolur. \"Gönderene iade edilen\", teslim edilemeyip geri yollanan mesajdır. \"Yeniden denenen\", işlenirken hata alınıp kuyruğa geri konan mesajdır; bu çizgi sürekli yükseliyorsa mesajları işleyen uygulama hata veriyordur, önce onun kayıtlarına bakın.",
       "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
       "pluginVersion": "11.3.1",
@@ -667,7 +707,7 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rate(rabbitmq_global_messages_unroutable_dropped_total{engine=\"rabbitmq\"}[5m]))",
+          "expr": "sum(rate(rabbitmq_global_messages_unroutable_dropped_total[5m]))",
           "instant": false,
           "range": true,
           "legendFormat": "Adresi bulunamayan (silindi)"
@@ -676,7 +716,7 @@
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rate(rabbitmq_global_messages_unroutable_returned_total{engine=\"rabbitmq\"}[5m]))",
+          "expr": "sum(rate(rabbitmq_global_messages_unroutable_returned_total[5m]))",
           "instant": false,
           "range": true,
           "legendFormat": "Gönderene iade edilen"
@@ -685,7 +725,7 @@
           "refId": "C",
           "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
           "editorMode": "code",
-          "expr": "sum(rate(rabbitmq_global_messages_redelivered_total{engine=\"rabbitmq\"}[5m]))",
+          "expr": "sum(rate(rabbitmq_global_messages_redelivered_total[5m]))",
           "instant": false,
           "range": true,
           "legendFormat": "Yeniden denenen"
