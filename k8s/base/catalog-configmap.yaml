@@ -83,7 +83,7 @@ data:
           },
           "resources": {
             "min_mb": 512,
-            "share": 0.3,
+            "share": 0.2,
             "max_mb": 16384,
             "overhead_mb": 320,
             "panel_mb": 256,
@@ -135,7 +135,13 @@ data:
               "listen": 3306,
               "upstream_port": 3306
             }
-          ]
+          ],
+          "license": {
+            "name": "GPL-2.0",
+            "free_for_production": true,
+            "note": "Tam açık kaynak. Kullanımda kısıtlama yok.",
+            "alternative": null
+          }
         },
         {
           "id": "postgresql",
@@ -192,7 +198,7 @@ data:
           },
           "resources": {
             "min_mb": 512,
-            "share": 0.2,
+            "share": 0.15,
             "max_mb": 8192,
             "overhead_mb": 576,
             "panel_mb": 512,
@@ -248,7 +254,13 @@ data:
               "listen": 5432,
               "upstream_port": 5432
             }
-          ]
+          ],
+          "license": {
+            "name": "PostgreSQL License",
+            "free_for_production": true,
+            "note": "BSD benzeri, en serbest lisanslardan biri. Kısıtlama yok.",
+            "alternative": null
+          }
         },
         {
           "id": "mongodb",
@@ -308,7 +320,7 @@ data:
           },
           "resources": {
             "min_mb": 512,
-            "share": 0.2,
+            "share": 0.15,
             "max_mb": 8192,
             "overhead_mb": 320,
             "panel_mb": 256,
@@ -344,7 +356,13 @@ data:
               "listen": 27017,
               "upstream_port": 27017
             }
-          ]
+          ],
+          "license": {
+            "name": "SSPL-1.0",
+            "free_for_production": "copyleft",
+            "note": "4.0'dan beri SSPL. OSI onaylı 'açık kaynak' DEĞİL. Kendi işiniz için kullanmak serbesttir; MongoDB'yi bir SERVİS olarak üçüncü taraflara sunarsanız tüm hizmet yığınınızı açmanız istenir.",
+            "alternative": "FerretDB (Apache-2.0)"
+          }
         },
         {
           "id": "redis",
@@ -401,7 +419,7 @@ data:
           },
           "resources": {
             "min_mb": 128,
-            "share": 0.1,
+            "share": 0.08,
             "max_mb": 4096,
             "overhead_mb": 320,
             "panel_mb": 256,
@@ -437,7 +455,13 @@ data:
               "listen": 6379,
               "upstream_port": 6379
             }
-          ]
+          ],
+          "license": {
+            "name": "AGPL-3.0 / RSALv2 / SSPL",
+            "free_for_production": "copyleft",
+            "note": "7.4 ile RSALv2+SSPL'e geçti, 8.0 ile üçüncü seçenek olarak AGPL-3.0 eklendi. Pinlenen 8-alpine AGPL kapsamındadır. Copyleft istemiyorsanız Valkey birebir yerine geçer: REDIS_IMAGE=valkey/valkey:8-alpine",
+            "alternative": "Valkey (BSD-3, birebir uyumlu)"
+          }
         },
         {
           "id": "mssql",
@@ -485,7 +509,7 @@ data:
           },
           "resources": {
             "min_mb": 2048,
-            "share": 0.3,
+            "share": 0.22,
             "max_mb": 16384,
             "overhead_mb": 0,
             "panel_mb": 0,
@@ -521,7 +545,13 @@ data:
               "listen": 1433,
               "upstream_port": 1433
             }
-          ]
+          ],
+          "license": {
+            "name": "Developer Edition — YALNIZ GELİŞTİRME/TEST",
+            "free_for_production": false,
+            "note": "⚠️ Varsayılan MSSQL_PID=Developer üretimde KULLANILAMAZ; yalnız geliştirme ve test için ücretsizdir. Üretim için MSSQL_PID=Express (ücretsiz, veritabanı başına 10 GB) ya da Standard/Enterprise lisansı gerekir.",
+            "alternative": "MSSQL_PID=Express (ücretsiz, 10 GB/DB sınırı) ya da satın alınmış lisans"
+          }
         },
         {
           "id": "cassandra",
@@ -568,7 +598,7 @@ data:
           },
           "resources": {
             "min_mb": 1024,
-            "share": 0.2,
+            "share": 0.15,
             "max_mb": 8192,
             "overhead_mb": 128,
             "panel_mb": 0,
@@ -613,7 +643,13 @@ data:
               "listen": 9042,
               "upstream_port": 9042
             }
-          ]
+          ],
+          "license": {
+            "name": "Apache-2.0",
+            "free_for_production": true,
+            "note": "Tam açık kaynak. Kısıtlama yok.",
+            "alternative": null
+          }
         },
         {
           "id": "elasticsearch",
@@ -669,7 +705,7 @@ data:
           },
           "resources": {
             "min_mb": 1024,
-            "share": 0.25,
+            "share": 0.18,
             "max_mb": 16384,
             "overhead_mb": 1088,
             "panel_mb": 1024,
@@ -706,7 +742,13 @@ data:
               "listen": 9200,
               "upstream_port": 9200
             }
-          ]
+          ],
+          "license": {
+            "name": "Elastic License 2.0 / SSPL",
+            "free_for_production": "copyleft",
+            "note": "7.11'den beri ELv2+SSPL; OSI onaylı değil. 8.16+ sürümlerde AGPL-3.0 seçeneği de var. Kendi kullanımınız serbest; yönetilen arama servisi olarak SATAMAZSINIZ.",
+            "alternative": "OpenSearch (Apache-2.0) — birebir geçiş değil, Dashboards ayrı"
+          }
         },
         {
           "id": "kafka",
@@ -759,7 +801,7 @@ data:
           },
           "resources": {
             "min_mb": 768,
-            "share": 0.15,
+            "share": 0.12,
             "max_mb": 4096,
             "overhead_mb": 576,
             "panel_mb": 512,
@@ -796,7 +838,13 @@ data:
               "listen": 9092,
               "upstream_port": 29092
             }
-          ]
+          ],
+          "license": {
+            "name": "Apache-2.0",
+            "free_for_production": true,
+            "note": "Tam açık kaynak. Kısıtlama yok.",
+            "alternative": null
+          }
         },
         {
           "id": "rabbitmq",
@@ -846,7 +894,7 @@ data:
           },
           "resources": {
             "min_mb": 384,
-            "share": 0.1,
+            "share": 0.08,
             "max_mb": 2048,
             "overhead_mb": 0,
             "panel_mb": 0,
@@ -875,7 +923,13 @@ data:
               "listen": 5672,
               "upstream_port": 5672
             }
-          ]
+          ],
+          "license": {
+            "name": "MPL-2.0",
+            "free_for_production": true,
+            "note": "Dosya bazlı zayıf copyleft. Kullanımda pratik kısıtlama yok.",
+            "alternative": null
+          }
         },
         {
           "id": "clickhouse",
@@ -930,7 +984,7 @@ data:
           },
           "resources": {
             "min_mb": 512,
-            "share": 0.25,
+            "share": 0.18,
             "max_mb": 16384,
             "overhead_mb": 0,
             "panel_mb": 0,
@@ -970,7 +1024,13 @@ data:
               "listen": 9000,
               "upstream_port": 9000
             }
-          ]
+          ],
+          "license": {
+            "name": "Apache-2.0",
+            "free_for_production": true,
+            "note": "Tam açık kaynak. Kısıtlama yok.",
+            "alternative": null
+          }
         },
         {
           "id": "neo4j",
@@ -1016,7 +1076,7 @@ data:
           },
           "resources": {
             "min_mb": 768,
-            "share": 0.2,
+            "share": 0.14,
             "max_mb": 8192,
             "overhead_mb": 0,
             "panel_mb": 0,
@@ -1059,7 +1119,13 @@ data:
               "listen": 7687,
               "upstream_port": 7687
             }
-          ]
+          ],
+          "license": {
+            "name": "GPL-3.0 (Community)",
+            "free_for_production": "copyleft",
+            "note": "Community sürümü GPL-3.0. Kullanmak serbest; kümeleme, çevrimiçi yedek ve rol bazlı yetkilendirme yalnız ticari Enterprise'da var.",
+            "alternative": "Enterprise lisansı"
+          }
         },
         {
           "id": "minio",
@@ -1138,9 +1204,16 @@ data:
               "listen": 9002,
               "upstream_port": 9000
             }
-          ]
+          ],
+          "license": {
+            "name": "AGPL-3.0",
+            "free_for_production": "copyleft",
+            "note": "Ücretli DEĞİL, AGPL-3.0. Ancak 2025'te community konsolundaki YÖNETİM özellikleri ticari AIStor'a taşındı. Bu yüzden sürüm bilerek o değişiklikten önceye sabitlendi (konsol tam çalışsın diye). AGPL: MinIO'yu değiştirip servis olarak sunarsanız kaynağı açmanız gerekir; kendi altyapınızda kullanmak serbesttir.",
+            "alternative": "SeaweedFS (Apache-2.0)"
+          }
         }
       ],
       "_sizing_note": "resources.* alanlarını controller/app.py okur. Aktivasyonda: bütçe = toplam RAM - OS payı - çekirdek servisler - zaten açık motorların taahhüdü. min_mb + overhead_mb bütçeye sığmıyorsa aktivasyon REDDEDİLİR. Sığıyorsa limit = clamp(toplam*share, min_mb, max_mb, bütçe) ve tuning kuralları bu limitten türetilip state/tuning.env'e yazılır.",
-      "_failover_note": "Otomatik failover tek makinede SÜREÇ/CONTAINER arızasına karşı korur; host'un tamamı düşerse iki kopya da düşer (aynı arıza alanı). Gerçek host arızası koruması için replikayı ikinci bir makinede çalıştırın — docs/FAILOVER.md."
+      "_failover_note": "Otomatik failover tek makinede SÜREÇ/CONTAINER arızasına karşı korur; host'un tamamı düşerse iki kopya da düşer (aynı arıza alanı). Gerçek host arızası koruması için replikayı ikinci bir makinede çalıştırın — docs/FAILOVER.md.",
+      "_license_note": "Lisanslar bilgi amaçlıdır, hukuki tavsiye değildir. Bu yığındaki motorların çoğu iç kullanımda sorunsuzdur; dikkat gerektiren iki durum: (1) SQL Server Developer sürümü ÜRETİMDE kullanılamaz, (2) SSPL/AGPL lisanslı motorları üçüncü taraflara SERVİS olarak sunuyorsanız hukuk biriminize danışın. Ayrıntı: docs/LICENSING.md"
     }

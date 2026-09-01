@@ -39,6 +39,11 @@ spec:
         env:
         - {name: BACKEND, value: "kubernetes"}
         - {name: K8S_NAMESPACE, value: "databases-stack"}
+        # Katalog SALT-OKUNUR bir ConfigMap'ten, durum ise YAZILABİLİR bir
+        # PVC'den gelir. İkisi aynı yola bağlanırsa controller state yazamaz:
+        #   HATA: OSError(30, 'Read-only file system')
+        - {name: CATALOG_PATH, value: "/config/catalog.json"}
+        - {name: STATE_DIR, value: "/state"}
         - name: CONTROLLER_TOKEN
           valueFrom: {secretKeyRef: {name: db-secrets, key: CONTROLLER_TOKEN}}
         ports: [{containerPort: 8000}]
@@ -48,10 +53,26 @@ spec:
           requests: {memory: "128Mi", cpu: "50m"}
           limits:   {memory: "192Mi"}
         volumeMounts:
-        - {name: catalog, mountPath: /project}
+        - {name: catalog, mountPath: /config, readOnly: true}
+        - {name: state, mountPath: /state}
       volumes:
       - name: catalog
         configMap: {name: catalog}
+      - name: state
+        persistentVolumeClaim: {claimName: controller-state}
+---
+# Controller'ın kalıcı durumu: replikasyon topolojisi (hangi düğüm primary),
+# otomatik devir açık olan motorlar ve olay geçmişi. Pod yeniden yaratılınca
+# kaybolmamalı — devirden sonra topoloji kaybolursa sistem yanlış düğümü
+# primary sanar.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: controller-state, namespace: databases-stack}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: Service

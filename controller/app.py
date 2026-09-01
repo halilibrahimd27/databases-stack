@@ -1189,10 +1189,21 @@ def do_activate(jid, eid, requested_mb=None):
         for k, v in sorted(p["tuning"].items()):
             job_log(jid, "  %s=%s" % (k, v))
 
-        tun = load_tuning()
-        tun[eid] = p["tuning"]
-        save_tuning(tun)
-        job_log(jid, "tuning.env yazıldı")
+        try:
+            tun = load_tuning()
+            tun[eid] = p["tuning"]
+            save_tuning(tun)
+            job_log(jid, "tuning.env yazıldı")
+        except OSError as e:
+            # Docker'da bu dosya ŞART (compose onu --env-file ile okur).
+            # Kubernetes'te değerler doğrudan `kubectl set env` ile gider,
+            # dosya yalnızca kayıt amaçlıdır — yazılamıyorsa aktivasyonu
+            # iptal etmek yerine uyarıp devam ediyoruz.
+            if BACKEND == "kubernetes":
+                job_log(jid, "UYARI: ayarlar diske yazılamadı (%s) — "
+                             "K8s'te değerler doğrudan uygulanıyor, devam ediliyor" % e)
+            else:
+                raise
 
         if BACKEND == "kubernetes":
             rc, out, errout = _k8s_scale(engine, 1, p["limit_mb"], p["tuning"])
