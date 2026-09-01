@@ -183,14 +183,19 @@ setup_rabbitmq() {
 
 remove_all() {
     heading "Uygulama kullanıcısı kaldırılıyor: $APP_USER"
-    container_running mariadb && MYSQL_PWD="${MARIADB_PASSWORD:-$DB_PASSWORD}" docker exec -e MYSQL_PWD mariadb \
+    local C
+    C="$(primary_of mariadb)"
+    container_running "$C" && MYSQL_PWD="${MARIADB_PASSWORD:-$DB_PASSWORD}" docker exec -e MYSQL_PWD "$C" \
         mariadb -u root -e "DROP USER IF EXISTS '${APP_USER}'@'%'; FLUSH PRIVILEGES;" 2>/dev/null && ok "MariaDB"
-    container_running postgresql && docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" postgresql \
+    C="$(primary_of postgresql)"
+    container_running "$C" && docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" "$C" \
         psql -U "${POSTGRES_USER:-root}" -d postgres -c "DROP ROLE IF EXISTS ${APP_USER};" >/dev/null 2>&1 && ok "PostgreSQL"
-    container_running mongodb && docker exec mongodb "${MONGO_SHELL:-mongosh}" --quiet \
+    C="$(primary_of mongodb)"
+    container_running "$C" && docker exec "$C" "${MONGO_SHELL:-mongosh}" --quiet \
         -u "${MONGO_USER:-root}" -p "${MONGO_PASSWORD:-$DB_PASSWORD}" --authenticationDatabase admin \
         --eval "db.getSiblingDB('admin').dropUser('${APP_USER}')" >/dev/null 2>&1 && ok "MongoDB"
-    container_running redis && docker exec -e REDISCLI_AUTH="${REDIS_PASSWORD:-$DB_PASSWORD}" redis \
+    C="$(primary_of redis)"
+    container_running "$C" && docker exec -e REDISCLI_AUTH="${REDIS_PASSWORD:-$DB_PASSWORD}" "$C" \
         redis-cli --no-auth-warning ACL DELUSER "$APP_USER" >/dev/null 2>&1 && ok "Redis"
 }
 

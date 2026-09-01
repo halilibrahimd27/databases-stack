@@ -378,7 +378,7 @@ restore_postgresql() {
     local C; C="$(primary_of postgresql)"
     local f="$1"; [ -f "$f" ] || die "Dosya yok: $f"
     confirm_restore "PostgreSQL" || return 1
-    gzip -dc "$f" | docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" -i postgresql \
+    gzip -dc "$f" | docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" -i "$C" \
         psql -U "${POSTGRES_USER:-root}" -d postgres
     [ "${PIPESTATUS[1]}" -eq 0 ] && bok "PostgreSQL geri yüklendi" || { berr "başarısız"; return 1; }
 }
