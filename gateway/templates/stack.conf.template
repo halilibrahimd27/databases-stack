@@ -81,8 +81,15 @@ server {
         root /usr/share/nginx/html;
     }
 
+    # KÖK: HTTPS'e YÖNLENDİRMİYORUZ — bilerek.
+    # Kullanıcı tarayıcıya çıplak IP yazınca önce buraya (http) gelir. Buradan
+    # https'e atarsak, sertifika henüz kurulu olmadığı için ilk karşılaştığı
+    # şey Chrome'un "Bağlantınız gizli değil" korku ekranı olur.
+    # Bunun yerine kurulum rehberini gösteriyoruz; o sayfa sertifikanın
+    # kurulu olup olmadığını kendisi yoklayıp kuruluysa panele yönlendiriyor.
     location / {
-        return 301 https://$host$request_uri;
+        root /usr/share/nginx/html;
+        try_files /setup.html =404;
     }
 }
 

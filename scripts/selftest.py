@@ -405,9 +405,17 @@ for b in blocks:
 ck("dashboard, paneller ve metrikler auth arkasında", not noauth, str(noauth))
 
 p80 = [b for b in blocks if re.search(r"listen\s+80\s", b)]
-ck("port 80 auth'suz ve yalnız /ca.crt + yönlendirme",
-   p80 and "auth_basic_user_file" not in p80[0]
-   and "/ca.crt" in p80[0] and "return 301 https://" in p80[0])
+# Port 80 auth İSTEMEZ ve HTTPS'e YÖNLENDİRMEZ: kullanıcı çıplak IP yazınca
+# ilk gördüğü şey tarayıcının sertifika korku ekranı olmasın diye kurulum
+# rehberi sunulur (rehber, sertifika kuruluysa kendisi panele yönlendirir).
+ck("port 80 auth'suz",
+   bool(p80) and "auth_basic_user_file" not in p80[0])
+ck("port 80 /ca.crt sunuyor", bool(p80) and "/ca.crt" in p80[0])
+ck("port 80 kökü kurulum rehberini gösteriyor (korku ekranına atmıyor)",
+   bool(p80) and "setup.html" in p80[0] and "return 301 https://" not in p80[0])
+_setup = open("gateway/html/setup.html", encoding="utf-8").read()
+ck("kurulum rehberi sertifika kuruluysa panele yönlendiriyor",
+   "fetch(panel + 'health'" in _setup and "location.replace(panel)" in _setup)
 
 ck("envsubst yalnız STACK_ değişkenlerine dokunur",
    set(re.findall(r"\$\{([A-Za-z_]+)\}", tpl)) == {"STACK_CONTROLLER_TOKEN", "STACK_RESOLVER"})

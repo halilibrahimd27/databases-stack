@@ -107,9 +107,23 @@ sudo update-ca-certificates</code></pre>
 </main>
 
 <script>
-  // Panel her zaman HTTPS'te; bu sayfa HTTP'den de açılabildiği için
-  // hedefi elle kuruyoruz.
-  document.getElementById('go').href = 'https://' + location.hostname + '/';
+  (function () {
+    var panel = 'https://' + location.hostname + '/';
+    var go = document.getElementById('go');
+    if (go) go.href = panel;
+
+    // Sertifika ZATEN kuruluysa kullanıcıyı burada oyalama — panele geçir.
+    // /health kimlik doğrulaması istemez; istek yalnızca sertifikaya
+    // güveniliyorsa başarılı olur. Güvenilmiyorsa tarayıcı isteği engeller,
+    // biz de rehberi göstermeye devam ederiz.
+    if (location.protocol === 'http:') {
+      var ctrl = new AbortController();
+      setTimeout(function () { ctrl.abort(); }, 3000);
+      fetch(panel + 'health', { mode: 'no-cors', signal: ctrl.signal })
+        .then(function () { location.replace(panel); })
+        .catch(function () { /* sertifika yok — rehber açık kalsın */ });
+    }
+  })();
 </script>
 </body>
 </html>
