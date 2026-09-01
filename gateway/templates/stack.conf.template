@@ -108,6 +108,13 @@ server {
         proxy_pass http://$up_controller:8000;
     }
 
+    # Motor kataloğu. Dashboard normalde /api/catalog'u kullanır; controller
+    # kapalıysa buraya düşer ve en azından motor listesini gösterebilir.
+    location = /catalog.json {
+        alias /etc/nginx/catalog.json;
+        default_type application/json;
+    }
+
     location / {
         root  /usr/share/nginx/html;
         index index.html;

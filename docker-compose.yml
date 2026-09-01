@@ -120,7 +120,9 @@ services:
       - ${STACK_DIR:-.}/gateway/empty.conf:/etc/nginx/conf.d/default.conf:ro
       - ${STACK_DIR:-.}/certs:/etc/nginx/certs:ro
       - ${STACK_DIR:-.}/gateway/.htpasswd:/etc/nginx/.htpasswd:ro
-      - ${STACK_DIR:-.}/catalog.json:/usr/share/nginx/html/catalog.json:ro
+      # Salt-okunur html mount'unun İÇİNE bağlanamaz (docker orada mountpoint
+      # yaratamaz). Ayrı yola bağlanıp nginx'te alias ile sunuluyor.
+      - ${STACK_DIR:-.}/catalog.json:/etc/nginx/catalog.json:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/health || exit 1"]
       interval: 30s
