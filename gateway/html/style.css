@@ -981,3 +981,8 @@ main {
   display: block; margin-top: 3px;
   font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
 }
+
+/* Ayrılan bellek tavanlarının toplamı dağıtılabilir belleği aştığında.
+   Kendi başına arıza değil (limitler üst sınırdır, rezervasyon değil) ama
+   kullanıcının görmesi gereken bir durum: hepsi aynı anda dolarsa yetmez. */
+.sys-sub-warn { color: var(--err); font-weight: 600; }

@@ -222,10 +222,16 @@ function cardHtml(engine, st, plan) {
   else if (st.active && st.health === 'unhealthy') badge = '<span class="badge err">Sorunlu</span>';
   else if (st.active) badge = '<span class="badge on">Çalışıyor</span>';
 
+  // "tool" türü kayıtlar (izleme gibi) veritabanı değildir: istemcinin
+  // bağlanacağı bir port, bağlantı bilgisi ya da yedek kopyası yoktur.
+  // Kartta o düğmeleri göstermek, kullanıcıya olmayan bir şey vaat etmektir.
+  const isTool = engine.kind === 'tool';
+  const ports = (engine.client_ports || []).map((x) => x.port).join(', ');
+
   const facts = st.active ? `
     <dl class="facts">
       <dt>Ayrılan bellek</dt><dd>${mb(st.memory_mb)}</dd>
-      <dt>Bağlantı portu</dt><dd>${engine.client_ports.map((x) => x.port).join(', ')}</dd>
+      ${ports ? `<dt>Bağlantı portu</dt><dd>${ports}</dd>` : ''}
       ${st.replication_active ? '<dt>Replika</dt><dd>çalışıyor</dd>' : ''}
     </dl>` : (blocked
       ? `<div class="blocked-note">${esc(plan.reason)}</div>`
@@ -236,7 +242,7 @@ function cardHtml(engine, st, plan) {
 
   const panelBtn = (engine.panel && st.active)
     ? `<button class="btn" data-act="panel" data-id="${engine.id}">${esc(engine.panel.name)} aç</button>` : '';
-  const connBtn = st.active
+  const connBtn = (st.active && !isTool)
     ? `<button class="btn" data-act="conn" data-id="${engine.id}">Bağlantı bilgisi</button>` : '';
 
   let repBtn = '';
@@ -301,20 +307,53 @@ function render() {
   $('#sys-disk').textContent = mb(sys.disk_free_mb) + ' boş';
 
   if (sys.mem_total_mb) {
-    // Üst barda AYRILAN belleği gösteriyoruz, gerçek kullanımı değil.
-    // Karar mekanizması ayrılan tavanlara göre çalışır: bir motorun limiti,
-    // o motorun büyüyebileceği üst sınırdır ve o kadarı ona söz verilmiştir.
+    // Üst barda AYRILAN belleği (tavanları) gösteriyoruz, gerçek kullanımı
+    // değil: karar mekanizması tavanlara göre çalışır. Bir motorun limiti, o
+    // motorun büyüyebileceği üst sınırdır ve o kadarı ona söz verilmiştir.
     // Gerçek kullanımı gösterip bütçeyi tavanlara göre reddetmek "14 GB boş
     // ama açılmıyor" gibi çelişkili görünüyordu; ikisini birlikte veriyoruz.
-    const committed = (sys.stack_committed_mb || 0)
-                    + (sys.os_reserve_mb || 0) + (sys.core_reserve_mb || 0);
+    //
+    // PAYDA, sunucunun TOPLAM RAM'i DEĞİL "dağıtılabilir" belleğidir
+    // (toplam − işletim sistemi payı − çekirdek servisler). Eskiden pay olarak
+    // tavanlara işletim sistemi payı da eklenip toplam RAM'e bölünüyordu ve
+    // ekranda "19 GB / 16 GB" gibi imkânsız görünen bir oran çıkıyordu —
+    // sayı doğruydu ama okuyan haklı olarak ürünü bozuk sanıyordu. Şimdi
+    // karşılaştırma anlamlı olan iki şey arasında: ne kadarını dağıtabilirim,
+    // ne kadarını dağıttım.
+    const alloc    = sys.stack_committed_mb || 0;
+    const reserved = (sys.os_reserve_mb || 0) + (sys.core_reserve_mb || 0);
+    const dagitilabilir = Math.max(0, (sys.mem_total_mb || 0) - reserved);
     const real = sys.mem_total_mb - (sys.mem_available_mb || 0);
-    const pct  = Math.min(100, Math.round((committed / sys.mem_total_mb) * 100));
-    $('#sys-mem').textContent = mb(committed) + ' / ' + mb(sys.mem_total_mb);
+    const pct  = dagitilabilir ? Math.round((alloc / dagitilabilir) * 100) : 0;
+    const asim = pct > 100;
+
+    $('#sys-mem').textContent = mb(alloc) + ' / ' + mb(dagitilabilir);
     const rel = $('#sys-mem-real');
-    if (rel) rel.textContent = 'gerçek kullanım ' + mb(real);
+    if (rel) {
+      rel.textContent = (asim ? '⚠ tavanlar kapasiteyi aşıyor · ' : '')
+                      + 'gerçek kullanım ' + mb(real);
+      rel.className = 'sys-sub' + (asim ? ' sys-sub-warn' : '');
+    }
+    // Tavan toplamının kapasiteyi aşması KENDİ BAŞINA arıza değildir: limitler
+    // birer üst sınırdır, rezervasyon değil — nitekim gerçek kullanım çok daha
+    // düşük. Riski hepsi aynı anda dolarsa doğar. Bu yüzden kırmızı gösterip
+    // sebebini yazıyoruz ama "bozuk" demiyoruz.
+    const item = document.querySelector('.sys-item-mem');
+    if (item) {
+      item.title = asim
+        ? 'Açık motorlara söz verilen bellek tavanlarının toplamı ('
+          + mb(alloc) + '), dağıtılabilir bellekten (' + mb(dagitilabilir)
+          + ') fazla. Şu anki gerçek kullanım ' + mb(real) + ' olduğu için '
+          + 'sorun görünmüyor; ama tüm motorlar aynı anda tavanına dayanırsa '
+          + 'işletim sistemi süreçleri öldürmeye başlar. Bu duruma genelde bir '
+          + 'motor panel dışından (docker start) elle başlatıldığında düşülür. '
+          + 'Kullanmadığınız bir motoru kapatmak oranı düşürür.'
+        : 'Toplam ' + mb(sys.mem_total_mb) + ' RAM\'in ' + mb(reserved)
+          + ' kadarı işletim sistemine ve çekirdek servislere ayrıldı; kalan '
+          + mb(dagitilabilir) + ' veritabanlarına dağıtılabilir.';
+    }
     const bar = $('#sys-mem-bar');
-    bar.style.width = pct + '%';
+    bar.style.width = Math.min(100, pct) + '%';
     bar.className = 'meter-fill' + (pct > 90 ? ' crit' : pct > 75 ? ' hot' : '');
   }
 

@@ -25,7 +25,8 @@ data:
         "streaming": "Mesajlaşma & Streaming",
         "analytics": "Analitik (OLAP)",
         "graph": "Graph",
-        "object": "Nesne Depolama"
+        "object": "Nesne Depolama",
+        "tools": "Araçlar"
       },
       "engines": [
         {
@@ -1230,6 +1231,67 @@ data:
             "free_for_production": "copyleft",
             "note": "Ücretli DEĞİL, AGPL-3.0. Ancak 2025'te community konsolundaki YÖNETİM özellikleri ticari AIStor'a taşındı. Bu yüzden sürüm bilerek o değişiklikten önceye sabitlendi (konsol tam çalışsın diye). AGPL: MinIO'yu değiştirip servis olarak sunarsanız kaynağı açmanız gerekir; kendi altyapınızda kullanmak serbesttir.",
             "alternative": "SeaweedFS (Apache-2.0)"
+          }
+        },
+        {
+          "id": "monitoring",
+          "kind": "tool",
+          "name": "İzleme",
+          "icon": "📈",
+          "category": "tools",
+          "summary": "Açık veritabanlarının grafikleri. Prometheus + Grafana.",
+          "profile": "monitoring",
+          "primary_service": "grafana",
+          "services": [
+            "prometheus",
+            "grafana",
+            "node-exporter"
+          ],
+          "client_ports": [],
+          "panel": {
+            "name": "Grafana",
+            "port": 8092,
+            "services": [
+              "grafana"
+            ]
+          },
+          "exporter": null,
+          "replication": {},
+          "backup": {
+            "supported": false,
+            "note": "Ölçüm verisi yedeklenmez: kaybolursa yeniden toplanır, veritabanlarınızın verisi değildir. Panolar zaten dosya olarak depoda durur."
+          },
+          "connection": null,
+          "k8s": null,
+          "resources": {
+            "min_mb": 256,
+            "share": 0.04,
+            "max_mb": 2048,
+            "overhead_mb": 0,
+            "panel_mb": 0,
+            "exporter_mb": 320,
+            "tuning": [
+              {
+                "env": "PROMETHEUS_MEM_LIMIT",
+                "kind": "limit",
+                "fmt": "M"
+              }
+            ]
+          },
+          "plain": {
+            "title": "Veritabanlarınızın grafikleri",
+            "detail": "Açık olan her veritabanı için hazır grafikler gelir: kaç bağlantı var, saniyede kaç işlem düşüyor, bellek yetiyor mu, yedek kopya geride mi. Her grafiğin altında ne anlama geldiği ve ne zaman endişelenmeniz gerektiği yazar.",
+            "badge": "Veritabanı değil, izleme aracı"
+          },
+          "failover": {
+            "supported": false,
+            "note": "İzleme aracının yedeği olmaz; kapalıyken veritabanlarınız etkilenmez."
+          },
+          "route": [],
+          "license": {
+            "name": "Apache-2.0 (Prometheus, node-exporter) / AGPL-3.0 (Grafana)",
+            "free_for_production": "copyleft",
+            "note": "Grafana OSS AGPL-3.0'dır. Olduğu gibi çalıştırmak serbesttir; AGPL yükümlülüğü ancak Grafana'yı DEĞİŞTİRİP ağ üzerinden üçüncü taraflara sunarsanız doğar. İç ağda kendi panolarınızı kullanmak bu kapsama girmez."
           }
         }
       ],

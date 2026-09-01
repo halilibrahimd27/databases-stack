@@ -60,6 +60,21 @@ map $http_origin $csrf_origin_host {
     "~^https?://(.+?)(:[0-9]+)?$" $1;
 }
 
+# 3) İsteğin YÖNTEMİ — yalnız panel portlarında (bkz. 8083) kullanılır.
+#    Panellerde /api/'deki kuralı olduğu gibi uygulayamıyoruz: panele giriş
+#    dashboard'dan yapılıyor (https://<ip>/ → https://<ip>:8083/) ve tarayıcı
+#    port farkı yüzünden bu gezinmeye "same-site" diyor. $csrf_site_ok bunu 0
+#    saydığı için tek başına kullanılsaydı panel HİÇ açılmazdı — kullanıcı
+#    "Panel" düğmesine her bastığında 403 görürdü.
+#    Bu yüzden panelde okuma serbest, yalnız veri değiştirebilen yöntemler
+#    (gizli form POST'unun kullandığı yöntemler) origin kontrolüne giriyor.
+map $request_method $panel_write {
+    default 1;   # POST/PUT/DELETE/PATCH → veriyi değiştirebilir
+    GET     0;
+    HEAD    0;
+    OPTIONS 0;
+}
+
 ssl_session_cache   shared:SSL:10m;
 ssl_session_timeout 1d;
 ssl_session_tickets off;
@@ -205,12 +220,23 @@ Bu uyarıyı bir bağlantıya tıkladıktan sonra gördüyseniz, o sayfa sizin a
         return 503 "Kontrol servisine şu anda ulaşılamıyor; büyük olasılıkla yeniden başlıyor. Veritabanlarınız bundan etkilenmez, yalnız buradaki düğmeler geçici olarak çalışmaz. Birkaç saniye sonra sayfayı yenileyip tekrar deneyin.
 ";
     }
+    # DİKKAT — bu metin İKİ farklı duruma birden düşer. error_page /api/
+    # location'ının tamamına bağlı, dashboard ise 5 saniyede bir /api/status,
+    # /api/plans, /api/events çağırıyor; yani kullanıcı hiçbir düğmeye
+    # basmadan da bu 504'ü görebilir. Eski metin "İşlem başlatıldı ama sonucu
+    # beklerken süre doldu" diye başlıyordu: kendiliğinden yenilenen listede
+    # bu, hiç yapılmamış bir işlemi haber veren yanlış bir cümleydi (app.js
+    # başına kendi "Kontrol servisine ulaşılamıyor:" cümlesini de ekliyor).
+    # Metin artık iki durumda da doğru: önce ne olduğunu söylüyor, uyarıyı
+    # "işlem başlattıysanız" koşuluna bağlıyor.
     location = /_api_timeout.txt {
         internal;
         auth_basic off;
         default_type text/plain;
         charset      utf-8;
-        return 504 "İşlem başlatıldı ama sonucu beklerken süre doldu. Sunucuda büyük olasılıkla hâlâ sürüyor: aynı işlemi tekrar başlatmayın. Birkaç dakika bekleyip sayfayı yenileyin, durumu listede göreceksiniz.
+        return 504 "Kontrol servisi bu isteğe zamanında cevap vermedi. Veritabanlarınız bundan etkilenmez.
+
+Az önce bir işlem başlattıysanız (aktif etme, kapatma, replika kurma) o işlem sunucuda sürüyor olabilir: aynı işlemi tekrar başlatmayın. Liste birkaç saniyede bir kendini yeniliyor, sonucu orada göreceksiniz.
 ";
     }
 
@@ -288,6 +314,30 @@ server {
         # İSTİSNA: Mongo Express'in kendi basic auth'u gateway ile aynı
         # kimlik bilgisini kullanır (PANEL_USER/PANEL_PASSWORD). Başlığı
         # iletmek kullanıcıyı ikinci kez giriş yapmaktan kurtarır.
+        #
+        # AMA bu istisnanın bedeli var: Authorization başlığını tarayıcı, o
+        # adrese giden HER isteğe kendiliğinden ekler ve HTTP auth çerez
+        # olmadığı için SameSite kuralları ona işlemez. Yani panele bir kez
+        # girmiş yöneticinin tarayıcısındaki kötü niyetli bir sayfa buraya
+        # gizli bir form POST'u yollarsa, istek mongo-express tarafında
+        # "kimliği doğrulanmış" sayılır; mongo-express 1.0.2'de bunu durduran
+        # bir CSRF jetonu yok, koleksiyon/veritabanı silme uçları bu yoldan
+        # tetiklenebilir. Diğer paneller proxy-panel.conf ile Authorization'ı
+        # temizleyip kendi çerez oturumlarını kullandığı için (çerezlerde
+        # SameSite=Lax varsayılanı geçerli) bu satırlara ihtiyaç duymaz.
+        #
+        # Kontrol /api/'dekiyle aynı map'lere dayanıyor, tek farkla: okuma
+        # serbest (bkz. $panel_write). nginx'te "if" içinde VE yok, o yüzden
+        # iki koşulu tek dizgede birleştiriyoruz.
+        set $panel_deny "$panel_write$csrf_site_ok";   # "10" = yazma + başka sayfa
+        if ($panel_deny = "10") { return 403; }
+        # Sec-Fetch-* göndermeyen eski tarayıcılar için ikinci kapı: yazma
+        # isteği, Origin adresi bu panelin adresi değilse reddedilir.
+        # (Origin yokken $csrf_origin_host = $host olur; normal gezinme ve
+        # curl ile çalışan bakım betikleri etkilenmez.)
+        set $panel_origin_deny $panel_write;
+        if ($csrf_origin_host = "$host") { set $panel_origin_deny 0; }
+        if ($panel_origin_deny = 1) { return 403; }
         include /etc/nginx/snippets/proxy.conf;
         proxy_pass http://$up:8081;
     }
@@ -397,6 +447,25 @@ server {
         set $up clickhouse;
         include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:8123;
+    }
+    include /etc/nginx/snippets/inactive.conf;
+}
+
+# --- 8092 Grafana (izleme) --------------------------------------------------
+# Grafana kendi giriş ekranını göstermez: bu port zaten panelin basic-auth'u
+# arkasında ve Grafana anonim ziyaretçiyi "Viewer" olarak kabul edecek şekilde
+# yapılandırıldı. Kullanıcıya hatırlaması gereken ikinci bir parola vermemek
+# için böyle; pano düzenlemek isteyen admin ile giriş yapar.
+server {
+    listen 8092 ssl; http2 on; server_name _;
+    include /etc/nginx/snippets/ssl.conf;
+    auth_basic "Grafana"; auth_basic_user_file /etc/nginx/.htpasswd;
+    location / {
+        set $up grafana;
+        include /etc/nginx/snippets/proxy-panel.conf;
+        # Grafana canlı pano güncellemesi ve Explore için WebSocket kullanır;
+        # proxy-panel.conf zaten Upgrade/Connection başlıklarını taşıyor.
+        proxy_pass http://$up:3000;
     }
     include /etc/nginx/snippets/inactive.conf;
 }

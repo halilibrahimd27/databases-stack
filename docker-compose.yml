@@ -84,6 +84,7 @@ services:
       - "8089:8089"   # MinIO Console
       - "8090:8090"   # Neo4j Browser
       - "8091:8091"   # ClickHouse Play
+      - "8092:8092"   # Grafana (izleme)
       - "9443:9443"   # Prometheus scrape (tüm exporter'lar tek portta)
       # --- Veritabanı portları ---
       # Doğrudan container'a değil gateway'e bağlanılır: failover'da
