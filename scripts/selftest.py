@@ -957,6 +957,46 @@ for _eid, _needle in (("postgresql", "shared_buffers=$(POSTGRES_SHARED_BUFFERS)"
     ck("K8s %s: args'taki $(VAR) referansları env'de tanımlı" % _eid,
        not _missing, ", ".join(_missing))
 
+# Devirden sonra yükseltilen düğüm ANA KOPYA olur; planlayıcıyı etkileyen
+# ayarları ana kopyayla aynı olmalı. effective_cache_size replikada eksikti:
+# yükseltilen düğüm PostgreSQL'in 4GB varsayılanını varsayıp kötü plan
+# seçiyordu, oysa container limiti ~2.4 GB. Bu ürün replikaya ana kopya kadar
+# BELLEK ayırıyor ("devirden sonra aynı yükü taşıyacak"); AYARLARIN da öyle
+# olması gerekiyor.
+_compose_yml = open("docker-compose.yml", encoding="utf-8").read()
+
+
+def _compose_servis(ad):
+    """docker-compose.yml'den TEK bir servis bloğunu çıkarır.
+
+    Naif bir `split("
+  ")` ilk satırda kesiyor ve blok boş kalıyordu; sonuç,
+    hiçbir şey doğrulamayan ama hep GEÇTİ yazan bir kontroldü — bu dosyanın
+    tam da yakalamaya çalıştığı hata türü. Blok, servis anahtarından bir
+    sonraki 2 boşluk girintili anahtara kadar sürer.
+    """
+    bas = _compose_yml.index(chr(10) + "  " + ad + ":") + 1
+    i = bas + len(ad) + 4
+    satirlar = []
+    for ln in _compose_yml[i:].split(chr(10)):
+        if ln[:3] == "  " + ln[2:3] and ln[2:3] not in (" ", "", "#") and ln.rstrip().endswith(":"):
+            break
+        satirlar.append(ln)
+    return chr(10).join(satirlar)
+
+
+_pg_blok = _compose_servis("postgresql")
+_pg_rep = _compose_servis("postgresql-replica")
+_planci = ["effective_cache_size", "shared_buffers", "work_mem", "max_connections"]
+_eksik = [a for a in _planci if a in _pg_blok and a not in _pg_rep]
+# Kontrolün kendisi de doğrulanıyor: bloklar gerçekten dolu mu?
+ck("compose servis blokları doğru ayrıştırılıyor (kontrol boş değil)",
+   len(_pg_blok) > 200 and len(_pg_rep) > 200 and "shared_buffers" in _pg_blok,
+   "primary=%d replika=%d karakter" % (len(_pg_blok), len(_pg_rep)))
+ck("replika, ana kopyanın planlayıcı ayarlarını da alıyor", not _eksik,
+   ("replikada eksik: " + ", ".join(_eksik)) if _eksik else "")
+
+
 ck("motor imajları <MOTOR>_IMAGE ile değiştirilebilir",
    all(("${%s_IMAGE:-" % k) in compose_txt
        for k in ("MARIADB", "POSTGRES", "MONGO", "REDIS", "MSSQL", "MINIO", "ELASTIC")))

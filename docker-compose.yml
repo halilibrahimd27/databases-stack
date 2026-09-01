@@ -525,6 +525,13 @@ services:
       - max_replication_slots=10
       - -c
       - shared_buffers=${POSTGRES_SHARED_BUFFERS:-512MB}
+      # Planlayıcı ayarı ANA KOPYAYLA AYNI olmalı. Yoksa devirden sonra
+      # yükseltilen düğüm, kendisinde olmayan bir önbelleği (PostgreSQL
+      # varsayılanı 4GB) varsayıp kötü plan seçer — oysa container limiti
+      # ~2.4 GB. Bu ürün replikaya ana kopya kadar bellek ayırıyor çünkü
+      # "devirden sonra aynı yükü taşıyacak"; ayarların da öyle olması lazım.
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE:-1536MB}
+      - log_min_duration_statement=2000
       - -c
       - work_mem=${POSTGRES_WORK_MEM:-4MB}
       - -c
