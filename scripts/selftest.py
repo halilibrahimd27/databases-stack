@@ -390,7 +390,8 @@ ck("tüm proxy_pass'ler değişkenli — kapalı motor nginx'i çökertmez",
    not fixed, "%d proxy_pass" % len(passes))
 
 blocks = re.split(r"\nserver \{", tpl)[1:]
-PROXY_SNIPPETS = ("snippets/proxy.conf", "snippets/proxy-metrics.conf")
+PROXY_SNIPPETS = ("snippets/proxy.conf", "snippets/proxy-metrics.conf",
+                  "snippets/proxy-panel.conf")
 miss = [re.search(r"listen\s+(\d+)", b).group(1) for b in blocks
         if any(x in b for x in PROXY_SNIPPETS) and "snippets/inactive.conf" not in b]
 ck("proxy kullanan her server'da 'pasif' sayfası tanımlı", not miss, str(miss))
@@ -421,6 +422,14 @@ ck("katalogdaki her panel portu dinleniyor", not missing, str(missing))
 _pm = open("gateway/snippets/proxy-metrics.conf", encoding="utf-8").read()
 ck("metrik uçlarında Authorization başlığı temizleniyor",
    'proxy_set_header Authorization ""' in _pm)
+_pp = open("gateway/snippets/proxy-panel.conf", encoding="utf-8").read()
+ck("panel uçlarında Authorization başlığı temizleniyor",
+   'proxy_set_header Authorization ""' in _pp)
+# Kibana ve RabbitMQ gelen auth başlığını kendi arka uçlarına deneyip 401 veriyordu
+_panels = tpl[tpl.index("8081 phpMyAdmin"):tpl.index("PORT 9443")]
+ck("Kibana ve RabbitMQ panelleri auth'suz proxy kullanıyor",
+   all(("set $up %s;" % u) in _panels for u in ("kibana", "rabbitmq"))
+   and _panels.count("proxy-panel.conf") >= 10)
 _m9443 = tpl[tpl.index("listen 9443 ssl"):]
 ck("tüm metrik location'ları metrik snippet'ini kullanıyor",
    "snippets/proxy.conf" not in _m9443 and _m9443.count("proxy-metrics.conf") >= 10,
@@ -433,7 +442,7 @@ for f in ("index.html", "app.js", "style.css", "inactive.html"):
 # location'ın içine include edildiği için, snippet'teki bir direktifi aynı
 # location'da tekrar yazmak gateway'i tamamen çökertir.
 snip_directives = set()
-for fn in ("proxy", "proxy-metrics"):
+for fn in ("proxy", "proxy-metrics", "proxy-panel"):
     for line in open("gateway/snippets/%s.conf" % fn, encoding="utf-8"):
         line = line.strip()
         if line and not line.startswith("#") and line.endswith(";")                 and not line.startswith("include "):

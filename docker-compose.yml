@@ -812,7 +812,20 @@ services:
       HEAP_NEWSIZE: ${CASSANDRA_HEAP_NEW:-256M}
       MAX_HEAP_SIZE: ${CASSANDRA_HEAP:-1G}
       # Thrift (9160 / start_rpc) Cassandra 4.0'da kaldırıldı — ölü ayar temizlendi.
-      JVM_EXTRA_OPTS: "-Djava.net.preferIPv4Stack=true"
+      #
+      # JMX: Cassandra varsayılan olarak JMX'i YALNIZ localhost'ta dinler
+      # (LOCAL_JMX=yes). Exporter ayrı bir container olduğu için ona
+      # ulaşamıyor ve sonsuza dek "Waiting for Cassandra JMX" der.
+      # LOCAL_JMX=no ile ağa açılıyor. Kimlik doğrulaması kapalı ama 7199
+      # host'a YAYINLANMIYOR — yalnız compose ağı içinden erişilebilir,
+      # bu da diğer servislerle aynı güven sınırı.
+      LOCAL_JMX: "no"
+      JVM_EXTRA_OPTS: >-
+        -Djava.net.preferIPv4Stack=true
+        -Dcom.sun.management.jmxremote.authenticate=false
+        -Dcom.sun.management.jmxremote.ssl=false
+        -Dcom.sun.management.jmxremote.rmi.port=7199
+        -Djava.rmi.server.hostname=cassandra
     volumes:
       - cassandra_data:/var/lib/cassandra
     ulimits:

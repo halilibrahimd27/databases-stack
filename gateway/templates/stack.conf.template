@@ -164,7 +164,7 @@ server {
     auth_basic "phpMyAdmin"; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up phpmyadmin;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:80;
     }
     include /etc/nginx/snippets/inactive.conf;
@@ -177,7 +177,7 @@ server {
     auth_basic "pgAdmin"; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up pgadmin;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:80;
     }
     include /etc/nginx/snippets/inactive.conf;
@@ -190,6 +190,9 @@ server {
     auth_basic "Mongo Express"; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up mongo-express;
+        # İSTİSNA: Mongo Express'in kendi basic auth'u gateway ile aynı
+        # kimlik bilgisini kullanır (PANEL_USER/PANEL_PASSWORD). Başlığı
+        # iletmek kullanıcıyı ikinci kez giriş yapmaktan kurtarır.
         include /etc/nginx/snippets/proxy.conf;
         proxy_pass http://$up:8081;
     }
@@ -203,7 +206,7 @@ server {
     auth_basic "RedisInsight"; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up redis-insight;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:5540;
     }
     include /etc/nginx/snippets/inactive.conf;
@@ -216,7 +219,7 @@ server {
     auth_basic "Adminer"; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up adminer;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:8080;
     }
     include /etc/nginx/snippets/inactive.conf;
@@ -229,7 +232,7 @@ server {
     auth_basic "Kibana"; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up kibana;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-panel.conf;
         proxy_read_timeout 600s;   # Kibana uzun süren aramalar açar
         proxy_pass http://$up:5601;
     }
@@ -243,7 +246,7 @@ server {
     auth_basic "Kafka UI"; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up kafka-ui;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:8080;
     }
     include /etc/nginx/snippets/inactive.conf;
@@ -256,7 +259,7 @@ server {
     auth_basic "RabbitMQ"; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up rabbitmq;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:15672;
     }
     include /etc/nginx/snippets/inactive.conf;
@@ -269,7 +272,7 @@ server {
     auth_basic "MinIO"; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up minio;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:9001;
     }
     include /etc/nginx/snippets/inactive.conf;
@@ -282,7 +285,7 @@ server {
     auth_basic "Neo4j"; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up neo4j;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:7474;
     }
     include /etc/nginx/snippets/inactive.conf;
@@ -296,7 +299,7 @@ server {
     location = / { return 302 /play; }
     location / {
         set $up clickhouse;
-        include /etc/nginx/snippets/proxy.conf;
+        include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:8123;
     }
     include /etc/nginx/snippets/inactive.conf;
