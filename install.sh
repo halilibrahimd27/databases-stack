@@ -44,8 +44,11 @@ command -v flock >/dev/null 2>&1 || warn "flock yok — yedekleme kilidi çalı�
 ok "Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo '?') + Compose v2"
 
 # Betikler zip/scp/rsync ile kopyalanmışsa çalıştırma biti kaybolmuş olabilir.
-# git klonunda mod doğru gelir; bu yalnızca güvenlik ağı.
-chmod +x stack.sh scripts/*.sh scripts/*/*.sh scripts/*.py 2>/dev/null || true
+# git klonunda mod zaten doğru gelir; bu yalnızca güvenlik ağı.
+# DİKKAT: scripts/lib/ HARİÇ — oradaki dosyalar source edilir, çalıştırılmaz ve
+# git'te 644'tür. Toplu chmod onları da 755 yapıp git ağacını kirletiyor ve
+# sonraki `git pull` "local changes would be overwritten" ile başarısız oluyordu.
+chmod +x stack.sh scripts/*.sh scripts/*.py          scripts/replication/*.sh scripts/failover/*.sh 2>/dev/null || true
 
 # Bind mount'lar mutlak yol ister; controller compose'u kendi içinden çağırıyor.
 STACK_DIR_VAL="$(pwd -P)"
