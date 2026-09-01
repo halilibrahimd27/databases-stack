@@ -403,14 +403,26 @@ attach)
   # Konumun gerçekten uygulandığını DOĞRULA. Uygulanmazsa START SLAVE, dökümde
   # zaten bulunan işlemleri tekrar oynatır ve yinelenen anahtar hatasıyla ölür;
   # üstelik bu, dökümün kendisi başarılı göründüğü için teşhisi zor bir arızadır.
+  # Ölçüt "konum boş mu" DEĞİL — hiç yazma almamış yepyeni bir ana kopyada
+  # konum meşru olarak boştur ve orada durmak doğru kurulumu engellerdi.
+  # Ölçüt: KAYNAKTA bir konum varsa hedefte de AYNISI olmalı. Değilse döküm
+  # konumu taşıyamamış demektir ve START SLAVE, dökümde zaten bulunan
+  # işlemleri tekrar oynatıp yinelenen anahtarla ölür.
+  kaynak_pos="$(m_primary -N -e "SELECT @@gtid_binlog_pos;" 2>/dev/null | tr -d '[:space:]')"
   hedef_pos="$(m_replica -N -e "SELECT @@gtid_slave_pos;" 2>/dev/null | tr -d '[:space:]')"
-  if [ -z "$hedef_pos" ]; then
-      echo "[mariadb] ✗ GTID konumu hedefe uygulanmadı — döküm konumu taşımamış." >&2
-      echo "[mariadb]   START SLAVE bu hâlde dökümdeki işlemleri tekrar oynatır" >&2
-      echo "[mariadb]   ve 'yinelenen anahtar' hatasıyla ölür. Durduruldu." >&2
-      exit 1
+  # Uyuşmazlıkta DURDURMUYORUZ, UYARIYORUZ. Asıl kapı zaten aşağıda: START
+  # SLAVE'den sonraki doğrulama replikasyon akmıyorsa çıkış 1 veriyor ve
+  # rebuild "başarılı" diye raporlanmıyor. Buradaki satırın işi teşhisi
+  # netleştirmek — 1062 "yinelenen anahtar" hatası tek başına sebebi
+  # söylemiyor, bu satır söylüyor. Sert durdurma yapsaydık, konumu
+  # okuyamadığımız (ölçemediğimiz) durumları da arıza sayardık.
+  if [ -n "$kaynak_pos" ] && [ "$kaynak_pos" != "$hedef_pos" ]; then
+      echo "[mariadb] ! GTID konumu hedefe uygulanmamış görünüyor." >&2
+      echo "[mariadb]   kaynak: ${kaynak_pos:-<boş>}   hedef: ${hedef_pos:-<boş>}" >&2
+      echo "[mariadb]   Replikasyon 'yinelenen anahtar' (1062) ile ölürse sebebi budur:" >&2
+      echo "[mariadb]   dökümde ZATEN bulunan işlemler tekrar oynatılıyor demektir." >&2
   fi
-  echo "[mariadb] GTID konumu: $hedef_pos"
+  [ -n "$hedef_pos" ] && echo "[mariadb] GTID konumu: $hedef_pos"
 
   echo "[mariadb] CHANGE MASTER"
   m_replica -e "
