@@ -316,13 +316,27 @@ ck("eski ana kopya yedek portundan (3307) erişilebilir",
 app.ROLES_ENV = "/tmp/dbstack-selftest/roles.env"
 app.write_roles()
 roles = open(app.ROLES_ENV, encoding="utf-8").read()
-ck("devir sonrası roller ters çevriliyor (rol dosyası)",
-   "POSTGRES_STANDBY_OF=postgresql-replica" in roles
-   and "POSTGRES_REPLICA_STANDBY_OF=
-" in roles + "
-")
-ck("MariaDB read_only rolü takip ediyor",
-   "MARIADB_READ_ONLY=ON" in roles and "MARIADB_REPLICA_READ_ONLY=OFF" in roles)
+lines_r = [ln.strip() for ln in roles.splitlines()]
+# Yukarıdaki devir MariaDB üzerinde yapıldı → yalnız onun rolleri ters dönmeli.
+ck("devir yapılan motorun rolleri ters çevriliyor",
+   "MARIADB_READ_ONLY=ON" in lines_r and "MARIADB_REPLICA_READ_ONLY=OFF" in lines_r)
+ck("devir yapılmayan motor özgün rolünde kalıyor",
+   "POSTGRES_REPLICA_STANDBY_OF=postgresql" in lines_r
+   and "POSTGRES_STANDBY_OF=" in lines_r)
+
+# PostgreSQL'i de devretmiş gibi işaretleyip simetriyi doğrula
+_topo = app.load_topology()
+_topo["postgresql"] = {"primary": "postgresql-replica"}
+_topo["redis"] = {"primary": "redis-replica"}
+app.save_topology(_topo)
+app.write_roles()
+lines_r = [ln.strip() for ln in open(app.ROLES_ENV, encoding="utf-8").read().splitlines()]
+ck("PostgreSQL rolleri simetrik olarak ters çevrilebiliyor",
+   "POSTGRES_STANDBY_OF=postgresql-replica" in lines_r
+   and "POSTGRES_REPLICA_STANDBY_OF=" in lines_r)
+# Redis'te "replicaof no one" primary demektir — simetrinin can alıcı noktası
+ck("Redis rolleri 'replicaof no one' ile ters çevriliyor",
+   "REDIS_STANDBY_OF=redis-replica" in lines_r and "REDIS_REPLICA_STANDBY_OF=no" in lines_r)
 
 evs = app.read_events()
 ck("devir kritik olay olarak kaydedildi",
