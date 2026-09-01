@@ -313,7 +313,7 @@ data:
           "backup": {
             "supported": true,
             "kind": "dump",
-            "ext": "tar.gz"
+            "ext": "archive.gz"
           },
           "connection": {
             "username": "root",

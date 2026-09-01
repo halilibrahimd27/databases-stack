@@ -965,6 +965,9 @@ def write_routes():
     return ROUTES_FILE
 
 
+TARGETS_INTERVAL = int(os.environ.get("TARGETS_INTERVAL", "30"))
+
+
 def write_prometheus_targets():
     """state/prometheus/targets.json — Prometheus'un file_sd hedef listesi.
 
@@ -1787,6 +1790,26 @@ def _alert_once(eid, key, message, every=600):
         return
     _ALERTED[(eid, key)] = now
     record_event("failover_impossible", eid, message, level="critical")
+
+
+def prometheus_target_refresher():
+    """Hedef listesini düzenli olarak yeniden üretir.
+
+    NEDEN ZAMANLAYICI: liste ilk sürümde write_routes()'a bağlıydı ve
+    write_routes AKTİVASYONDA ÇAĞRILMIYOR — çağrılmasına gerek de yok, çünkü
+    routes.conf'un içeriği hangi motorun ayakta olduğuna bağlı değil (nginx
+    DNS'i istek anında çözüyor). Sonuç: temiz kurulumdan sonra beş motor
+    açıldığı hâlde targets.json açılıştaki "[]" hâlinde kaldı ve İZLEMENİN
+    TAMAMI boş çizdi. Uçtan uca test bunu yakaladı.
+    Bir çağrı noktası eklemek yerine zamanlayıcı koyuyoruz: böylece gelecekte
+    eklenecek hiçbir yol (elle `docker start` dahil) bunu unutamaz.
+    """
+    while True:
+        try:
+            write_prometheus_targets()
+        except Exception as e:
+            log("hedef listesi yazılamadı:", e)
+        time.sleep(TARGETS_INTERVAL)
 
 
 def failover_supervisor():
@@ -2849,6 +2872,7 @@ def main():
         except Exception as e:
             log("yönlendirme tablosu yazılamadı:", e)
         threading.Thread(target=failover_supervisor, daemon=True).start()
+        threading.Thread(target=prometheus_target_refresher, daemon=True).start()
 
     Server(("0.0.0.0", LISTEN_PORT), Handler).serve_forever()
 
