@@ -955,7 +955,54 @@ def write_routes():
         f.write("\n".join(out))
         f.flush()
         os.fsync(f.fileno())
+    # İzleme hedef listesi de burada tazeleniyor: motor açılıp kapandığında
+    # yönlendirme tablosu neyse hedef listesi de odur. Ayrı bir çağrı noktası
+    # bırakmak, iki listeden birinin unutulup sessizce eskimesi demekti.
+    try:
+        write_prometheus_targets()
+    except Exception as e:
+        log("prometheus hedef listesi yazılamadı:", e)
     return ROUTES_FILE
+
+
+def write_prometheus_targets():
+    """state/prometheus/targets.json — Prometheus'un file_sd hedef listesi.
+
+    Prometheus dosyayı kendisi izler (refresh_interval), bu yüzden motor açıp
+    kapatınca yeniden başlatma ya da reload GEREKMEZ.
+
+    Yalnız AYAKTA olan exporter'lar yazılır. Kapalı motoru listede tutmak, her
+    kapalı motor için "erişilemiyor" alarmı üretirdi — oysa kapalı olmak arıza
+    değil, bu üründe normal bir durumdur.
+    """
+    path = os.path.join(STATE_DIR, "prometheus", "targets.json")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    running = {c["service"] for c in docker_containers() if c["status"] == "running"}
+    items = []
+    for e in CATALOG.engines:
+        ex = e.get("exporter") or {}
+        if not ex.get("port") or ex.get("service") not in running:
+            continue
+        items.append({
+            "targets": ["%s:%d" % (ex["service"], int(ex["port"]))],
+            "labels": {
+                "engine": e["id"],
+                "engine_name": e["name"],
+                # file_sd'de bu özel etiket, hedefin metrik yolunu belirler.
+                # MinIO gibi kendi ucunu farklı yolda sunanlar için şart.
+                "__metrics_path__": ex.get("scrape_path", "/metrics"),
+            },
+        })
+    body = json.dumps(items, ensure_ascii=False, indent=1)
+    # YERİNDE yazılıyor: dosya gateway'e değil Prometheus'a bağlanıyor ve
+    # bind-mount inode'a bağlıdır; geçici dosya + rename yapsaydık container
+    # eskimiş inode'u okumaya devam ederdi (routes.conf'ta bu gerçek bir
+    # olaydı — devir "başarılı" göründü ama bağlantılar koptu).
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(body)
+        f.flush()
+        os.fsync(f.fileno())
+    return path
 
 
 def write_roles():
@@ -2357,8 +2404,39 @@ def do_replication(jid, eid, enable):
             # olmayan motorlarda betik alakasız bir dala düşüp hata döndürüyor
             # ve "Replikayı kapat" kalıcı olarak kırılıyordu. Kalıntının pahalı
             # olduğu tek yer PostgreSQL'in slot'u; onu da burada SAYIYORUZ.
-            leftover = _pg_slots_left(prim, rep_env) if eid == "postgresql" else None
-            if leftover:
+            # ÜÇ DURUM, ÜÇ AYRI DAL. Burada `None` iki farklı şeye çözülüyordu
+            # ve ikisi aynı dala düşüyordu: "bu motorda kalıntı olmaz" ile
+            # "PostgreSQL'de SORAMADIK". İkincisi sessiz başarıya dönüşüyordu —
+            # yedek kaldırılıyor, slot ana kopyada kalıyor, WAL sonsuza dek
+            # birikip diski dolduruyordu. Üstelik senaryo istisnai değil: devir
+            # sonrası temizlik betiği sabit `postgresql` adına vurduğu için
+            # rc != 0 KURALDIR.
+            if eid == "postgresql":
+                leftover = _pg_slots_left(prim, rep_env)   # [] | [ad…] | None
+            else:
+                leftover = []          # bu motorlarda diski dolduran kalıntı yok
+
+            if leftover is None:
+                pstat, _ = _health_of(prim)
+                msg = ("Replikasyon slot'unun silindiği DOĞRULANAMADI: ana kopyaya "
+                       "(%s) sorulamadı. Yedek kopya KALDIRILMADI — geride kalan bir "
+                       "slot, WAL kayıtlarını sonsuza dek biriktirip ana kopyanın "
+                       "diskini doldurur ve onu durdurur. %s" % (prim, detail))
+                if pstat == "running":
+                    msg += (" Ana kopya çalışıyor; birkaç dakika sonra tekrar deneyin. "
+                            "Sürerse sunucuda `docker exec -it %s psql -U %s -d postgres "
+                            "-c \"SELECT slot_name FROM pg_replication_slots;\"` ile "
+                            "bakın." % (prim, rep_env.get("POSTGRES_USER", "root")))
+                    record_event("replication_blocked", eid, msg, level="critical")
+                    return job_done(jid, False, msg)
+                # Ana kopya kapalıysa slot WAL biriktiremez; engellemenin anlamı
+                # yok, ama kullanıcı motoru açtığında bu işi tekrarlamalı.
+                record_event("replication", eid,
+                             "Ana kopya (%s) çalışmadığı için slot durumu "
+                             "sorulamadı. Motoru açtıktan sonra 'Yedek Kopya Kur / "
+                             "Kapat' işlemini bir kez daha çalıştırın. %s"
+                             % (prim, detail), level="warning")
+            elif leftover:
                 pstat, _ = _health_of(prim)
                 msg = ("Replikasyon kalıntısı temizlenemedi — ana kopyada (%s) hâlâ "
                        "replikasyon slot'u duruyor: %s. Yedek kopya KALDIRILMADI: "
@@ -2553,6 +2631,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/healthz":
             return self._send(200, {"ok": True})
+        if path == "/metrics":
+            # Token İSTEMEZ, /healthz ile aynı gerekçeyle: controller portu
+            # host'a açılmaz, buraya yalnız Docker ağının içinden ulaşılır.
+            # Prometheus'a token dağıtmak, sırrı bir de scrape yapılandırmasına
+            # yazmak demekti.
+            try:
+                body = render_metrics().encode("utf-8")
+            except Exception as e:
+                log("metrik üretilemedi:", repr(e))
+                body = ("# metrik üretilemedi: %s\n" % e).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            return self.wfile.write(body)
         if not self._authed():
             return self._send(401, {"error": "yetkisiz"})
         if path == "/api/catalog":
