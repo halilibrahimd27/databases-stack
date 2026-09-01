@@ -82,6 +82,7 @@ trap e2e_interrupt INT TERM
 #   0   en az bir kontrol çalıştı, hiçbiri başarısız/ölçülemedi
 #   1   en az bir kontrol başarısız ya da ölçülemedi
 #   2   HİÇBİR KONTROL ÇALIŞMADI — "ölçmedik" demektir, "sağlam" değil
+#   3   EKSİK KAPSAM — çalışanlar geçti ama atlama sayısı ölçülenden çok
 #   130 kesildi
 e2e_finish() {
     local calisan=$((E2E_PASS + E2E_FAIL + E2E_UNKNOWN))
@@ -98,12 +99,17 @@ e2e_finish() {
         printf '    · %s\n' "${E2E_UNKNOWN_NAMES[@]}"
     fi
 
-    # Atlama oranı yüksekse bunu SONUÇLA BİRLİKTE söylüyoruz. "4 geçti, 48
-    # atlandı" satırını hızlı okuyan bir insan "hepsi geçti" sanıyordu.
-    if [ "$E2E_SKIP" -gt 0 ] && [ "$E2E_SKIP" -ge "$calisan" ]; then
-        printf '\n  %sDİKKAT:%s çalışan kontrolden (%d) daha fazlası atlandı (%d).\n' \
+    # KAPSAM KAPISI. Atlamalar meşrudur (motor kapalı olabilir) ama çalışan
+    # kontrolden ÇOĞU atlandıysa o koşu ürünü ölçmüş sayılmaz. Denetimde
+    # üretilen kalıp tam buydu: 4 motordan 3'ü atlandı, 1'i geçti, paket
+    # "çalışan kontrollerin hepsi geçti" yazıp ÇIKIŞ 0 verdi — okuyan
+    # "replikasyon doğrulandı" anladı, oysa üç motor hiç denenmemişti.
+    if [ "$calisan" -gt 0 ] && [ "$E2E_SKIP" -ge "$calisan" ] \
+       && [ "$E2E_FAIL" -eq 0 ] && [ "$E2E_UNKNOWN" -eq 0 ]; then
+        printf '\n  %sEKSİK KAPSAM:%s ölçülen %d kontrole karşılık %d atlama var.\n' \
             "$YELLOW" "$NC" "$calisan" "$E2E_SKIP"
-        printf '  Bu koşu ürünün büyük kısmını ÖLÇMEDİ; sebepleri yukarıda.\n'
+        printf '  Çalışanlar geçti, ama bu koşu ürünün büyük kısmını ÖLÇMEDİ.\n\n'
+        return 3
     fi
 
     if [ "$calisan" -eq 0 ]; then

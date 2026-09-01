@@ -87,27 +87,33 @@ warn "Üretim verisi olan bir kurulumda ÇALIŞTIRMAYIN."
 echo
 
 declare -A SONUC SURE
-TOPLAM_GECTI=0; TOPLAM_KALDI=0; TOPLAM_ATLANDI=0; BASARISIZ=0
+BASARISIZ=0   # geçemeyen paket sayısı (başarısız + ölçülmedi + kesildi)
 
 for s in "${SECILEN[@]}"; do
-    heading "▶ $s — ${ACIKLAMA[$s]}"
+    # Açıklaması olmayan bir paket (yeni eklenmiş bir dosya) `set -u`
+    # altında koşucuyu çökertiyordu; paket çalışmadan koşucu ölünce
+    # sonuç "hiç ölçülmedi" bile olmuyor, sessizce hiçbir şey olmuyordu.
+    heading "▶ $s — ${ACIKLAMA[$s]:-(açıklama yok)}"
     bas=$(date +%s)
     # Çıktıyı hem ekrana hem günlüğe veriyoruz; paketin çıkış kodunu
-    # PIPESTATUS ile alıyoruz — tee'nin kodu her zaman 0'dır ve onu okumak
-    # başarısız bir paketi "geçti" saymak demek olurdu.
+    # Çıktıyı hem ekrana hem günlüğe veriyoruz; paketin çıkış kodunu
+    # PIPESTATUS[0] ile alıyoruz. İNDİS ÖNEMLİ: boru hattının iki elemanı
+    # var — [0] süslü parantez grubu (paketin kendisi), [1] tee. tee HER
+    # ZAMAN 0 döner, dolayısıyla [1] okumak paketin 1/2/130 kodlarının
+    # ÜÇÜNÜ DE yutar ve başarısız paketi "GEÇTİ" raporlar. Bu satırda tam
+    # olarak o hata vardı: yorum doğruydu, indis yanlıştı.
     { echo "===== $s ====="; "scripts/e2e/$s.sh"; } 2>&1 | tee -a "$RUN_LOG"
-    rc=${PIPESTATUS[1]}
+    rc=${PIPESTATUS[0]}
     SURE[$s]=$(( $(date +%s) - bas ))
 
     # Sayıları paketin kendi çıktısından topluyoruz (ortak biçim).
-    g=$(grep -c '\[GEÇTİ\]'    "$RUN_LOG" 2>/dev/null || echo 0)
-    TOPLAM_GECTI=$g
-    # Çıkış kodları lib.sh'te tanımlı. 2'yi ayrı göstermek şart: "hiçbir
+    # (özet aşağıda günlüğü bir kez sayıyor; burada tekrar saymaya gerek yok)
     # kontrol çalışmadı" ile "her kontrol geçti" aynı satıra yazılırsa
     # paketin tüm anlamı kaybolur.
     case "$rc" in
         0)   SONUC[$s]="GEÇTİ" ;;
         2)   SONUC[$s]="ÖLÇÜLMEDİ"; BASARISIZ=$((BASARISIZ+1)) ;;
+        3)   SONUC[$s]="EKSİK-KAPSAM"; BASARISIZ=$((BASARISIZ+1)) ;;
         130) SONUC[$s]="KESİLDİ";   BASARISIZ=$((BASARISIZ+1)) ;;
         *)   SONUC[$s]="BAŞARISIZ"; BASARISIZ=$((BASARISIZ+1)) ;;
     esac
