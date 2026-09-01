@@ -1226,6 +1226,15 @@ def do_replication(jid, eid, enable):
             return job_done(jid, True)
 
         # devre dışı bırak
+        # ÖNCE motora özel temizlik: PostgreSQL'de boşta kalan replikasyon
+        # slot'u WAL'ı sonsuza dek biriktirip diski doldurur ve primary'yi
+        # durdurur. Replika container'ı silinmeden önce yapılmalı.
+        script = script_path("replication", eid)
+        if os.path.exists(script):
+            job_log(jid, "replikasyon kalıntıları temizleniyor…")
+            rc, out, err = run(["sh", script, "cleanup"], timeout=300, env=script_env())
+            job_log(jid, (out + err).strip()[-2000:])
+
         with ACTION_LOCK:
             args = ["--profile", engine["profile"], "--profile", profile]
             run(compose_base() + args + ["stop", svc], timeout=600)

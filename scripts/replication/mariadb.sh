@@ -71,4 +71,12 @@ attach)
   printf '%s' "$st" | grep -E "Last_.*Error" >&2 || true
   exit 1
   ;;
+cleanup)
+  # MariaDB'de PostgreSQL'in slot'u gibi WAL tutan bir yapı yok; binlog
+  # zaten binlog_expire_logs_seconds ile temizleniyor. Yine de replikanın
+  # bağlantısını düzgün kapatıp replikasyon kullanıcısını kaldırıyoruz.
+  echo "[mariadb] replikasyon kullanıcısı kaldırılıyor: $RUSER"
+  m_primary -e "DROP USER IF EXISTS '$RUSER'@'%'; FLUSH PRIVILEGES;" 2>/dev/null || true
+  echo "[mariadb] temizlendi"
+  ;;
 esac

@@ -14,6 +14,16 @@ psql_() { docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" -i post
 
 case "$PHASE" in
 prepare)
+  # Eski replikasyon slot'unu temizle. Replika sıfırdan kurulacağı için
+  # pg_basebackup slot'u YENİDEN yaratmak isteyecek; kalıntı varsa
+  # "replication slot already exists" ile ölür ve crash-loop'a girer.
+  SLOT="${POSTGRES_REPLICATION_SLOT:-replica_1}"
+  echo "[pg] eski replikasyon slot'u temizleniyor (varsa): $SLOT"
+  psql_ -c "SELECT pg_terminate_backend(active_pid) FROM pg_replication_slots
+            WHERE slot_name='$SLOT' AND active;" >/dev/null 2>&1 || true
+  psql_ -c "SELECT pg_drop_replication_slot('$SLOT')
+            WHERE EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name='$SLOT');"         >/dev/null 2>&1 || true
+
   echo "[pg] replikasyon rolü hazırlanıyor: $USER_"
   psql_ -c "DO \$\$ BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='$USER_') THEN
@@ -51,5 +61,21 @@ attach)
   done
   echo "[pg] ✗ replika 5 dakikada bağlanmadı — 'docker logs postgresql-replica' bakın" >&2
   exit 1
+  ;;
+cleanup)
+  # ⚠️ BU ADIM ATLANAMAZ. Boşta kalan bir replikasyon slot'u, PostgreSQL'e
+  # "bu WAL'ı hâlâ birinin okuması gerekiyor" der ve WAL SONSUZA DEK BİRİKİR.
+  # Sonu diskin dolması ve primary'nin durmasıdır. Replikasyon kapatılırken
+  # slot mutlaka silinmeli.
+  SLOT="${POSTGRES_REPLICATION_SLOT:-replica_1}"
+  echo "[pg] replikasyon slot'u siliniyor: $SLOT (yoksa WAL sonsuza dek birikir)"
+  psql_ -c "SELECT pg_terminate_backend(active_pid) FROM pg_replication_slots
+            WHERE slot_name='$SLOT' AND active;" >/dev/null 2>&1 || true
+  psql_ -c "SELECT pg_drop_replication_slot('$SLOT')
+            WHERE EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name='$SLOT');"         >/dev/null 2>&1 || true
+  psql_ -c "SELECT slot_name, active, pg_size_pretty(
+              pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)) AS tutulan_wal
+            FROM pg_replication_slots;" 2>/dev/null || true
+  echo "[pg] temizlendi"
   ;;
 esac
