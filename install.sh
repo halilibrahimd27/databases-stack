@@ -43,6 +43,10 @@ require_cmd openssl python3 awk grep sed
 command -v flock >/dev/null 2>&1 || warn "flock yok — yedekleme kilidi çalışmaz (util-linux kurun)"
 ok "Docker $(docker version --format '{{.Server.Version}}' 2>/dev/null || echo '?') + Compose v2"
 
+# Betikler zip/scp/rsync ile kopyalanmışsa çalıştırma biti kaybolmuş olabilir.
+# git klonunda mod doğru gelir; bu yalnızca güvenlik ağı.
+chmod +x stack.sh scripts/*.sh scripts/*/*.sh scripts/*.py 2>/dev/null || true
+
 # Bind mount'lar mutlak yol ister; controller compose'u kendi içinden çağırıyor.
 STACK_DIR_VAL="$(pwd -P)"
 ok "Stack dizini: $STACK_DIR_VAL"
