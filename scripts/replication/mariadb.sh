@@ -182,9 +182,10 @@ attach)
   # ve her tekrar denemede "sağlıklı" diye raporlanırdı — kemerlerin hiçbiri o
   # topolojiyi bir daha denetlemiyordu. Akan bir replikada yönün GERÇEK kanıtı
   # Master_Host'tur; onu doğrulamadan kısayola girmiyoruz.
-  # `-N` (--skip-column-names) BURADA KULLANILMAZ. MariaDB istemcisi dikey (\G)
-  # çıktıyı sütun ADLARIYLA basar; -N verilince \G çıktısının TAMAMI susar, sorgu
-  # BOŞ döner. Bu yüzden yukarıdaki iki kemer de fiilen ölüydü: "zaten akışta"
+  # `-N` (--skip-column-names) BURADA KULLANILMAZ. Dikey (\G) çıktıda -N,
+  # satırları değil ALAN ADLARINI siler: aynı sayıda satır gelir ama
+  # "Slave_IO_Running: Yes" yerine yalnız "Yes" yazar. Alan adına grep atan
+  # her kontrol bu yüzden HİÇ eşleşmez. Bu yüzden yukarıdaki iki kemer de fiilen ölüydü: "zaten akışta"
   # kısayolu hiç çalışmıyor (her çağrı baştan döküm alıyordu) ve ondan da
   # önemlisi, YANLIŞ kaynaktan akan bir topoloji hiç yakalanamıyordu. Gerçek
   # container'da ölçüldü: `mariadb -N -e 'SHOW SLAVE STATUS\G'` → sıfır satır,

@@ -11,12 +11,26 @@ PASS="${MARIADB_PASSWORD:-$DB_PASSWORD}"
 # mq() — hatası GÖRÜNEN komut. Yükseltme komutlarının sessizce yutulması,
 #        "read_only kapandı ama betik yine de 1 döndü" gibi teşhis edilmesi
 #        zor arızalara yol açıyordu.
+# İKİ AYRI YARDIMCI — ve aradaki fark bir kere gerçek bir arızaya yol açtı.
+#
+# `-N` (--skip-column-names) DİKEY çıktıda (\G) ALAN ADLARINI DA siler: satır
+# sayısı aynı kalır ama "Slave_IO_Running: Yes" yerine yalnız "Yes" gelir.
+# Bu betikteki bütün SHOW SLAVE STATUS kontrolleri o adlara grep atıyordu,
+# dolayısıyla HİÇBİRİ eşleşmiyordu. Sonucu şuydu: replikasyon sapasağlam
+# akarken (Master_Host: mariadb, IO: Yes, SQL: Yes) `ready` "replika olarak
+# yapılandırılmamış" diyordu — yani veri kaybını önlemek için konan kapı HER
+# ZAMAN reddediyor ve MariaDB'de otomatik devir hiç çalışmıyordu. Ürünün
+# başlıca özelliği sessizce kayıptı; uçtan uca test paketi ortaya çıkardı.
+#
+# m()  → tek değerli sorgular (SELECT @@read_only): -N ile, çıplak değer gelsin
+# mv() → DİKEY sorgular (SHOW SLAVE STATUS\G): -N YOK, alan adları korunsun
 m()  { MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD "$SVC" mariadb -u root -N -e "$1" 2>/dev/null; }
+mv() { MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD "$SVC" mariadb -u root    -e "$1" 2>/dev/null; }
 mq() { MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD "$SVC" mariadb -u root -N -e "$1" 2>&1; }
 
 is_primary() {
     ro="$(m 'SELECT @@read_only;' | tr -d '[:space:]')"
-    io="$(m 'SHOW SLAVE STATUS\G' | grep -c 'Slave_IO_Running: Yes' || true)"
+    io="$(mv 'SHOW SLAVE STATUS\G' | grep -c 'Slave_IO_Running: Yes' || true)"
     [ "$ro" = "0" ] && [ "$io" = "0" ]
 }
 
@@ -33,7 +47,7 @@ ready)
   # Ana kopya bu noktada çoktan ölmüş olabilir; bu yüzden CANLI bağlantı
   # ARAMIYORUZ (IO thread "Connecting" olacaktır). Aradığımız şey, replikanın
   # aldığı olayları gerçekten UYGULAYABİLDİĞİNİN kanıtı.
-  st="$(m 'SHOW SLAVE STATUS\G' 2>/dev/null || true)"
+  st="$(mv 'SHOW SLAVE STATUS\G' 2>/dev/null || true)"
   if [ -n "$st" ]; then
       if printf '%s\n' "$st" | grep -q 'Slave_SQL_Running: Yes'; then
           echo "[mariadb] $SVC yükseltmeye hazır"
@@ -59,7 +73,7 @@ promote)
   m 'STOP SLAVE IO_THREAD;' >/dev/null 2>&1 || true
   i=0
   while [ $i -lt 30 ]; do
-      relay="$(m 'SHOW SLAVE STATUS\G' | grep -c 'Slave_SQL_Running_State: Slave has read all relay log' || true)"
+      relay="$(mv 'SHOW SLAVE STATUS\G' | grep -c 'Slave_SQL_Running_State: Slave has read all relay log' || true)"
       [ "$relay" = "1" ] && break
       i=$((i+1)); sleep 1
   done

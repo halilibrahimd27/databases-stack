@@ -423,6 +423,25 @@ for _f in sorted(os.listdir(_fo_dir)):
     ck("%s 'ready' eylemini destekliyor" % _f,
        any(ln.strip() == "ready)" for ln in _src.splitlines()))
 _mdb_fo = open(os.path.join(_fo_dir, "mariadb.sh"), encoding="utf-8").read()
+# MariaDB istemcisinde `-N` (--skip-column-names) DİKEY (\G) çıktıda alan
+# ADLARINI siler. Alan adına grep atan bir kontrol bu yüzden hiç eşleşmez ve
+# SESSİZCE yanlış cevap verir. Gerçek bir olaydı: replikasyon sapasağlam
+# akarken (Master_Host: mariadb, IO: Yes, SQL: Yes) devir kapısı "replika
+# olarak yapılandırılmamış" diyordu — yani veri kaybını önlemek için konan
+# kapı HER ZAMAN reddediyor ve MariaDB'de otomatik devir hiç çalışmıyordu.
+_sh_hepsi = {}
+for _d in ("scripts/failover", "scripts/replication"):
+    for _f in sorted(os.listdir(_d)):
+        if _f.endswith(".sh"):
+            _sh_hepsi[_d + "/" + _f] = open(_d + "/" + _f, encoding="utf-8").read()
+_tuzak = []
+for _yol, _src in _sh_hepsi.items():
+    for _ln in _src.splitlines():
+        if "\G" in _ln and " -N " in _ln and not _ln.strip().startswith("#"):
+            _tuzak.append("%s: %s" % (os.path.basename(_yol), _ln.strip()[:70]))
+ck("dikey (\G) sorgularda -N kullanılmıyor (alan adlarını siler)",
+   not _tuzak, "; ".join(_tuzak))
+
 ck("MariaDB yükseltmesi super_read_only KULLANMIYOR (MariaDB'de yoktur)",
    "SET GLOBAL super_read_only" not in _mdb_fo)
 _mdb_rep = open(os.path.join(ROOT, "scripts", "replication", "mariadb.sh"),
