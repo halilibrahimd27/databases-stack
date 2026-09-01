@@ -455,10 +455,18 @@ document.addEventListener('click', (ev) => {
       return;
     }
   }
-  /* Hatalar BURADA yakalanır — düğme işleyicilerinin tek çıkışı burası.
-     Bu dinleyici async değil; dallar eskiden "return activate(engine)" diyordu
-     ve activate/deactivate/toggle*/
-
+  /* Hata BURADA yakalanır: düğmeye basınca çalışan işlevlerin tek çağrı yeri
+     burası. Bu dinleyici async değil, dallar eskiden "return activate(engine)"
+     diyordu ve activate / deactivate / toggleReplication / toggleAutoFailover /
+     rebuildStandby içindeki "await api(...)" hiçbir try içinde değildi. api()
+     403/503/504'te throw ettiği için (yukarıda, r.ok kontrolü) hata yakalanmamış
+     bir promise reddine dönüşüyordu: onay penceresi kapanıyor, ekranda HİÇBİR
+     ŞEY olmuyordu. Yani gateway'in tam da bu durum için yazdığı düz metinler
+     ("aynı işlemi tekrar başlatmayın", "bu istek panelin kendi sayfasından
+     gelmediği için durduruldu") kullanıcıya hiç ulaşmıyordu — kullanıcı da
+     düğmeye bir kez daha basıyordu. */
+  if (p) p.catch((e) => infoBox('İşlem yapılamadı', '<p>' + esc(e.message) + '</p>'));
+});
 
 (async function init() {
   try {
