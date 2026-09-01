@@ -282,7 +282,10 @@ services:
       # yoksa "using password: NO" → Access denied → mysql_up=0.
       MYSQLD_EXPORTER_PASSWORD: ${MARIADB_PASSWORD:-${DB_PASSWORD}}
     command:
-      - "--mysqld.address=mariadb:3306"
+      # Adres SABİT DEĞİL: devirden sonra ana kopya mariadb-replica olur ve
+      # sabit adres fence edilmiş düğümü göstermeye devam ederdi — mysql_up=0,
+      # o motorun bütün grafikleri boş. roles.env'i controller yazar.
+      - "--mysqld.address=${MARIADB_PRIMARY_HOST:-mariadb}:3306"
       - "--mysqld.username=root"
     depends_on:
       mariadb:
@@ -449,7 +452,8 @@ services:
     environment:
       # Parola URI'ye gömülmüyor: özel karakter (@ : / ?) içeren parolalar
       # DATA_SOURCE_NAME'i sessizce bozuyordu.
-      DATA_SOURCE_URI: "postgresql:5432/${DEFAULT_DATABASE:-defaultdb}?sslmode=disable"
+      # Devirden sonra ana kopya değişir; sabit adres eski düğümde kalırdı.
+      DATA_SOURCE_URI: "${POSTGRES_PRIMARY_HOST:-postgresql}:5432/${DEFAULT_DATABASE:-defaultdb}?sslmode=disable"
       DATA_SOURCE_USER: ${POSTGRES_USER:-root}
       DATA_SOURCE_PASS: ${POSTGRES_PASSWORD:-${DB_PASSWORD}}
     command:
@@ -736,7 +740,8 @@ services:
     image: oliver006/redis_exporter:v1.62.0
     container_name: redis-exporter
     environment:
-      REDIS_ADDR: "redis://redis:6379"
+      # Devirden sonra ana kopya değişir; sabit adres eski düğümde kalırdı.
+      REDIS_ADDR: "redis://${REDIS_PRIMARY_HOST:-redis}:6379"
       REDIS_PASSWORD: ${REDIS_PASSWORD:-${DB_PASSWORD}}
     depends_on:
       redis:

@@ -582,6 +582,21 @@ ck("devir yapılmayan motor özgün rolünde kalıyor",
    "POSTGRES_REPLICA_STANDBY_OF=postgresql" in lines_r
    and "POSTGRES_STANDBY_OF=" in lines_r)
 
+# Exporter'ın bağlanacağı düğüm de rollerle birlikte taşınmalı. Adres servis
+# tanımında sabit yazılıydı ve devirden sonra fence edilmiş eski primary'yi
+# göstermeye devam ediyordu: gerçek sunucuda mysql_up=0 ölçüldü ve o motorun
+# BÜTÜN grafikleri boşaldı — izleme, tam da devirden sonra körleşiyordu.
+ck("izleme ucu devirle birlikte yeni ana kopyayı gösteriyor",
+   "MARIADB_PRIMARY_HOST=mariadb-replica" in lines_r)
+ck("devir olmayan motorun izleme ucu yerinde kalıyor",
+   "POSTGRES_PRIMARY_HOST=postgresql" in lines_r
+   and "REDIS_PRIMARY_HOST=redis" in lines_r)
+# Değişkeni compose gerçekten kullanmalı; roles.env'e yazıp servis tanımında
+# okumamak, sessizce hiçbir şey yapmayan bir düzeltme olurdu.
+_dc = open("docker-compose.yml", encoding="utf-8").read()
+ck("exporter servis tanımları bu değişkenleri okuyor",
+   all(("${%s_PRIMARY_HOST:-" % v) in _dc for v in ("MARIADB", "POSTGRES", "REDIS")))
+
 # PostgreSQL'i de devretmiş gibi işaretleyip simetriyi doğrula
 _topo = app.load_topology()
 _topo["postgresql"] = {"primary": "postgresql-replica"}

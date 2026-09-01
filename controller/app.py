@@ -1051,6 +1051,17 @@ def write_roles():
                 lines += ["MARIADB_READ_ONLY=OFF", "MARIADB_REPLICA_READ_ONLY=ON"]
             else:
                 lines += ["MARIADB_READ_ONLY=ON", "MARIADB_REPLICA_READ_ONLY=OFF"]
+
+        # Exporter'ın bağlanacağı düğüm. Adres SERVİS TANIMINDA sabit yazılıydı
+        # ve devirden sonra fence edilmiş eski primary'yi göstermeye devam
+        # ediyordu: gerçek sunucuda topoloji `mariadb-replica` derken exporter
+        # hâlâ `mariadb:3306`e bakıyor, mysql_up=0 kalıyor ve o motorun BÜTÜN
+        # grafikleri boşalıyordu. Yani izleme, tam da en çok ihtiyaç duyulan
+        # anda — devirden hemen sonra — körleşiyordu. Yedekleme betiğinde aynı
+        # sınıftan hata primary_of() ile kapatılmıştı; exporter'lar atlanmış.
+        lines.append("%s_PRIMARY_HOST=%s" % (
+            {"postgresql": "POSTGRES", "redis": "REDIS", "mariadb": "MARIADB"}[eid],
+            prim))
         lines.append("")
 
     os.makedirs(os.path.dirname(ROLES_ENV), exist_ok=True)
@@ -1438,6 +1449,31 @@ def _perform_failover_locked(engine, eid, fo, reason, jid, refuse):
     write_roles()      # roller yer değiştirdi — yeni rol dosyasını üret
     write_routes()
     routed, route_err = gateway_reload_or_alert(eid, "%s → %s devri" % (old, new))
+
+    # Exporter'ı yeni ana kopyaya çevir. roles.env'i yazmak TEK BAŞINA yetmez:
+    # env değişkenleri container YARATILIRKEN okunur, çalışan container eski
+    # adresiyle kalır. Gerçek sunucuda ölçtüm — devirden sonra mysql_up=0'a
+    # düşüyor ve o motorun bütün grafikleri boşalıyordu; yani izleme tam da
+    # devirden sonra, en çok ihtiyaç duyulan anda körleşiyordu.
+    # Bu adım başarısız olursa devir BAŞARISIZ SAYILMAZ: veritabanı çalışıyor,
+    # yalnız grafikleri eksik kalır. Kullanıcıya olayla haber veriyoruz.
+    # Yalnız AYRI bir exporter container'ı olan motorlar için. RabbitMQ,
+    # ClickHouse ve MinIO metrikleri kendi içlerinden sunar (exporter.builtin);
+    # onlarda çevrilecek ayrı bir container yok.
+    exp = (engine.get("exporter") or {}).get("service")
+    if exp and exp != engine["primary_service"] and exp in engine.get("services", []):
+        rc_e, out_e, err_e = run(
+            compose_base() + ["--profile", engine["profile"], "up", "-d",
+                              "--force-recreate", "--no-deps", exp],
+            timeout=300)
+        if rc_e == 0:
+            jl("   izleme ucu yeni ana kopyaya çevrildi:", exp, "→", new)
+        else:
+            jl("   UYARI: izleme ucu güncellenemedi:", (err_e or out_e).strip()[-200:])
+            record_event("exporter_stale", eid,
+                         "Devir tamamlandı ama izleme ucu (%s) yeni ana kopyaya "
+                         "çevrilemedi; bu motorun grafikleri boş kalabilir. "
+                         "Veritabanı etkilenmedi." % exp, level="warning")
 
     # 4) KAYDET
     jl("4/4 tamam — yeni primary:", new)
