@@ -335,8 +335,17 @@ attach)
   if [ -n "$dbs" ]; then
       echo "[mariadb] kullanıcı veritabanları kopyalanıyor:" $dbs
       # --single-transaction: tabloları kilitlemeden tutarlı anlık görüntü.
-      # --gtid + --master-data=2: dökümün başına `SET GLOBAL gtid_slave_pos=…`
-      #   yazar → replika tam olarak doğru noktadan devam eder, veri atlanmaz.
+      # --gtid + --master-data=1: dökümün başına `SET GLOBAL gtid_slave_pos=…`
+      #   yazar → replika tam olarak doğru noktadan devam eder.
+      #
+      # DİKKAT — =1, =2 DEĞİL. `--master-data=2` aynı ifadeleri YORUM olarak
+      # yazar; yani konum hiç uygulanmaz. Gerçek sunucuda ölçüldü: kaynağın
+      # konumu 0-2-89 iken dökümde `-- SET GLOBAL gtid_slave_pos='0-2-89';`
+      # satırı yorumluydu ve hedef kendi eski konumunda (0-2-9) kaldı. START
+      # SLAVE, dökümde ZATEN bulunan 10..89 arası işlemleri tekrar oynatıp
+      # "Error_code: 1062 — HA_ERR_FOUND_DUPP_KEY" ile öldü. Belirtisi
+      # kafa karıştırıcıydı: döküm başarılı, hesaplar taşındı, CHANGE MASTER
+      # çalıştı, sonra replikasyon "yinelenen anahtar" dedi.
       #
       # DÖKÜMÜN ÇIKIŞ KODU DOSYAYLA TAŞINIR. POSIX sh'te `pipefail` yoktur;
       # boru hattının durumu SON komuttan (yani yüklemeyi yapan m_replica'dan)
@@ -349,7 +358,7 @@ attach)
       : > "$dump_rc"
       if ! { MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD "$PRIMARY" mariadb-dump -u root \
                  --databases $dbs \
-                 --single-transaction --quick --gtid --master-data=2 \
+                 --single-transaction --quick --gtid --master-data=1 \
                  --routines --triggers --events 2>"$err_log" \
              || echo "$?" > "$dump_rc"; } \
             | m_replica 2>>"$err_log"; then
@@ -390,6 +399,18 @@ attach)
       m_primary -N -e "SHOW GRANTS FOR $u;" 2>/dev/null | sed 's/$/;/' \
           | m_replica >/dev/null 2>&1 || true
   done
+
+  # Konumun gerçekten uygulandığını DOĞRULA. Uygulanmazsa START SLAVE, dökümde
+  # zaten bulunan işlemleri tekrar oynatır ve yinelenen anahtar hatasıyla ölür;
+  # üstelik bu, dökümün kendisi başarılı göründüğü için teşhisi zor bir arızadır.
+  hedef_pos="$(m_replica -N -e "SELECT @@gtid_slave_pos;" 2>/dev/null | tr -d '[:space:]')"
+  if [ -z "$hedef_pos" ]; then
+      echo "[mariadb] ✗ GTID konumu hedefe uygulanmadı — döküm konumu taşımamış." >&2
+      echo "[mariadb]   START SLAVE bu hâlde dökümdeki işlemleri tekrar oynatır" >&2
+      echo "[mariadb]   ve 'yinelenen anahtar' hatasıyla ölür. Durduruldu." >&2
+      exit 1
+  fi
+  echo "[mariadb] GTID konumu: $hedef_pos"
 
   echo "[mariadb] CHANGE MASTER"
   m_replica -e "
