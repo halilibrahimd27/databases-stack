@@ -312,6 +312,77 @@ prom = [c for c in calls if c[0] == "sh" and "promote" in c]
 ck("yükseltme betiği çağrılıyor", bool(prom), " ".join(prom[0]) if prom else "")
 ck("fence, yükseltmeden ÖNCE geliyor",
    bool(fence) and bool(prom) and calls.index(fence[0]) < calls.index(prom[0]))
+ck("hazırlık kontrolü ('ready') fence'ten ÖNCE sorulur",
+   any("ready" in c for c in calls)
+   and calls.index(next(c for c in calls if "ready" in c)) < calls.index(fence[0]))
+
+
+def _mock_run(rcs):
+    """Komutta geçen anahtar kelimeye göre çıkış kodu döndüren sahte run()."""
+    def _r(cmd, timeout=900, env=None):
+        calls.append(cmd)
+        for key, rc in rcs.items():
+            if key in cmd:
+                return (rc, "", "sahte hata: " + key)
+        return (0, "", "")
+    return _r
+
+
+def _reset_topo():
+    if os.path.exists(app.TOPOLOGY_FILE):
+        os.remove(app.TOPOLOGY_FILE)
+
+
+# --- Replikasyon akmıyorsa devir YAPILMAMALI ---------------------------------
+# Senkron olmamış bir replikayı primary yapmak sessiz veri kaybıdır; üstelik
+# ana kopyayı fence edip yükseltme tutmazsa veritabanı tamamen erişilemez kalır.
+# Gerçek bir olayda tam olarak bu yaşandı.
+_reset_topo(); calls[:] = []
+app.run = _mock_run({"ready": 1})
+okk, reason = app.perform_failover("mariadb", "test: replikasyon bozuk")
+ck("replikasyon sağlıksızken devir REDDEDİLİR", not okk and "hazır değil" in (reason or ""))
+ck("devir reddedilince ana kopyaya DOKUNULMAZ (durdurulmaz)",
+   not any(c[:2] == ["docker", "stop"] for c in calls))
+
+# --- Yükseltme betiği hata verdi ama düğüm gerçekten yükseldi ----------------
+# MariaDB betiği motorda olmayan bir değişken yüzünden 1 dönüyordu; read_only
+# kapanmış olmasına rağmen devir iptal ediliyor ve veritabanı erişilemez
+# bırakılıyordu. Karar artık çıkış koduna değil ÖLÇÜLEN DURUMA dayanır.
+_reset_topo(); calls[:] = []
+app.run = _mock_run({"promote": 1})
+okk, reason = app.perform_failover("mariadb", "test: betik hata verdi ama yükseldi")
+ck("betik hata verse de düğüm yazılabilir primary ise devir TAMAMLANIR", okk, reason or "")
+
+# --- Yükseltme gerçekten başarısız → GERİ AL --------------------------------
+_reset_topo(); calls[:] = []
+app.run = _mock_run({"promote": 1, "check": 1})
+okk, reason = app.perform_failover("mariadb", "test: yükseltme başarısız")
+ck("yükseltme gerçekten başarısızsa devir başarısız sayılır", not okk)
+ck("başarısız yükseltmeden sonra eski ana kopya GERİ AÇILIR (tam kesinti olmaz)",
+   any(c[:2] == ["docker", "start"] and c[-1] == "mariadb" for c in calls))
+
+# --- Devir betiklerinin statik denetimi --------------------------------------
+_fo_dir = os.path.join(ROOT, "scripts", "failover")
+for _f in sorted(os.listdir(_fo_dir)):
+    if not _f.endswith(".sh"):
+        continue
+    _src = open(os.path.join(_fo_dir, _f), encoding="utf-8").read()
+    ck("%s 'ready' eylemini destekliyor" % _f,
+       any(ln.strip() == "ready)" for ln in _src.splitlines()))
+_mdb_fo = open(os.path.join(_fo_dir, "mariadb.sh"), encoding="utf-8").read()
+ck("MariaDB yükseltmesi super_read_only KULLANMIYOR (MariaDB'de yoktur)",
+   "SET GLOBAL super_read_only" not in _mdb_fo)
+_mdb_rep = open(os.path.join(ROOT, "scripts", "replication", "mariadb.sh"),
+                encoding="utf-8").read()
+ck("MariaDB tohumlaması replikanın gtid_slave_pos tablosunu EZMİYOR",
+   "--ignore-table=mysql.gtid_slave_pos" in _mdb_rep)
+ck("MariaDB tohumlamasında aktarım hataları sessizce yutulmuyor",
+   "err_log" in _mdb_rep)
+
+# Sonraki bölümler için sahte run()'ı sıfırla
+_reset_topo(); calls[:] = []
+app.run = lambda cmd, timeout=900, env=None: (calls.append(cmd) or (0, "", ""))
+okk, reason = app.perform_failover("mariadb", "test: primary sağlıksız")
 
 topo = json.load(open(app.TOPOLOGY_FILE, encoding="utf-8"))
 ck("topoloji güncellendi", topo["mariadb"]["primary"] == "mariadb-replica")

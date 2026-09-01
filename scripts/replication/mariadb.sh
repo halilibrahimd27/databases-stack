@@ -44,10 +44,34 @@ attach)
   # --single-transaction: tabloları kilitlemeden tutarlı anlık görüntü.
   # --gtid: dump'a `SET GLOBAL gtid_slave_pos=...` yazar → replika tam olarak
   #         doğru noktadan devam eder, veri atlanmaz/tekrarlanmaz.
-  MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD mariadb mariadb-dump -u root \
-      --all-databases --single-transaction --quick --gtid --master-data=2 \
-      --routines --triggers --events \
-    | m_replica
+  # --ignore-table=mysql.gtid_slave_pos: KRİTİK. Bu tablo REPLİKANIN KENDİ GTID
+  #   konumunu tutar; primary'ninkiyle ilgisi yoktur. --all-databases onu da
+  #   döküme katıyor, dökümün DROP TABLE'ı replikadaki tabloyu siliyor ve
+  #   ardından START SLAVE şununla ölüyordu:
+  #     "failed to update GTID state in mysql.gtid_slave_pos: Table doesn't exist"
+  #   Gerçek bir olaydı — replikasyon hiç başlamıyordu.
+  err_log="$(mktemp)"
+  if ! MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD mariadb mariadb-dump -u root           --all-databases --single-transaction --quick --gtid --master-data=2           --ignore-table=mysql.gtid_slave_pos           --routines --triggers --events         2>"$err_log" | m_replica 2>>"$err_log"; then
+      echo "[mariadb] ✗ kopya aktarımı başarısız:" >&2
+      tail -5 "$err_log" >&2; rm -f "$err_log"; exit 1
+  fi
+  # Kısmi uygulanmış döküm de replikasyonu bozar; hata sessizce geçmesin.
+  if [ -s "$err_log" ] && grep -qi "error" "$err_log"; then
+      echo "[mariadb] ✗ kopya aktarımında hata:" >&2
+      grep -i "error" "$err_log" | head -5 >&2; rm -f "$err_log"; exit 1
+  fi
+  rm -f "$err_log"
+
+  # Emniyet kemeri: tablo her ne sebeple olursa olsun yoksa yeniden yarat.
+  # Yoksa START SLAVE ilk COMMIT'te ölür ve sebebi hiç anlaşılmaz.
+  m_replica -e "
+      CREATE TABLE IF NOT EXISTS mysql.gtid_slave_pos (
+          domain_id INT UNSIGNED NOT NULL,
+          sub_id    BIGINT UNSIGNED NOT NULL,
+          server_id INT UNSIGNED NOT NULL,
+          seq_no    BIGINT UNSIGNED NOT NULL,
+          PRIMARY KEY (domain_id, sub_id)
+      ) ENGINE=InnoDB COMMENT='Replication slave GTID position';" >/dev/null 2>&1 || true
 
   echo "[mariadb] CHANGE MASTER"
   m_replica -e "

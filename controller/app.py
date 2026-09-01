@@ -916,6 +916,27 @@ def perform_failover(eid, reason, jid=None):
         else:
             log(*m)
 
+    script = script_path("failover", fo.get("promote_script") or eid)
+    if not os.path.exists(script):
+        return False, "Yükseltme betiği yok: " + script
+
+    # 0) ÖN KONTROL — yedek gerçekten yükseltilebilir durumda mı?
+    #    Bu adım FENCE'TEN ÖNCE gelir ve iki ayrı felaketi engeller:
+    #      • Senkron olmamış bir replikayı primary yapmak = sessiz veri kaybı.
+    #      • Yükseltme başarısız olursa eski primary fence edilmiş kalır ve
+    #        veritabanı tamamen erişilemez olur (hiç devir yapmamaktan kötü).
+    #    Hazır değilse ana kopyaya DOKUNMUYORUZ; kullanıcıya sebebi söylüyoruz.
+    rrc, rout, rerr = run(["sh", script, "ready", new], timeout=120, env=script_env())
+    if rrc != 0:
+        detail = (rout + rerr).strip()[-600:]
+        record_event("failover_blocked", eid,
+                     "Devir YAPILMADI: %s yükseltmeye hazır değil (replikasyon "
+                     "sağlıklı değil). Ana kopyaya dokunulmadı — veri kaybı "
+                     "riski alınmadı. %s" % (new, detail),
+                     level="critical")
+        return False, ("Yedek kopya (%s) yükseltmeye hazır değil: replikasyon "
+                       "akmıyor. Devir yapılmadı. %s" % (new, detail))
+
     jl("FAILOVER: %s → %s  (sebep: %s)" % (old, new, reason))
 
     # 1) FENCE — eski primary'yi durdur. Bu adım ATLANAMAZ: iki kopya aynı anda
@@ -925,18 +946,36 @@ def perform_failover(eid, reason, jid=None):
     run(["docker", "stop", "-t", "15", old], timeout=120)
 
     # 2) PROMOTE
-    script = script_path("failover", fo.get("promote_script") or eid)
-    if os.path.exists(script):
-        jl("2/4 yükseltiliyor:", new)
-        rc, out, err = run(["sh", script, "promote", new], timeout=600, env=script_env())
-        jl((out + err).strip()[-3000:])
-        if rc != 0:
+    jl("2/4 yükseltiliyor:", new)
+    rc, out, err = run(["sh", script, "promote", new], timeout=600, env=script_env())
+    jl((out + err).strip()[-3000:])
+    if rc != 0:
+        # Betik hata döndürdü diye düğümün yükselmediğini VARSAYMIYORUZ. Gerçek
+        # bir olayda MariaDB betiği son komutunda takıldı (motorda olmayan bir
+        # değişken), oysa read_only kapanmış ve düğüm yazılabilir olmuştu; buna
+        # rağmen devir iptal edilip veritabanı erişilemez bırakılmıştı.
+        # Karar, çıkış koduna değil ÖLÇÜLEN DURUMA dayanır.
+        crc, _, _ = run(["sh", script, "check", new], timeout=60, env=script_env())
+        if crc == 0:
+            jl("   betik hata verdi ama", new, "yazılabilir primary — devam ediliyor")
+        else:
+            # GERİ AL: yükseltme gerçekten olmadı. Eski primary fence'te kalırsa
+            # veritabanı tamamen erişilemez olur; onu geri açmak split-brain
+            # riski taşımaz, çünkü yedek YÜKSELMEDİ (ölçtük).
+            jl("   yükseltme başarısız — eski primary geri açılıyor:", old)
+            rb, _, rberr = run(["docker", "start", old], timeout=180)
+            if rb == 0:
+                record_event("failover_rolled_back", eid,
+                             "Yükseltme başarısız oldu; %s geri açıldı ve hizmet "
+                             "sürüyor. Replikasyonu kontrol edin." % old,
+                             level="critical")
+                return False, ("Yükseltme başarısız (çıkış %d) — eski primary geri "
+                               "açıldı, veritabanı erişilebilir durumda." % rc)
             record_event("failover_failed", eid,
-                         "Yükseltme başarısız — eski primary durduruldu, "
-                         "veritabanı ŞU AN ERİŞİLEMEZ durumda.", level="critical")
-            return False, "Yükseltme betiği başarısız (çıkış %d)" % rc
-    else:
-        return False, "Yükseltme betiği yok: " + script
+                         "Yükseltme başarısız ve eski primary geri açılamadı (%s) — "
+                         "veritabanı ŞU AN ERİŞİLEMEZ." % rberr.strip()[-200:],
+                         level="critical")
+            return False, "Yükseltme başarısız (çıkış %d) ve geri alınamadı" % rc
 
     # 3) REROUTE — uygulamalar aynı adrese bağlanmaya devam eder
     jl("3/4 yönlendirme güncelleniyor")
@@ -1074,13 +1113,15 @@ def failover_supervisor():
                     continue
 
                 _STRIKES[eid] = _STRIKES.get(eid, 0) + 1
-                log("%s: primary sağlıksız (%s/%s) — %d/%d"
-                    % (eid, pstat, phealth, _STRIKES[eid], FAILOVER_STRIKES))
-                if _STRIKES[eid] < FAILOVER_STRIKES:
-                    continue
-
-                # Ard arda failover döngüsüne girmemek için bekleme süresi
-                if time.time() - _LAST_FAILOVER.get(eid, 0) < FAILOVER_COOLDOWN:
+                # Devir denendi ve olmadıysa bekleme süresi boyunca sayaç artmaya
+                # devam eder; her turda satır basmak logu doldurup asıl hatayı
+                # görünmez yapıyordu (gerçek bir olayda "24/3" e kadar gitti).
+                cooling = time.time() - _LAST_FAILOVER.get(eid, 0) < FAILOVER_COOLDOWN
+                if _STRIKES[eid] <= FAILOVER_STRIKES or _STRIKES[eid] % 20 == 0:
+                    log("%s: primary sağlıksız (%s/%s) — %d/%d%s"
+                        % (eid, pstat, phealth, _STRIKES[eid], FAILOVER_STRIKES,
+                           "  (devir bekleme süresinde)" if cooling else ""))
+                if _STRIKES[eid] < FAILOVER_STRIKES or cooling:
                     continue
 
                 _STRIKES[eid] = 0

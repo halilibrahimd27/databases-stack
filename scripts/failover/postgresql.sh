@@ -1,5 +1,6 @@
 #!/bin/sh
 # PostgreSQL failover.
+#   ready   <servis>  → yükseltmeye HAZIR mı? (0=evet)  ← fence'ten ÖNCE sorulur
 #   promote <servis>  → standby'ı primary yap (idempotent)
 #   check   <servis>  → yazılabilir primary mi? (0=evet)
 #
@@ -15,6 +16,20 @@ case "$ACTION" in
 check)
   # 'f' = recovery modunda DEĞİL = yazılabilir primary
   [ "$(psql_ 'SELECT pg_is_in_recovery();')" = "f" ]
+  ;;
+ready)
+  # Ana kopya bu noktada ölmüş olabilir — canlı akış ARAMIYORUZ. Aradığımız,
+  # standby'ın gerçekten WAL almış olduğunun kanıtı. Hiç WAL almamış bir
+  # standby'ı primary yapmak, kullanıcının verisini sessizce yok saymaktır.
+  if [ "$(psql_ 'SELECT pg_is_in_recovery();')" = "f" ]; then
+      echo "[pg] $SVC zaten primary"; exit 0
+  fi
+  lsn="$(psql_ 'SELECT pg_last_wal_receive_lsn();')"
+  if [ -z "$lsn" ]; then
+      echo "[pg] ✗ $SVC hiç WAL almamış — yükseltme veri kaybına yol açar" >&2
+      exit 1
+  fi
+  echo "[pg] $SVC yükseltmeye hazır (alınan WAL: $lsn)"
   ;;
 promote)
   if [ "$(psql_ 'SELECT pg_is_in_recovery();')" = "f" ]; then
