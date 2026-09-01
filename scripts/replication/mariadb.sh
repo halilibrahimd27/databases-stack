@@ -42,13 +42,47 @@ user_tables() {
     "$1" -N -e "SELECT COUNT(*) FROM information_schema.TABLES WHERE table_schema NOT IN ('mysql','information_schema','performance_schema','sys');" 2>/dev/null | tr -d '[:space:]'
 }
 
-# GTID konumundaki EN BÜYÜK sıra numarası. MariaDB'de gtid "alan-sunucu-sıra"
-# üçlüsüdür ve `sıra`, alan içinde TÜM küme boyunca artar: devirde yükseltilen
-# düğüm sayacı kaldığı yerden sürdürür. Bu yüzden iki düğümün sıra numarası,
-# hangisinin daha GÜNCEL olduğunu söyleyen ucuz ve güvenilir ölçüttür.
-# (read_only bunu söylemez: o yalnızca "şu an yazmaya kapalı" demektir.)
-gtid_seq() {
-    printf '%s' "$1" | tr ',' '\n' | awk -F- '{ if ($3+0 > m) m = $3+0 } END { print m+0 }'
+# Bir düğümün ŞU ANKİ GTID KONUMU: alan başına TEK üçlü ("0-2-24"), yani
+# "0 numaralı alanda gördüğüm son işlem, 2 numaralı sunucunun 24. işlemidir".
+node_gtid_pos() {
+    "$1" -N -e "SELECT @@gtid_current_pos;" 2>/dev/null | tr -d '[:space:]'
+}
+
+# Bir düğümün GTID GEÇMİŞİ — "ben neyi biliyorum?" sorusunun cevabı.
+#   gtid_binlog_state : bu düğümün binlog'unda yazmış HER alan-sunucu çifti için
+#                       ayrı bir üçlü ("0-1-19,0-2-24"). gtid_binlog_pos'un
+#                       aksine sunucuları tek satıra ezmez.
+#   gtid_slave_pos    : düğümün SLAVE olarak uyguladığı son konum.
+# Kapsama kararı bu ikisinin BİRLEŞİMİNE bakar: bir düğüm, kendi yazdıklarını
+# ve replikasyonla uyguladıklarını bilir; başkasını bilmez.
+node_gtid_history() {
+    "$1" -N -e "SELECT @@gtid_binlog_state; SELECT @@gtid_slave_pos;" 2>/dev/null \
+        | tr -d ' \t\r' | tr ',' '\n' | grep -E '^[0-9]+-[0-9]+-[0-9]+$' || true
+}
+
+# KAPSAMA (containment) ölçütü: hedefin konumundaki HER üçlü, kaynağın
+# geçmişinde AYNI alan-sunucu çiftiyle ve EN AZ o sırayla var mı?
+#   $1 = hedefin gtid konumu, $2 = kaynağın gtid geçmişi (satır satır)
+# Çıktı:
+#   yes      → hedefin gördüğü her şey kaynakta da var; üzerine yazmak veri kaybettirmez
+#   no       → hedefte, kaynağın HİÇ görmediği yazılar var → TERS YÖN, dur
+#   bos      → hedef hiç GTID bildirmiyor; kapsama kanıtlanamaz
+#   okunmadi → konum çözümlenemedi (bağlantı yok / beklenmedik biçim); kanıt yok
+gtid_covered() {
+    printf '%s\n' "$2" | awk -v want="$1" '
+        NF { split($0, s, "-"); k = s[1] "-" s[2]
+             if (s[3]+0 > seen[k]+0) seen[k] = s[3]+0 }
+        END {
+            n = split(want, w, ",")
+            for (i = 1; i <= n; i++) {
+                if (w[i] == "") continue
+                if (w[i] !~ /^[0-9]+-[0-9]+-[0-9]+$/) { print "okunmadi"; exit }
+                split(w[i], t, "-"); k = t[1] "-" t[2]
+                if (!(k in seen) || seen[k]+0 < t[3]+0) { print "no"; exit }
+                c++
+            }
+            print (c ? "yes" : "bos")
+        }'
 }
 
 # Ana kopya cevap verene kadar 30 sn bekler; $ro'ya read_only değerini yazar,
@@ -148,7 +182,15 @@ attach)
   # ve her tekrar denemede "sağlıklı" diye raporlanırdı — kemerlerin hiçbiri o
   # topolojiyi bir daha denetlemiyordu. Akan bir replikada yönün GERÇEK kanıtı
   # Master_Host'tur; onu doğrulamadan kısayola girmiyoruz.
-  st="$(m_replica -N -e "SHOW SLAVE STATUS\G" 2>/dev/null || true)"
+  # `-N` (--skip-column-names) BURADA KULLANILMAZ. MariaDB istemcisi dikey (\G)
+  # çıktıyı sütun ADLARIYLA basar; -N verilince \G çıktısının TAMAMI susar, sorgu
+  # BOŞ döner. Bu yüzden yukarıdaki iki kemer de fiilen ölüydü: "zaten akışta"
+  # kısayolu hiç çalışmıyor (her çağrı baştan döküm alıyordu) ve ondan da
+  # önemlisi, YANLIŞ kaynaktan akan bir topoloji hiç yakalanamıyordu. Gerçek
+  # container'da ölçüldü: `mariadb -N -e 'SHOW SLAVE STATUS\G'` → sıfır satır,
+  # `-N` olmadan → Master_Host dâhil tüm alanlar. (Aşağıdaki son doğrulama
+  # zaten -N'siz çağırıyor; bu satır onunla tutarsızdı.)
+  st="$(m_replica -e "SHOW SLAVE STATUS\G" 2>/dev/null || true)"
   if printf '%s\n' "$st" | grep -q "Slave_IO_Running: Yes"; then
       mh="$(printf '%s\n' "$st" | sed -n 's/^ *Master_Host: *//p' | head -1 | tr -d '[:space:]')"
       if [ "$mh" = "$PRIMARY" ]; then
@@ -198,30 +240,69 @@ attach)
       echo "[mariadb]   başladıktan sonra görülür ve otomatik devir açıksa kendiliğinden düzelir."
   fi
 
-  # SON VE EN ÖNEMLİ YÖN KONTROLÜ — hangi kopya daha GÜNCEL?
-  # Eski sürüm yalnız "kaynak BOŞ ve hedef DOLU" hâline bakıyordu. Devir
-  # sonrasının OLAĞAN hâli bu değildir: iki düğümde de veri vardır, biri
-  # bayattır. O yüzden kemer hiç ateşlemiyor, BAYAT düğümün dökümü CANLI ana
-  # kopyanın üzerine basılıyor, üstüne canlı kopya bayat düğümün slave'i
-  # yapılıyordu — elde kalan tek sağlam kopya böyle yok oluyordu.
-  # Artık iki ölçüt birden var: (a) kaynakta hiç kullanıcı TABLOSU yokken
-  # hedefte varsa, (b) hedefin GTID sırası kaynağınkinden İLERİDEYSE dururuz.
+  # SON VE EN ÖNEMLİ YÖN KONTROLÜ — hedefte, kaynağın BİLMEDİĞİ veri var mı?
+  #
+  # Bu kemer iki kez yazıldı ve iki kez de yanlış SORUYU ölçtü:
+  #   1) "kaynakta hiç tablo yok ama hedefte var mı?" — devir sonrasının olağan
+  #      hâlinde İKİ düğümde de veri vardır, biri bayattır; kemer hiç ateşlemedi.
+  #   2) "hedefin GTID SIRASI kaynağınkinden büyük mü?" — sıra numarası
+  #      GÜNCELLİK ölçüsü DEĞİLDİR. GTID "alan-sunucu-sıra" üçlüsüdür ve sıra,
+  #      alan içinde sayaç gibi ilerler. Devirden sonra iki düğüm AYNI alanda
+  #      AYRI kollara ayrılır: bayat eski primary kendi yazılarını 0-1-96…0-1-100
+  #      diye sürdürür, yükseltilen canlı düğüm ise 0-2-96…0-2-98 diye. Sayıca
+  #      BAYAT olan daha büyüktür (100 > 98) — yani ölçüt tam ters cevabı verir.
+  #      Canlı üretimde doğrulandı: PRIMARY=bayat(0-1-100), STANDBY=canlı(0-2-98)
+  #      → kemer sessiz kaldı, döküm canlı kopyanın üzerine basıldı.
+  #
+  # DOĞRU SORU "sıra büyük mü" değil, KAPSAMA'dır: hedefin gördüğü her işlem
+  # kaynakta da VAR MI? Cevabı sunucu kimliğiyle birlikte aramak gerekir —
+  # 0-2-98 ile 0-1-100 aynı alanda ama AYRI kollardır.
+  #
+  # (Denenip ELENDİ: kaynakta `SELECT MASTER_GTID_WAIT('<hedef konumu>',0)`.
+  #  Gerçek MariaDB 11.4 ile ölçüldü: bu fonksiyon YALNIZ gtid_slave_pos'a bakar,
+  #  düğümün kendi binlog'una değil. Hiç slave olmamış bir ana kopya KENDİ
+  #  konumunu sorduğunda bile -1 döner. Yani yön doğruyken de "kapsanmıyor" der;
+  #  dolu bir hedefe yapılan her meşru yeniden tohumlamayı reddederdi.)
+  #
+  # Ölçüt şu: hedefte veri varsa, hedefin konumundaki her alan-sunucu çifti
+  # kaynağın GEÇMİŞİNDE (gtid_binlog_state + gtid_slave_pos) en az o sırayla
+  # bulunmalı. Hedef boşsa (controller tohumlamadan önce hacmi siler) kaybedilecek
+  # bir şey yoktur, kontrol aranmaz.
   n_src="$(user_tables m_primary)"
   n_dst="$(user_tables m_replica)"
-  src_seq="$(gtid_seq "$(m_primary -N -e "SELECT @@gtid_current_pos;" 2>/dev/null | tr -d '[:space:]')")"
-  dst_seq="$(gtid_seq "$(m_replica  -N -e "SELECT @@gtid_current_pos;" 2>/dev/null | tr -d '[:space:]')")"
   if [ "${n_src:-0}" = "0" ] && [ "${n_dst:-0}" != "0" ]; then
       echo "[mariadb] ✗ yön ters görünüyor: kaynakta ($PRIMARY) hiç tablo yok, hedefte ($STANDBY) veri var." >&2
       echo "[mariadb]   Kopyalama iptal edildi; hedefteki veriler OLDUĞU GİBİ duruyor, hiçbir şey silinmedi." >&2
       echo "[mariadb]   Panelde hangi kopyanın 'ana' (primary) olduğunu kontrol edip tekrar deneyin." >&2
       exit 1
   fi
-  if [ "${dst_seq:-0}" -gt "${src_seq:-0}" ]; then
-      echo "[mariadb] ✗ hedefteki kopya ($STANDBY) kaynaktan ($PRIMARY) DAHA GÜNCEL." >&2
-      echo "[mariadb]   Üzerine kopyalasaydık daha yeni veriyi daha eskisiyle ezerdik." >&2
-      echo "[mariadb]   Hiçbir şey yapılmadı; her iki kopyadaki veriler olduğu gibi duruyor." >&2
-      echo "[mariadb]   Panelde 'ana kopya' olarak $STANDBY görünüyor olmalı; kontrol edip tekrar deneyin." >&2
-      exit 1
+  if [ "${n_dst:-0}" != "0" ]; then
+      cover="$(gtid_covered "$(node_gtid_pos m_replica)" "$(node_gtid_history m_primary)")"
+      if [ "$cover" = "yes" ]; then
+          echo "[mariadb] ✓ hedefteki ($STANDBY) veriler kaynakta da var (GTID kapsaması doğrulandı)"
+      else
+          echo "[mariadb] ✗ hedefteki kopyada ($STANDBY), kaynakta ($PRIMARY) BULUNMAYAN veri var." >&2
+          case "$cover" in
+          no)
+              echo "[mariadb]   İki kopya birbirinden ayrılmış: hedefte, kaynağın hiç görmediği" >&2
+              echo "[mariadb]   yazılar var. Üzerine kopyalasaydık o yazılar geri getirilemezdi." >&2
+              echo "[mariadb]   Bu genelde yönün ters verilmesidir: güncel veri $STANDBY üzerinde." >&2 ;;
+          bos)
+              echo "[mariadb]   Hedefte tablolar var ama hiç GTID kaydı yok; verinin kaynaktan" >&2
+              echo "[mariadb]   geldiği KANITLANAMIYOR. Elle yüklenmiş ya da binlog'suz yazılmış olabilir." >&2 ;;
+          *)
+              echo "[mariadb]   GTID konumu okunamadı, bu yüzden güvenli olduğu KANITLANAMADI." >&2
+              echo "[mariadb]   Her iki veritabanının da 'çalışıyor' durumda olduğundan emin olun." >&2 ;;
+          esac
+          if [ "${FORCE_SEED:-0}" != "1" ]; then
+              echo "[mariadb]   Hiçbir şey yapılmadı; her iki kopyadaki veriler olduğu gibi duruyor." >&2
+              echo "[mariadb]   Doğru yol: panelde 'Eski kopyayı yeniden kur' — o işlem hedefin eskimiş" >&2
+              echo "[mariadb]   verisini önce SİLER, sonra ana kopyadan baştan kopyalar." >&2
+              echo "[mariadb]   (Hedefteki veriyi bilerek gözden çıkarıyorsanız: FORCE_SEED=1 ile çalıştırın.)" >&2
+              exit 1
+          fi
+          echo "[mariadb] ⚠ FORCE_SEED=1 verildi — hedefteki ($STANDBY) veri ezilerek devam ediliyor." >&2
+      fi
   fi
 
   dbs="$(user_dbs m_primary)"

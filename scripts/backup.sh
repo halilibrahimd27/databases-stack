@@ -171,31 +171,122 @@ verify_backup() {
             detay=", $uye dosya"
             ;;
         *.archive.gz)
-            # mongodump --archive --gzip çıktısı GZIP DOSYASI DEĞİLDİR: kendi
-            # başlığı vardır (6d e2 99 81), sıkıştırma o başlığın içindedir.
-            # `gzip -t` denemek sapasağlam bir MongoDB yedeğine "bozuk" dedirtiyordu.
-            if command -v od >/dev/null 2>&1; then
-                local magic; magic="$(head -c 4 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
-                case "$magic" in
-                    6de29981|1f8b*) ;;
-                    *) berr "MongoDB arşivi tanınmıyor: $base — mongodump çıktısı değil."; return 1 ;;
-                esac
+            # ─────────────────────────────────────────────────────────────────
+            # BU DAL İKİ KEZ YANLIŞ ÖLÇÜLDÜ. İkisi de doğru dosyaya bakıyordu
+            # ama sorduğu soru "bu arşiv geri yüklenebilir mi?" DEĞİLDİ:
+            #
+            #  1) İmza kontrolü  → "dosya mongodump çıktısı gibi BAŞLIYOR mu?"
+            #     Kesilmiş bir dosyanın da başı doğrudur; bu soru kesikliği
+            #     göremez. Üstelik beklenen imza da yanlıştı (aşağıda).
+            #  2) 256 bayt eşiği → "dump BAŞLADI mı?"
+            #     Dayandığı "gerçek arşiv kilobayt mertebesindedir" varsayımı
+            #     sahada doğru değil: hiç kullanıcı verisi olmayan bir mongo:7.0
+            #     sunucusunun tam ve geçerli arşivi 855 BAYT. Yani eşik hem
+            #     sınırda hem de yalnız "dump hiç başlamadı" hâlini yakalıyor.
+            #
+            # İkisi de AKIŞIN BAŞINA bakıyor; oysa yedeği öldüren şey akışın
+            # SONUDUR. 2000 belgelik gerçek bir arşivi (16942 bayt) 400 bayta
+            # kestik: her iki kontrolden de geçip "Bütünlük doğrulandı" aldı,
+            # mongorestore ise "corruption found in archive … unexpected EOF"
+            # dedi. Felaket günü ekranda yeşil tik, elde yarım veri.
+            #
+            # DOĞRU ÖLÇÜT: akış SONUNA KADAR sağlam mı? Üç şeye birden bakıyoruz.
+            #
+            # (a) Zarf. Bu yığında mongodump --archive --gzip DÜZ GZIP yazar:
+            #     dosyanın ilk baytları 1f 8b 08 00, arşiv gzip'in İÇİNDEDİR.
+            #     (Eski yorumdaki "GZIP DOSYASI DEĞİLDİR" cümlesi mongo:7.0'da
+            #     ölçüldü, doğru değil. `--gzip`siz `--archive` ise gerçekten
+            #     6d e2 99 81 ile başlar; o hâl de destekleniyor.) Gzip'in
+            #     sonundaki CRC32+uzunluk, akışı yazanın işini BİTİRDİĞİNİ
+            #     kanıtlar — dump yarıda ölürse bu kuyruk hiç yazılmaz. Bu
+            #     yüzden gzip'i sonuna kadar açıyoruz.
+            # (b) İçerik. Zarfın içinden mongodump arşivi mi çıkıyor? Açılmış
+            #     akış 6d e2 99 81 ile başlamalı; başlamıyorsa dosya .archive.gz
+            #     adını taşısa bile mongo yedeği değildir.
+            # (c) Son. Arşiv biçiminin sonlandırıcısı ff ff ff ff'tir; tamamlanan
+            #     her arşiv onunla biter. Zarfı olmayan (sıkıştırmasız) hâlde
+            #     elimizdeki TEK son-kontrolü budur.
+            #
+            # "gzip -t yeter" demedik, çünkü ZARF ile İÇERİK ayrı şeylerdir:
+            # `üretici | gzip > dosya` zincirinde sol taraf yarıda ölse bile
+            # gzip EOF görüp akışı kusursuz kapatabilir. Bunu da ürettik —
+            # gzip -t rc=0 verdi, mongorestore 2000 belgenin 1150'sini yükleyip
+            # "archive io error" ile düştü. Sonlandırıcı o hâli yakalıyor.
+            #
+            # Daha da ileri gidip sondaki namespace kapanış kaydını (EOF/CRC
+            # alanları) aramadık: onlar mongo-tools'un iç alan adlarıdır, sürüm
+            # değiştirince SAPASAĞLAM her yedeğe "bozuk" dedirtme riski
+            # taşırlar. ff ff ff ff ise arşiv biçiminin sabiti.
+            # ─────────────────────────────────────────────────────────────────
+            if ! command -v od >/dev/null 2>&1; then
+                warn "od bulunamadı: $base'in SONUNA bakılamadı."
+                log  "  Yalnızca 'dosya var ve boş değil' kontrol edildi; İÇERİĞİ DOĞRULANMADI."
+                return 0
             fi
-            # İmza tek başına yetmez: akış daha ilk saniyede kesildiyse (docker
-            # exec düşer, disk dolar) elde 4 baytlık bir dosya kalır ve o dosya
-            # imzadan GEÇER. Gerçek bir arşiv, tek bir koleksiyonu olan mongo'da
-            # bile arşiv başlığı + koleksiyon üstverisiyle birlikte kilobayt
-            # mertebesindedir; eşik bilerek düşük tutuldu, çünkü sağlam bir
-            # yedeğe yanlışlıkla "bozuk" demek yedeği YOK saymak demektir.
-            local bayt; bayt="$(wc -c < "$f" | tr -d ' ')"
-            if [ "${bayt:-0}" -lt 256 ]; then
-                berr "MongoDB arşivi yarım: $base — yalnızca $bayt bayt, dump başlamadan kesilmiş."
+            local magic ic_magic son arc
+            magic="$(head -c 4 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+            case "$magic" in
+                1f8b*)
+                    # `head -c 4` erken çıkar (SIGPIPE): koca arşiv için bile
+                    # tek blokluk okuma.
+                    ic_magic="$(gzip -dc "$f" 2>/dev/null | head -c 4 | od -An -tx1 | tr -d ' \n')"
+                    # Tek TAM geçiş: gzip'in çıkış kodu (zarf sonuna kadar sağlam
+                    # mı) ve arşivin son dört baytı aynı okumadan çıkıyor —
+                    # büyük yedeklerde dosyayı ikinci kez açmak boşuna dakikalar
+                    # demek. Alt kabuğun sonundaki `exit`, gzip'in çıkış kodunu
+                    # dışarı taşır; od/tr'ninkini değil.
+                    son="$(gzip -dc "$f" 2>>"$LOG_FILE" | tail -c 4 | od -An -tx1 | tr -d ' \n'
+                           exit "${PIPESTATUS[0]}")"; arc=$?
+                    if [ "$arc" -ne 0 ]; then
+                        berr "MongoDB arşivi YARIM: $base — gzip akışı sonuna gelmeden kesilmiş."
+                        berr "  Bu dosya kurtarma noktası DEĞİLDİR: mongorestore veriyi yarıda bırakır."
+                        berr "  Motorun o anki hatası burada: $LOG_FILE"
+                        return 1
+                    fi
+                    ;;
+                6de29981)
+                    # Sıkıştırmasız --archive: zarf yok, dosyanın kendisi arşiv.
+                    ic_magic="$magic"
+                    son="$(tail -c 4 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+                    ;;
+                *)
+                    berr "MongoDB arşivi tanınmıyor: $base — mongodump çıktısı değil."
+                    berr "  İlk baytlar: ${magic:-yok} (beklenen: 1f8b… ya da 6de29981)"
+                    return 1
+                    ;;
+            esac
+            if [ "$ic_magic" != "6de29981" ]; then
+                berr "MongoDB arşivi tanınmıyor: $base — gzip'in içinden mongodump arşivi çıkmadı."
+                berr "  Açılmış ilk baytlar: ${ic_magic:-yok} (beklenen: 6de29981)"
+                return 1
+            fi
+            if [ "$son" != "ffffffff" ]; then
+                berr "MongoDB arşivi YARIM: $base — arşiv sonlandırıcısı yok, akış bitmeden kesilmiş."
+                berr "  Bu dosya kurtarma noktası DEĞİLDİR: mongorestore veriyi yarıda bırakır."
                 berr "  Motorun o anki hatası burada: $LOG_FILE"
                 return 1
             fi
             ;;
         *.gz)
-            gzip -t "$f" 2>/dev/null || { berr "Bozuk gzip: $base — bu yedek KULLANILAMAZ."; return 1; }
+            # Bu dalda gzip ZARFI baştan sona sınanıyordu (`gzip -t`), ama
+            # İÇERİK yalnız BAŞINDAN. Aynı sınıf hata: `üretici | gzip > dosya`
+            # zincirinde sol taraf yarıda ölürse gzip boruda EOF görüp akışı
+            # kusursuz kapatır — zarf sağlam, içerik yarım. Bu yüzden artık
+            # içeriğin SONUNA da bakıyoruz.
+            #
+            # Kuyruk, `gzip -t` yerine geçen TEK TAM GEÇİŞTEN çıkıyor: gzip'in
+            # çıkış kodu zarfı, son 16 bayt da içeriği cevaplıyor. `gzip -t` de
+            # dosyayı baştan sona okuduğu için maliyet ARTMADI (büyük yedeklerde
+            # ikinci bir tam geçiş boşuna dakikalar demek). od yoksa eski
+            # davranışa düşüyoruz: zarf sınanır, sona bakılmaz.
+            local kuyruk="" grc
+            if command -v od >/dev/null 2>&1; then
+                kuyruk="$(gzip -dc "$f" 2>>"$LOG_FILE" | tail -c 16 | od -An -tx1 | tr -d ' \n'
+                          exit "${PIPESTATUS[0]}")"; grc=$?
+            else
+                gzip -t "$f" 2>/dev/null; grc=$?
+            fi
+            [ "$grc" -eq 0 ] || { berr "Bozuk gzip: $base — bu yedek KULLANILAMAZ."; return 1; }
             # Açılmış ilk 64 KB hem "içi tamamen boş mu" hem de "beklenen biçimde
             # mi" sorusunu tek okumada cevaplar. NUL baytları atılıyor: kabuk
             # değişkeni ikili veriyi olduğu gibi taşıyamaz (RDB dosyaları ikili).
@@ -212,18 +303,63 @@ verify_backup() {
                     case "$head64" in
                         *CREATE*|*INSERT*|*COPY*|*GRANT*|*"DROP "*) ;;
                         *) berr "Yedeğin İÇİ BOŞ görünüyor: $base — dump'ta hiç CREATE/INSERT satırı yok."; return 1 ;;
-                    esac ;;
+                    esac
+                    # SQL dump'larının SONUNA BİLEREK bakmıyoruz. Ölçtük:
+                    # mariadb-dump --skip-comments çıktısı sunucu SÜRÜMÜNE göre
+                    # değişen bir satırla bitiyor (MariaDB 11'de
+                    # `/*M!100616 SET NOTE_VERBOSITY=@OLD_NOTE_VERBOSITY */;`,
+                    # eskilerde COLLATION_CONNECTION satırı), pg_dumpall ise
+                    # bambaşka bir yorum satırıyla. Böyle bir imzaya bağlanmak,
+                    # motor sürümü yükseldiği gün SAPASAĞLAM her yedeğe "bozuk"
+                    # dedirtir — ve bir yedeğe haksız yere bozuk demek, onu YOK
+                    # saymakla aynı şeydir. Kesilme riski burada zaten üretim
+                    # tarafında kapalı: dump borusunun sol tarafı PIPESTATUS ile
+                    # kontrol ediliyor (backup_mariadb / backup_postgresql).
+                    ;;
                 *.rdb.gz)
                     # RDB dosyaları her zaman "REDIS<sürüm>" imzasıyla başlar.
                     case "$head64" in
                         REDIS*) ;;
                         *) berr "Redis yedeği geçerli bir RDB değil: $base"; return 1 ;;
-                    esac ;;
+                    esac
+                    # …ve her zaman EOF işlemcisiyle (ff) + 8 baytlık sağlama
+                    # ile BİTER. Bu bir sürüm dizgesi değil, RDB biçiminin
+                    # sabiti: boş bir veritabanında da, `rdbchecksum no` ile de
+                    # (sağlama alanı sıfırlarla dolar) aynı. Başı doğru olan
+                    # kesik bir RDB eski ölçütten geçiyordu; oysa restore_redis
+                    # o dosyayı volume'a koymadan ÖNCE eski dump.rdb'yi ve AOF'u
+                    # SİLİYOR. Redis kesik RDB'yi yüklemez, hiç açılmaz
+                    # ("Unexpected EOF reading RDB file") — geriye ne eski veri
+                    # ne yenisi kalır. Sondan 9. bayt ff olmalı; sağlaması
+                    # olmayan çok eski RDB'lerde dosya doğrudan ff ile biter.
+                    if [ -n "$kuyruk" ] \
+                       && [ "${kuyruk: -18:2}" != "ff" ] && [ "${kuyruk: -2}" != "ff" ]; then
+                        berr "Redis yedeği YARIM: $base — RDB sonlandırıcısı yok, akış bitmeden kesilmiş."
+                        berr "  Bu dosyayla geri yüklerseniz Redis HİÇ AÇILMAZ ve eski veri de silinmiş olur."
+                        berr "  Motorun o anki hatası burada: $LOG_FILE"
+                        return 1
+                    fi ;;
                 *.json.gz)
                     case "$head64" in
                         \{*) ;;
                         *) berr "RabbitMQ tanımları JSON değil: $base — dışa aktarma yarım kalmış."; return 1 ;;
-                    esac ;;
+                    esac
+                    # Başı `{` olan JSON'ın sonu da `}` olmalı — bu bir sürüm
+                    # imzası değil, biçimin tanımı. Kesik bir export'un başı
+                    # kusursuzdur, sonu yoktur. Sondaki boşluk/satır sonu
+                    # baytlarını (0a 0d 09 20) atıp son bayta bakıyoruz.
+                    if [ -n "$kuyruk" ]; then
+                        local jk="$kuyruk"
+                        while :; do
+                            case "$jk" in *0a|*0d|*09|*20) jk="${jk%??}" ;; *) break ;; esac
+                        done
+                        if [ "${jk: -2}" != "7d" ]; then
+                            berr "RabbitMQ tanımları YARIM: $base — JSON kapanmıyor, dışa aktarma kesilmiş."
+                            berr "  Bu dosyadan exchange/queue/binding tanımları geri getirilemez."
+                            berr "  Motorun o anki hatası burada: $LOG_FILE"
+                            return 1
+                        fi
+                    fi ;;
             esac
             ;;
         *)

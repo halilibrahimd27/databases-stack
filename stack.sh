@@ -395,6 +395,8 @@ ${BOLD}Bakım${NC}
   ./stack.sh licenses             Motorların lisansları ve kısıtları
   ./stack.sh doctor               Kurulum sağlık kontrolü
   ./stack.sh selftest             Boyutlandırma + API + nginx testleri (docker gerekmez)
+  ./stack.sh e2e [paket]          Uçtan uca doğrulama — ÇALIŞAN kuruluma karşı
+                                  (veri yazar/siler, devir tetikler; test ortamı için)
 
 ${BOLD}Çekirdek${NC}
   ./stack.sh up | down | restart  Gateway + controller
@@ -427,6 +429,7 @@ case "${1:-help}" in
     licenses|lisans) cmd_licenses ;;
     doctor)          cmd_doctor ;;
     selftest|test)   PYTHONIOENCODING=utf-8 python3 scripts/selftest.py ;;
+    e2e)             shift; ./scripts/e2e/run.sh "$@" ;;
     up)              compose up -d gateway controller adminer ;;
     down)            compose down --remove-orphans ;;
     restart)         compose restart gateway controller ;;

@@ -27,7 +27,8 @@ map $http_upgrade $connection_upgrade {
 }
 
 # -----------------------------------------------------------------------------
-# ÇAPRAZ-SİTE (CSRF) KONTROLÜ — yalnız /api/ için kullanılır
+# ÇAPRAZ-SİTE (CSRF) KONTROLÜ — (1) yalnız /api/, (2) ikisinde de,
+#                               (3)+(4) yalnız panel portları
 # -----------------------------------------------------------------------------
 # Buradaki açık şuydu: kimlik doğrulaması Basic auth ile yapılıyor ve tarayıcı,
 # panele bir kez girildikten sonra o kimlik bilgisini bu adrese giden HER
@@ -60,19 +61,74 @@ map $http_origin $csrf_origin_host {
     "~^https?://(.+?)(:[0-9]+)?$" $1;
 }
 
-# 3) İsteğin YÖNTEMİ — yalnız panel portlarında (bkz. 8083) kullanılır.
-#    Panellerde /api/'deki kuralı olduğu gibi uygulayamıyoruz: panele giriş
-#    dashboard'dan yapılıyor (https://<ip>/ → https://<ip>:8083/) ve tarayıcı
-#    port farkı yüzünden bu gezinmeye "same-site" diyor. $csrf_site_ok bunu 0
-#    saydığı için tek başına kullanılsaydı panel HİÇ açılmazdı — kullanıcı
-#    "Panel" düğmesine her bastığında 403 görürdü.
-#    Bu yüzden panelde okuma serbest, yalnız veri değiştirebilen yöntemler
-#    (gizli form POST'unun kullandığı yöntemler) origin kontrolüne giriyor.
+# 3) İsteğin YÖNTEMİ — panel portlarında (4) ile BİRLİKTE kullanılır.
+#    TEK BAŞINA ölçüt olamaz; nedeni hemen aşağıda yazıyor.
 map $request_method $panel_write {
     default 1;   # POST/PUT/DELETE/PATCH → veriyi değiştirebilir
     GET     0;
     HEAD    0;
     OPTIONS 0;
+}
+
+# 4) İSTEĞİ NE BAŞLATTI — panel portlarındaki asıl kapı
+#    (kullanan yer: snippets/panel-csrf.conf, her panel location'ında)
+#
+# ÖNCEKİ HALİ NEDEN YETMEDİ: kapı yalnızca yukarıdaki $panel_write'a, yani HTTP
+# yöntemine bakıyordu. ÖLÇTÜĞÜ şey "yöntem POST mu?", CEVAP VERDİĞİNİ SANDIĞI
+# soru ise "bu istek veriyi değiştirebilir mi?"ydi. İkisi eşit değil: eski web
+# arayüzleri yıkıcı işlemleri GET ile sunar. mongo-express 1.0.2'de:
+#     GET /db/<vt>/dropIndex/<koleksiyon>?name=...  → indeksi SİLER
+#     GET /db/<vt>/compact/<koleksiyon>             → koleksiyonu sıkıştırır
+#     GET /db/<vt>/reIndex/<koleksiyon>             → indeksleri yeniden kurar
+# Kötü niyetli bir sayfadaki tek bir <img src="https://<ip>:8083/db/app/
+# dropIndex/users?name=email_1"> etiketi, yöntemi GET olduğu için eski kapıdan
+# geçiyordu; tarayıcı da o panele girmiş yöneticinin kimlik bilgisini isteğe
+# kendisi ekliyordu. Canlı container'da üretildi: indeks gerçekten düştü.
+#
+# BİLİNEN ÜÇ YOLU KARA LİSTEYE ALMADIK. Bu bir mongo-express arızası değil, bir
+# SINIF: panel imajı yükselince yollar değişir, başka panelde başka bir GET ucu
+# çıkar (ClickHouse'un /?query=... ucu aynı aileden), liste sessizce eksik
+# kalır — test yeşil, koruma yok. Üstelik gateway arkadaki panelin hangi
+# ucunun ne yaptığını bilemez: "bu istek veriyi değiştirir mi?" BURADA
+# cevaplanabilir bir soru değil.
+#
+# Cevaplanabilen soru şu: "BU İSTEĞİ PANELİN KENDİ SAYFASI MI BAŞLATTI?"
+# Tarayıcı bunu Sec-Fetch-Site ve Sec-Fetch-Mode başlıklarıyla kendisi
+# söylüyor; sayfadaki JavaScript ikisini de DEĞİŞTİREMEZ (yasaklı başlıklar).
+# Yöntem ne olursa olsun, yol ne olursa olsun geçerli bir ölçüt.
+#
+# Üç kademe:
+#   2 = güvenilir. Panelin kendi sayfası (same-origin), adres çubuğu/yer imi
+#       (none) ya da tarayıcı olmayan istemci (başlık yok: curl, bakım betiği).
+#       Panel içindeki HER ŞEY buraya düşer — bağlantılar, formlar, XHR,
+#       resimler, WebSocket — çünkü panel sayfası da panelin portundan gelir.
+#   1 = yalnız GİRİŞ GEZİNMESİ. Dashboard'daki "Panel aç" düğmesi panele ayrı
+#       porttan gider (:443 → :8083) ve tarayıcı port farkı yüzünden buna
+#       "same-site" der. Yalnızca üst seviye gezinme (navigate) sayılır: aynı
+#       sitenin başka portundaki bir sayfanın gizli alt-kaynak isteği (resim,
+#       XHR) SAYILMAZ. Bu kademede veri değiştiren yöntemlere izin verilmez.
+#   0 = isteği başka bir sayfa başlatmış → geçmez. Kötü niyetli sayfanın
+#       <img>/<iframe>/fetch isteği de, location.href ile yaptığı çapraz-site
+#       gezinme de buraya düşer. İkincisi de gerçek bir yol: SameSite=Lax
+#       çerez (panel tek oturumu) üst seviye gezinmede gönderilir.
+#
+# ÖDÜNLEŞİM, BİLEREK: başka bir sitedeki bağlantıya tıklayarak panele girmek
+# artık çalışmaz; kullanıcı açıklama sayfasını görür. Panele giriş yolu
+# dashboard, yer imi ya da adres çubuğudur — üçü de 1 veya 2 kademesinde.
+#
+# SINIR, AÇIKÇA: Sec-Fetch-* göndermeyen tarayıcılarda (Safari 16.4 öncesi) bu
+# kapı devre dışı kalır; geriye Origin kontrolü kalır, o da POST'u yakalar ama
+# <img> ile gönderilen GET'i yakalamaz. Başlığı zorunlu tutamayız — o zaman
+# aynı tarayıcılar paneli hiç açamazdı. Referer'a da bakmıyoruz: saldırganın
+# sayfası tek bir meta etiketiyle Referer'ı kapatabildiği için gerçek bir kapı
+# değil, yalnızca yanlış bir güvenlik hissi olurdu.
+map "$http_sec_fetch_site:$http_sec_fetch_mode" $panel_from {
+    default              0;   # çapraz-site, ya da same-site alt-kaynak isteği
+    ":"                  2;   # hiç Sec-Fetch-* yok → tarayıcı değil (curl, betik)
+    "~^same-origin:"     2;   # panelin kendi sayfası
+    "~^none:"            2;   # adres çubuğu, yer imi
+    "same-site:navigate" 1;   # dashboard → panel geçişi
+    "same-site:"         1;   # Site'ı gönderip Mode'u göndermeyen tarayıcı
 }
 
 # -----------------------------------------------------------------------------
@@ -315,6 +371,7 @@ server {
     auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up phpmyadmin;
+        include /etc/nginx/snippets/panel-csrf.conf;
         include /etc/nginx/snippets/proxy-panel.conf;
         # Import/export panelidir: 400 MB'lık bir dump'ın çalışması dakikalar
         # sürer ve o sürede panel tek bayt bile göndermez. Varsayılan 300s ile
@@ -341,6 +398,7 @@ server {
         proxy_read_timeout 3600s;
         proxy_pass http://$up:80;
     }
+    include /etc/nginx/snippets/panel-csrf-page.conf;
     include /etc/nginx/snippets/inactive.conf;
 }
 
@@ -351,10 +409,12 @@ server {
     auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up pgadmin;
+        include /etc/nginx/snippets/panel-csrf.conf;
         include /etc/nginx/snippets/proxy-panel.conf;
         proxy_read_timeout 3600s;   # yedek yükleme / uzun süren sorgu (ödünleşim: bkz. 8081)
         proxy_pass http://$up:80;
     }
+    include /etc/nginx/snippets/panel-csrf-page.conf;
     include /etc/nginx/snippets/inactive.conf;
 }
 
@@ -380,49 +440,15 @@ server {
         # temizleyip kendi çerez oturumlarını kullandığı için (çerezlerde
         # SameSite=Lax varsayılanı geçerli) bu satırlara ihtiyaç duymaz.
         #
-        # Kontrol /api/'dekiyle aynı map'lere dayanıyor, tek farkla: okuma
-        # serbest (bkz. $panel_write). nginx'te "if" içinde VE yok, o yüzden
-        # iki koşulu tek dizgede birleştiriyoruz.
-        set $panel_deny "$panel_write$csrf_site_ok";   # "10" = yazma + başka sayfa
-        if ($panel_deny = "10") { return 403; }
-        # Sec-Fetch-* göndermeyen eski tarayıcılar için ikinci kapı: yazma
-        # isteği, Origin adresi bu panelin adresi değilse reddedilir.
-        # (Origin yokken $csrf_origin_host = $host olur; normal gezinme ve
-        # curl ile çalışan bakım betikleri etkilenmez.)
-        set $panel_origin_deny $panel_write;
-        if ($csrf_origin_host = "$host") { set $panel_origin_deny 0; }
-        if ($panel_origin_deny = 1) { return 403; }
-        # Engellenen istek nginx'in çıplak "403 Forbidden" sayfasını görmesin:
-        # kullanıcı ne olduğunu anlamaz, panelin bozulduğunu sanır.
-        error_page 403 /_panel_crosssite.html;
+        # ÇAPRAZ-SİTE KAPISI. Buradan dönen yalnız gizli form POST'u değil:
+        # mongo-express indeks silmeyi GET ile de sunuyor (dropIndex/compact/
+        # reIndex), yani ölçüt yöntem DEĞİL, isteği kimin başlattığı.
+        # Ayrıntı: $panel_from map'i ve snippets/panel-csrf.conf.
+        include /etc/nginx/snippets/panel-csrf.conf;
         include /etc/nginx/snippets/proxy.conf;
         proxy_pass http://$up:8081;
     }
-    # Yukarıdaki kontrolün hata sayfası. `internal` → dışarıdan istenemez;
-    # auth_basic kapalı, yoksa hata sayfası ikinci kez parola isterdi.
-    location = /_panel_crosssite.html {
-        internal;
-        auth_basic off;
-        default_type text/html;
-        charset      utf-8;
-        return 403 "<!doctype html>
-<html lang='tr'>
-<meta charset='utf-8'>
-<title>Bu istek durduruldu</title>
-<body style='font-family:system-ui,Segoe UI,Roboto,sans-serif;max-width:640px;margin:64px auto;padding:0 24px;line-height:1.65;color:rgb(32,38,48)'>
-<h1 style='font-size:22px;margin:0 0 16px'>Bu istek durduruldu</h1>
-<p>Bir şeyi değiştiren bu istek panelin kendi sayfasından gelmediği için
-güvenlik gereği durduruldu. <b>Veritabanınızda hiçbir şey değişmedi.</b></p>
-<p>Paneli kullanmak istiyorsanız adresini tarayıcınızın adres çubuğuna kendiniz
-yazıp açın, işlemi oradan yapın.</p>
-<p><a href='/' style='display:inline-block;margin-top:4px;padding:10px 18px;border-radius:10px;background:rgb(36,86,214);color:rgb(255,255,255);text-decoration:none;font-weight:600'>Panelin ana sayfasını aç</a></p>
-<p style='color:rgb(110,118,130);font-size:13px'>Bunu bir bağlantıya tıkladıktan
-sonra gördüyseniz, o sayfa sizin adınıza veritabanınıza komut göndermeye
-çalışmış olabilir.</p>
-</body>
-</html>
-";
-    }
+    include /etc/nginx/snippets/panel-csrf-page.conf;
     include /etc/nginx/snippets/inactive.conf;
 }
 
@@ -433,9 +459,11 @@ server {
     auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up redis-insight;
+        include /etc/nginx/snippets/panel-csrf.conf;
         include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:5540;
     }
+    include /etc/nginx/snippets/panel-csrf-page.conf;
     include /etc/nginx/snippets/inactive.conf;
 }
 
@@ -446,10 +474,12 @@ server {
     auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up adminer;
+        include /etc/nginx/snippets/panel-csrf.conf;
         include /etc/nginx/snippets/proxy-panel.conf;
         proxy_read_timeout 3600s;   # uzun ALTER TABLE / import (ödünleşim: bkz. 8081)
         proxy_pass http://$up:8080;
     }
+    include /etc/nginx/snippets/panel-csrf-page.conf;
     include /etc/nginx/snippets/inactive.conf;
 }
 
@@ -460,10 +490,12 @@ server {
     auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up kibana;
+        include /etc/nginx/snippets/panel-csrf.conf;
         include /etc/nginx/snippets/proxy-panel.conf;
         proxy_read_timeout 600s;   # Kibana uzun süren aramalar açar
         proxy_pass http://$up:5601;
     }
+    include /etc/nginx/snippets/panel-csrf-page.conf;
     include /etc/nginx/snippets/inactive.conf;
 }
 
@@ -474,9 +506,11 @@ server {
     auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up kafka-ui;
+        include /etc/nginx/snippets/panel-csrf.conf;
         include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:8080;
     }
+    include /etc/nginx/snippets/panel-csrf-page.conf;
     include /etc/nginx/snippets/inactive.conf;
 }
 
@@ -487,9 +521,11 @@ server {
     auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up rabbitmq;
+        include /etc/nginx/snippets/panel-csrf.conf;
         include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:15672;
     }
+    include /etc/nginx/snippets/panel-csrf-page.conf;
     include /etc/nginx/snippets/inactive.conf;
 }
 
@@ -500,9 +536,11 @@ server {
     auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up minio;
+        include /etc/nginx/snippets/panel-csrf.conf;
         include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:9001;
     }
+    include /etc/nginx/snippets/panel-csrf-page.conf;
     include /etc/nginx/snippets/inactive.conf;
 }
 
@@ -513,9 +551,11 @@ server {
     auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up neo4j;
+        include /etc/nginx/snippets/panel-csrf.conf;
         include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:7474;
     }
+    include /etc/nginx/snippets/panel-csrf-page.conf;
     include /etc/nginx/snippets/inactive.conf;
 }
 
@@ -527,9 +567,11 @@ server {
     location = / { return 302 /play; }
     location / {
         set $up clickhouse;
+        include /etc/nginx/snippets/panel-csrf.conf;
         include /etc/nginx/snippets/proxy-panel.conf;
         proxy_pass http://$up:8123;
     }
+    include /etc/nginx/snippets/panel-csrf-page.conf;
     include /etc/nginx/snippets/inactive.conf;
 }
 
@@ -544,11 +586,13 @@ server {
     auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up grafana;
+        include /etc/nginx/snippets/panel-csrf.conf;
         include /etc/nginx/snippets/proxy-panel.conf;
         # Grafana canlı pano güncellemesi ve Explore için WebSocket kullanır;
         # proxy-panel.conf zaten Upgrade/Connection başlıklarını taşıyor.
         proxy_pass http://$up:3000;
     }
+    include /etc/nginx/snippets/panel-csrf-page.conf;
     include /etc/nginx/snippets/inactive.conf;
 }
 

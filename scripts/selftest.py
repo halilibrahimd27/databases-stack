@@ -463,11 +463,27 @@ ck("MariaDB CHANGE MASTER hedefi de env'den geliyor",
 # MARIADB_DATABASE=defaultdb verdiği için az önce silinip sıfırdan açılmış bir
 # düğümde bile o şema hep vardır — kemer hiç ateşlemiyordu. read_only de yönün
 # göstergesi değildir (döküm yalnız okur; yükseltilmiş düğüm her yeniden
-# başlayışta read_only=ON gelir), o yüzden yön kararını GTID güncelliği verir.
+# başlayışta read_only=ON gelir), o yüzden yön kararını GTID verir.
 ck("MariaDB tohumlaması ters yöne karşı kendini koruyor",
    '"$PRIMARY" = "$STANDBY"' in _mdb_rep_code
    and "user_tables m_replica" in _mdb_rep_code
    and "gtid_current_pos" in _mdb_rep_code)
+# GTID'in HANGİ sorusu sorulduğu belirleyici. "Sıra numarası büyük mü?" ölçütü
+# devirden sonra TERS cevap verir: bayat eski primary kendi kolunda 0-1-100'e
+# kadar yazmışken, canlı düğüm 0-2-98'dedir. Doğru soru KAPSAMA'dır ve cevabı
+# alan-sunucu çiftiyle aramak gerekir; kaynağın geçmişi gtid_binlog_state ile
+# gtid_slave_pos'un birleşimidir.
+ck("MariaDB yön kararı GTID sıra numarası karşılaştırmasına dayanmıyor",
+   "gtid_seq" not in _mdb_rep_code and "dst_seq" not in _mdb_rep_code)
+ck("MariaDB yön kararı GTID kapsamasına (alan-sunucu) bakıyor",
+   "gtid_covered" in _mdb_rep_code and "gtid_binlog_state" in _mdb_rep_code
+   and "gtid_slave_pos" in _mdb_rep_code)
+# `mariadb -N -e 'SHOW SLAVE STATUS\G'` HİÇBİR ŞEY basmaz (--skip-column-names
+# dikey çıktıyı tümden susturur). Bu tuzağa bir kez düşüldü: Master_Host'a bakan
+# yön kemeri ve "zaten akışta" kısayolu boş metin üzerinde çalıştığı için ölüydü.
+ck("MariaDB SHOW SLAVE STATUS çağrıları -N ile susturulmuyor",
+   not [ln for ln in _mdb_rep_code.splitlines()
+         if "SHOW SLAVE STATUS" in ln and " -N " in ln])
 _ready_blk = _mdb_fo.split(chr(10) + "ready)", 1)[1].split(chr(10) + "promote)", 1)[0]
 _ready_blk = chr(10).join(ln for ln in _ready_blk.splitlines()
                           if not ln.lstrip().startswith("#"))
@@ -942,7 +958,7 @@ def balance(s):
 
 
 ck("süslü parantezler dengeli", balance(tpl) == 0)
-for n in ("ssl", "proxy", "inactive"):
+for n in ("ssl", "proxy", "inactive", "panel-sso", "panel-csrf", "panel-csrf-page"):
     ck("snippet var ve dengeli: %s.conf" % n,
        os.path.exists("gateway/snippets/%s.conf" % n)
        and balance(open("gateway/snippets/%s.conf" % n, encoding="utf-8").read()) == 0)
@@ -1248,26 +1264,69 @@ ck("panelin kendi sayfası ve başlıksız istemciler geçiyor",
    _rows.get('"same-origin"') == "1" and _rows.get('"none"') == "1"
    and _rows.get("''") == "1")
 
-# Mongo Express, Basic auth başlığını arka uca İLETEN tek panel (kendi girişi
-# gateway ile aynı kimlik bilgisini kullanıyor). HTTP auth çerez olmadığı için
-# SameSite kuralları ona işlemez: kötü niyetli bir sayfanın buraya attığı gizli
-# form POST'u da "kimliği doğrulanmış" sayılır ve mongo-express 1.0.2'de bunu
-# durduracak bir CSRF jetonu yok. Kontrolü canlı doğruladık: POST + Sec-Fetch-Site
-# cross-site → 403, GET → 503 (panel açılıyor).
-_m8083 = tpl[tpl.index("8083 Mongo Express"):tpl.index("8084 RedisInsight")]
-ck("Mongo Express'te çapraz-site YAZMA isteği reddediliyor",
-   'set $panel_deny "$panel_write$csrf_site_ok";' in _m8083
-   and 'if ($panel_deny = "10")' in _m8083
-   and 'if ($csrf_origin_host = "$host")' in _m8083
-   and 'if ($panel_origin_deny = 1)' in _m8083)
-# Panelde OKUMA serbest kalmalı: dashboard'dan panele geçiş (:443 → :8083) ayrı
-# porta gittiği için tarayıcı "same-site" der, $csrf_site_ok bunu 0 sayar. GET'i
-# de engelleseydik "Panel" düğmesi her seferinde 403 verirdi.
+# PANEL PORTLARININ ÇAPRAZ-SİTE KAPISI — burası İKİ KEZ yarım kapandı, ikisinde
+# de ölçülen şey cevap verdiği varsayılan soruya eşit değildi:
+#   1. tur — kapı yalnız Mongo Express'e (8083) kondu; oysa yıkıcı işlemi GET
+#            ile sunmak eski web arayüzlerinde bir SINIF, tek panele özgü değil.
+#   2. tur — kapı HTTP yöntemine baktı ("GET okumadır" varsayımı). mongo-express
+#            1.0.2'de GET /db/<vt>/dropIndex/<koleksiyon> indeksi SİLER; kötü
+#            niyetli bir sayfadaki tek bir <img> etiketi kapıdan geçiyordu
+#            (canlı üretildi: 302 döndü, indeks düştü). Bu testin ADI da
+#            "çapraz-site YAZMA reddediliyor" diyerek olmayan bir güvence
+#            veriyordu — reddedilmeyen isteğin kendisi bir yazmaydı.
+# Ölçüt artık yöntem değil: "bu isteği panelin KENDİ sayfası mı başlattı?"
+# Cevabı tarayıcı veriyor (Sec-Fetch-Site/Sec-Fetch-Mode; sayfadaki JS bu
+# başlıkları değiştiremez). Yol kara listesi TUTMUYORUZ: panel imajı yükselince
+# liste sessizce eksik kalır, test yeşil kalır, koruma kalmaz.
+_pf = re.search(r'map "\$http_sec_fetch_site:\$http_sec_fetch_mode" \$panel_from \{([^}]*)\}',
+                tpl)
+_pfrows = dict(re.findall(r"^\s*(\S+)\s+([012]);", _pf.group(1), re.M)) if _pf else {}
+_csrf = open("gateway/snippets/panel-csrf.conf", encoding="utf-8").read()
+ck("panel kapısı yönteme değil, isteği KİMİN başlattığına bakıyor",
+   _pfrows.get("default") == "0"
+   and _pfrows.get('"~^same-origin:"') == "2"
+   and _pfrows.get('"same-site:navigate"') == "1"
+   and "if ($panel_from = 0) { return 403; }" in _csrf)
+# Yöntem hâlâ kullanılıyor ama TEK BAŞINA değil: yalnız "giriş gezinmesi"
+# kademesinde yazmayı kesmek için. Origin kapısı da yöntemden bağımsız hale
+# geldi (Sec-Fetch göndermeyen eski tarayıcılar için ikinci kapı).
+ck("GET dahil, panelin kendi sayfasından gelmeyen istek durduruluyor",
+   'set $panel_deny "$panel_write$panel_from";' in _csrf
+   and 'if ($panel_deny = "11") { return 403; }' in _csrf
+   and 'if ($csrf_origin_host != "$host") { return 403; }' in _csrf
+   and "error_page 403 /_panel_crosssite.html;" in _csrf)
+# Kapı bir SINIFA karşı olduğu için tek panele bağlanamaz: bugün mongo-express,
+# yarın başka bir panelin GET ucu. Hepsinde olmalı.
+_pnl_locs = [b for b in location_bodies(_panels) if "set $up " in b]
+_kapisiz = [re.search(r"set \$up (\S+);", b).group(1) for b in _pnl_locs
+            if "snippets/panel-csrf.conf" not in b]
+ck("kapı yalnız Mongo Express'te değil, TÜM panellerde",
+   not _kapisiz and len(_pnl_locs) >= 12,
+   "%d panel location, kapısız: %s" % (len(_pnl_locs), ", ".join(_kapisiz)))
+# error_page tanımı, sayfası olmayan bir server'da sessizce boşa düşer ve
+# kullanıcı nginx'in çıplak "403 Forbidden" ekranını görür: veritabanı bilmeyen
+# kullanıcı bunu "panel bozuldu" diye okur.
+_psrv = [b for b in blocks if re.search(r"listen\s+(808[1-9]|809[0-2])\s+ssl", b)]
+_sayfasiz = [re.search(r"listen\s+(\d+)", b).group(1) for b in _psrv
+             if "snippets/panel-csrf-page.conf" not in b]
+ck("her panelde açıklama sayfası tanımlı (çıplak 403 görünmüyor)",
+   not _sayfasiz and len(_psrv) == 12, "%d panel, sayfasız: %s"
+   % (len(_psrv), ", ".join(_sayfasiz)))
+# MEŞRU KULLANIM: dashboard'dan panele geçiş ayrı porta gittiği için tarayıcı
+# "same-site" der. Bu geçiş (yalnız üst seviye gezinme) geçmeli — GET'i de
+# engelleseydik "Panel aç" düğmesi her seferinde 403 verirdi. Aynı kademeden
+# YAZMA geçmemeli: aynı host'un başka portundaki bir sayfanın gizli form POST'u.
 _pw = re.search(r"map \$request_method \$panel_write \{([^}]*)\}", tpl)
 _pwrows = dict(re.findall(r"^\s*(\S+)\s+([01]);", _pw.group(1), re.M)) if _pw else {}
-ck("panele okuma (GET/HEAD) serbest — 'Panel' düğmesi 403 vermiyor",
+ck("'Panel aç' düğmesi çalışıyor, o kademeden yazma geçmiyor",
    _pwrows.get("GET") == "0" and _pwrows.get("HEAD") == "0"
-   and _pwrows.get("default") == "1")
+   and _pwrows.get("default") == "1"
+   and _pfrows.get('"same-site:navigate"') == "1"
+   and 'if ($panel_deny = "11")' in _csrf)
+# Tarayıcı olmayan istemci (curl ile çalışan bakım betikleri) hiçbir Sec-Fetch
+# başlığı göndermez; kapı onları dışarıda bırakırsa betikler sessizce 403 alır.
+ck("tarayıcı olmayan istemciler ve adres çubuğu panele erişebiliyor",
+   _pfrows.get('":"') == "2" and _pfrows.get('"~^none:"') == "2")
 
 # Dashboard hata gövdesini kullanıcıya OLDUĞU GİBİ gösteriyor (app.js: r.text()).
 # Ortak HTML sayfaları döndüğünde kullanıcı hata penceresinde koca bir HTML
@@ -1364,6 +1423,21 @@ ck("doğrulamayı geçemeyen dosya kurtarma noktası sayılmıyor",
 _finalsiz = [n for n, body in _fn
              if n.startswith("backup_") and "out_path" in body and "finalize_backup" not in body]
 ck("dosya üreten her motor finalize_backup'tan geçiyor", not _finalsiz, ", ".join(_finalsiz))
+
+# verify_backup'ın dalları "dosya doğru mu BAŞLIYOR" sorusuyla yetinmemeli:
+# kesilmiş bir yedeğin başı her zaman doğrudur. Her biçimde akışın SONUNA
+# kadar sağlam olduğunu gösteren bir ölçüt aranıyor.
+_arch_dal = _bk.split("*.archive.gz)")[1].split("*.gz)")[0]
+ck("MongoDB arşivinde gzip akışı sonuna kadar açılıyor (zarf yarım mı)",
+   "gzip -dc" in _arch_dal)
+ck("MongoDB arşivinde arşiv sonlandırıcısı aranıyor (gövde yarım mı)",
+   "ffffffff" in _arch_dal)
+# 256 baytlık eşik ÖLÇÜT OLMAKTAN ÇIKTI: dayandığı "gerçek arşiv kilobayt
+# mertebesindedir" varsayımı yanlış (hiç kullanıcı verisi olmayan mongo:7.0
+# sunucusunun tam arşivi 855 bayt) ve kesikliği zaten göremiyordu.
+ck("MongoDB arşivinde boyut eşiği ölçüt olmaktan çıktı", "-lt 256" not in _arch_dal)
+ck("Redis yedeğinde RDB sonlandırıcısı aranıyor", "RDB sonlandırıcısı yok" in _bk)
+ck("RabbitMQ tanımlarında JSON'ın kapandığına bakılıyor", "JSON kapanmıyor" in _bk)
 
 # Kapalı kalan bir motorun TÜM yedekleri silinmemeli: kapalıyken yeni yedek
 # üretilmediği için hepsi tarih eşiğini geçer ve son kurtarma noktası da gider.
@@ -1465,6 +1539,64 @@ if _bash:
     # imza kalır; imza kontrolü tek başına buna "geçerli" diyordu.
     with open(os.path.join(_tmp, "mongodb_full_kisa.archive.gz"), "wb") as _fh:
         _fh.write(b"\x6d\xe2\x99\x81")
+
+    # ---- MongoDB arşivi: "başı doğru ama sonu kesik" ----------------------
+    # Bu dal iki kez YANLIŞ ŞEY ölçtüğü için iki kez kapanmadı. İmza kontrolü
+    # "dosya doğru mu BAŞLIYOR", 256 baytlık eşik "dump BAŞLADI mı" sorusunu
+    # cevaplıyordu; ikisi de akışın BAŞINA bakıyor. Yedeği öldüren şey ise
+    # akışın SONU: mongo:7.0 ile üretilen 2000 belgelik gerçek bir arşiv 400
+    # bayta kesildiğinde her iki kontrolden de geçip "Bütünlük doğrulandı"
+    # alıyor, mongorestore ise "corruption found in archive" deyip duruyordu.
+    #
+    # Buradaki arşivler mongo:7.0'da ölçülen biçime göre kuruluyor:
+    # --archive --gzip DÜZ GZIP yazar (dosya 1f 8b ile başlar), gzip'in
+    # içindeki arşiv 6d e2 99 81 ile başlar ve tamamlandığında ff ff ff ff
+    # sonlandırıcısıyla biter.
+    _MG_BAS = b"\x6d\xe2\x99\x81"
+    _MG_SON = b"\xff\xff\xff\xff"
+    # Gövde BİLEREK zor sıkışan baytlardan: tekrarlı bir gövde 900 bayttan 38
+    # bayta iniyor ve "gzip akışını yarıda kes" senaryosu kurulamıyordu
+    # (kesilen parça dosyanın tamamı çıkıyor, test yeşil yanılıyordu).
+    _mg_govde = bytes((i * 37 + (i * i) // 7) % 251 for i in range(4000))
+    _mg_tam = _MG_BAS + b"\x3c\x00\x00\x00" + _mg_govde + _MG_SON
+    with open(os.path.join(_tmp, "mongodb_full_tam.archive.gz"), "wb") as _fh:
+        _fh.write(_gzip.compress(_mg_tam))
+    # (a) SİNSİ HÂL: arşiv gövdesi yarım ama gzip zarfı kusursuz kapatılmış.
+    # `gzip -t` bu dosyaya rc=0 der; ölçüt zarf değil, arşivin SONU olmalı.
+    with open(os.path.join(_tmp, "mongodb_full_zarfsaglam.archive.gz"), "wb") as _fh:
+        _fh.write(_gzip.compress(_mg_tam[:600]))
+    # (b) Ham kesme: gzip akışının kendisi de yarıda kalmış.
+    _mg_gz = _gzip.compress(_mg_tam)
+    with open(os.path.join(_tmp, "mongodb_full_kesikgzip.archive.gz"), "wb") as _fh:
+        _fh.write(_mg_gz[:len(_mg_gz) // 2])
+    # (c) .archive.gz adını taşıyan ama içinden mongodump arşivi çıkmayan dosya.
+    with open(os.path.join(_tmp, "mongodb_full_baskabir.archive.gz"), "wb") as _fh:
+        _fh.write(_gzip.compress(b"CREATE DATABASE app;\n" * 50))
+    # (d) Sıkıştırmasız --archive'ın kesilmiş hâli: imzası doğru, sonu yok.
+    with open(os.path.join(_tmp, "mongodb_full_duzkesik.archive.gz"), "wb") as _fh:
+        _fh.write(_mg_tam[:600])
+
+    # ---- Redis RDB: aynı sınıf, aynı sonuç -------------------------------
+    # RDB "REDIS<sürüm>" ile başlar, EOF işlemcisi (ff) + 8 baytlık sağlama
+    # ile biter. Eski ölçüt yalnız BAŞA bakıyordu. Kesik bir RDB'yi Redis
+    # yüklemez, HİÇ AÇILMAZ ("Unexpected EOF reading RDB file") — üstelik
+    # restore_redis o dosyayı koymadan önce eski dump.rdb'yi ve AOF'u siler.
+    _rdb_tam = b"REDIS0011" + b"\xfe\x00" + b"\x00\x03abc\x03xyz" * 40 \
+               + b"\xff" + b"\x5a\x17\xb9\x93\x28\xac\x32\xaa"
+    with open(os.path.join(_tmp, "redis_full_tam.rdb.gz"), "wb") as _fh:
+        _fh.write(_gzip.compress(_rdb_tam))
+    with open(os.path.join(_tmp, "redis_full_kesik.rdb.gz"), "wb") as _fh:
+        _fh.write(_gzip.compress(_rdb_tam[:300]))
+    # `rdbchecksum no` ile sağlama alanı sıfırlarla dolar; bu da GEÇERLİ bir
+    # RDB'dir, ona "bozuk" demek yedeği yok saymak olur.
+    with open(os.path.join(_tmp, "redis_full_sagsiz.rdb.gz"), "wb") as _fh:
+        _fh.write(_gzip.compress(_rdb_tam[:-8] + b"\x00" * 8))
+
+    # ---- RabbitMQ tanımları: başı `{` olanın sonu `}` olmalı --------------
+    with open(os.path.join(_tmp, "rabbitmq_full_tam.json.gz"), "wb") as _fh:
+        _fh.write(_gzip.compress(b'{"queues":[{"name":"siparis"}],"bindings":[]}\n'))
+    with open(os.path.join(_tmp, "rabbitmq_full_kesik.json.gz"), "wb") as _fh:
+        _fh.write(_gzip.compress(b'{"queues":[{"name":"sipa'))
     # Betiğin KENDİ kenara aldığı dosya kendi verify'ından yeşil tik almamalı:
     # operatör uzantıyı geri alıp o dosyayla geri yüklemeye kalkıyordu.
     with _gzip.open(os.path.join(_tmp, "mariadb_full_kenara.sql.gz.bozuk"), "wb") as _g:
@@ -1487,9 +1619,266 @@ if _bash:
        _verify("elasticsearch_full_dolu.tar.gz") == 0)
     ck("4 baytlık MongoDB arşivi imzadan geçse de 'doğrulandı' demiyor",
        _verify("mongodb_full_kisa.archive.gz") != 0)
+    # Asıl ölçüt: akış SONUNA KADAR sağlam mı? Sağlam olan geçmeli — bir
+    # yedeğe haksız yere "bozuk" demek onu YOK saymakla aynı şeydir.
+    ck("tam MongoDB arşivi doğrulanıyor",
+       _verify("mongodb_full_tam.archive.gz") == 0)
+    ck("gzip zarfı sağlam ama gövdesi kesik MongoDB arşivi 'doğrulandı' demiyor",
+       _verify("mongodb_full_zarfsaglam.archive.gz") != 0)
+    ck("gzip akışı yarıda kalmış MongoDB arşivi 'doğrulandı' demiyor",
+       _verify("mongodb_full_kesikgzip.archive.gz") != 0)
+    ck("içinden mongodump arşivi çıkmayan .archive.gz 'doğrulandı' demiyor",
+       _verify("mongodb_full_baskabir.archive.gz") != 0)
+    ck("sıkıştırmasız --archive'ın kesilmiş hâli 'doğrulandı' demiyor",
+       _verify("mongodb_full_duzkesik.archive.gz") != 0)
+    ck("tam RDB doğrulanıyor", _verify("redis_full_tam.rdb.gz") == 0)
+    ck("sağlaması kapalı (geçerli) RDB doğrulanıyor",
+       _verify("redis_full_sagsiz.rdb.gz") == 0)
+    ck("başı REDIS olan ama sonu kesik RDB 'doğrulandı' demiyor",
+       _verify("redis_full_kesik.rdb.gz") != 0)
+    ck("tam RabbitMQ tanım dosyası doğrulanıyor",
+       _verify("rabbitmq_full_tam.json.gz") == 0)
+    ck("JSON'ı kapanmayan RabbitMQ tanım dosyası 'doğrulandı' demiyor",
+       _verify("rabbitmq_full_kesik.json.gz") != 0)
     ck("kenara alınmış (.bozuk) dosya verify'dan yeşil tik almıyor",
        _verify("mariadb_full_kenara.sql.gz.bozuk") != 0)
     _shutil.rmtree(_tmp, ignore_errors=True)
+
+# =============================================================================
+# MariaDB tohumlaması: YÖN KEMERİ — sahte docker ile GERÇEK betiği çalıştırarak
+# =============================================================================
+# Bu kemeri yalnız metin olarak denetlemek YETMİYOR. İki kez yazıldı, ikisi de
+# "mantıken doğru" göründü, ikisi de YANLIŞ SORUYU ölçtü:
+#   1) "kaynakta hiç tablo yok mu?" → devirden sonra İKİ düğümde de veri vardır,
+#      biri bayattır; kemer hiç ateşlemedi.
+#   2) "hedefin GTID SIRA numarası büyük mü?" → sıra numarası güncellik ölçüsü
+#      DEĞİLDİR. Devirden sonra iki düğüm aynı alanda ayrı kollara ayrılır ve
+#      bayat eski primary'nin sırası (0-1-100) canlı düğümünkinden (0-2-98)
+#      BÜYÜK kalır: ölçüt tam ters cevabı verir, döküm canlı verinin üzerine
+#      basılır.
+# Doğru soru KAPSAMA'dır: hedefin gördüğü her işlem kaynakta da VAR MI? Bunu
+# sunucu kimliğiyle birlikte sormak gerekir. Aşağıdaki testler betiği gerçekten
+# çalıştırıp döküm yolunun tetiklenip tetiklenmediğine bakar — arıza yalnız
+# çalıştırınca görünüyor. (Ölçütlerin kendisi canlı MariaDB 11.4 container'ları
+# üzerinde doğrulandı; sahte docker o ölçümlerin sayılarını taklit eder.)
+if _bash:
+    import subprocess as _msub   # noqa: E402
+    import tempfile as _mtf      # noqa: E402
+
+    _mdir = _mtf.mkdtemp(prefix="dbstack-mdb-")
+
+    def _pxp(p):
+        # Git Bash "C:/yol"u anlamaz; üretimde (Linux) bu dönüşüm hiçbir şey
+        # değiştirmez.
+        p = p.replace("\\", "/")
+        if len(p) > 1 and p[1] == ":":
+            p = "/" + p[0].lower() + p[2:]
+        return p
+
+    # Sahte docker: betiğin kullandığı çağrıları taklit eder, ne yaptığını
+    # $FAKE_TRACE'e yazar. Düğümlerin "hâli" NODE_<ad>_<alan> env'leriyle gelir.
+    _FAKE_DOCKER = r'''#!/bin/sh
+set -u
+IZ="${FAKE_TRACE:-/dev/null}"
+DURUM="${FAKE_STATE:-/tmp}"
+[ "${1:-}" = "exec" ] || { echo "sahte docker: desteklenmeyen komut: $*" >&2; exit 90; }
+shift
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -e) shift 2 ;;
+        -i|-t|-it) shift ;;
+        *) break ;;
+    esac
+done
+dugum="${1:-}"; shift
+prog="${1:-}"; shift
+anahtar="$(printf '%s' "$dugum" | tr '-' '_')"
+al() { eval "v=\${NODE_${anahtar}_$1-$2}"; printf '%s\n' "$v"; }
+
+case "$prog" in
+mariadb-dump)    echo "DUMP_FROM=$dugum" >> "$IZ"; echo "-- sahte dokum"; exit 0 ;;
+mariadb-upgrade) exit 0 ;;
+mariadb)         ;;
+*) echo "sahte docker: bilinmeyen program: $prog" >&2; exit 91 ;;
+esac
+
+sutunsuz=0; sorgu=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -N|--skip-column-names) sutunsuz=1 ;;
+        -e) shift; sorgu="${1:-}" ;;
+    esac
+    shift
+done
+
+if [ -z "$sorgu" ]; then
+    cat > /dev/null                       # dokum borusunun ucu: yukleme
+    echo "LOAD_INTO=$dugum" >> "$IZ"
+    exit 0
+fi
+
+mf="$DURUM/$anahtar.master"
+if [ ! -f "$mf" ]; then
+    ilk="$(al MASTER '')"
+    [ -n "$ilk" ] && printf '%s\n' "$ilk" > "$mf"
+fi
+
+case "$sorgu" in
+*"CHANGE MASTER"*)
+    h="$(printf '%s' "$sorgu" | sed -n "s/.*MASTER_HOST='\([^']*\)'.*/\1/p")"
+    printf '%s\n' "$h" > "$mf"
+    echo "CHANGE_MASTER_ON=$dugum HOST=$h" >> "$IZ" ;;
+*"SHOW SLAVE STATUS"*)
+    # GERCEK istemci davranisi: -N (--skip-column-names) verildiginde \G
+    # ciktisinin TAMAMI susar. Betik bir kez bu tuzaga dustu (Master_Host
+    # kemeri hic atesleyemedi); sahte docker bunu taklit etmezse test o
+    # hatanin geri gelmesini yakalayamaz.
+    [ "$sutunsuz" = "1" ] && exit 0
+    if [ -f "$mf" ]; then
+        echo "*************************** 1. row ***************************"
+        echo "                Slave_IO_Running: Yes"
+        echo "               Slave_SQL_Running: Yes"
+        echo "                     Master_Host: $(cat "$mf")"
+        echo "           Seconds_Behind_Master: 0"
+    fi ;;
+*"@@read_only"*)                 al RO 0 ;;
+*"@@log_bin"*)                   al LOGBIN 1 ;;
+*"@@gtid_binlog_state"*)         al BSTATE ''; al SLAVEPOS '' ;;
+*"@@gtid_current_pos"*)          al POS '' ;;
+*"@@gtid_binlog_pos"*)           al POS '' ;;
+*"information_schema.SCHEMATA"*) al DBS 'app' | tr ' ' '\n' ;;
+*"table_schema='mysql'"*)        echo 3 ;;
+*"information_schema.TABLES"*)   al TABLES 0 ;;
+*"SELECT 1"*)                    echo 1 ;;
+*) : ;;
+esac
+exit 0
+'''
+    _fake_docker_path = os.path.join(_mdir, "docker")
+    with open(_fake_docker_path, "w", encoding="utf-8", newline="\n") as _fh:
+        _fh.write(_FAKE_DOCKER)
+    os.chmod(_fake_docker_path, 0o755)
+
+    def _kisa(*parca):
+        # ck() tek satır bekler: izleri ve çıktıyı sıkıştırıp kırpıyoruz.
+        m = " · ".join(" ".join(str(x).split()) for x in parca if str(x).strip())
+        return m[:140]
+
+    def _attach(prim, stby, dugumler, ek=None):
+        """attach fazını sahte docker ile çalıştırır → (rc, çıktı, iz)."""
+        iz = os.path.join(_mdir, "iz")
+        durum = os.path.join(_mdir, "durum")
+        _shutil.rmtree(durum, ignore_errors=True)
+        os.makedirs(durum, exist_ok=True)
+        open(iz, "w").close()
+        env = dict(os.environ, MARIADB_PASSWORD="x", DB_PASSWORD="x",
+                   REPLICATION_PRIMARY=prim, REPLICATION_STANDBY=stby,
+                   FAKE_TRACE=_pxp(iz), FAKE_STATE=_pxp(durum))
+        for _ad, _alanlar in dugumler.items():
+            for _k, _v in _alanlar.items():
+                env["NODE_%s_%s" % (_ad.replace("-", "_"), _k)] = str(_v)
+        env.update(ek or {})
+        # PATH'i bash'in KENDİSİ kursun: Windows'ta Python'un PATH'i ";" ile
+        # ayrılmış olur, doğrudan geçirmek yolu bozar.
+        r = _msub.run([_bash, "-c",
+                       'PATH="$1:$PATH"; export PATH; '
+                       'exec sh scripts/replication/mariadb.sh attach',
+                       "-", _pxp(_mdir)],
+                      capture_output=True, env=env)
+        return (r.returncode,
+                (r.stdout + r.stderr).decode("utf-8", "replace"),
+                open(iz, encoding="utf-8").read())
+
+    # BAYAT = devirde geride kalmış eski primary (server-id 1, kendi kolunda
+    # 100'e kadar yazmış). CANLI = yükseltilmiş düğüm (server-id 2, aynı alanda
+    # kendi kolunda 98'de). Sayılar denetim ajanının ürettiği senaryodan.
+    _BAYAT = {"RO": 0, "TABLES": 3, "POS": "0-1-100",
+              "BSTATE": "0-1-100", "SLAVEPOS": "", "DBS": "app"}
+    _CANLI = {"RO": 0, "TABLES": 9, "POS": "0-2-98",
+              "BSTATE": "0-2-98", "SLAVEPOS": "0-1-95", "DBS": "app"}
+
+    head("MariaDB tohumlaması — yön kemeri (sahte docker, gerçek betik)")
+
+    # (1) Denetimin CANLI ÜRETTİĞİ felaket: kaynak bayat, hedef canlı. Eski
+    # ölçüt (sıra karşılaştırması) burada susuyordu: 98 > 100 değil.
+    rc, cikti, iz = _attach("mariadb", "mariadb-replica",
+                            {"mariadb": _BAYAT, "mariadb-replica": _CANLI})
+    ck("bayat kaynaktan canlı hedefe tohumlama REDDEDİLİYOR (rc=1)", rc == 1,
+       _kisa("rc=%d" % rc))
+    ck("reddedilen koşuda döküm hiç başlamıyor", "DUMP_FROM" not in iz, _kisa(iz))
+    ck("canlı hedef bayat düğümün slave'i YAPILMIYOR", "CHANGE_MASTER_ON" not in iz)
+
+    # (2) GTID hiç yokken: hedefte tablo var ama konum boş → kapsama
+    # KANITLANAMAZ. Boş konumu "kapsanmış" saymak, dökümü yine bastırıyordu.
+    rc, cikti, iz = _attach(
+        "mariadb", "mariadb-replica",
+        {"mariadb": dict(_BAYAT, POS="", BSTATE="", SLAVEPOS=""),
+         "mariadb-replica": dict(_CANLI, POS="", BSTATE="", SLAVEPOS="")})
+    ck("GTID okunamayan DOLU hedefe döküm basılmıyor", rc == 1 and "DUMP_FROM" not in iz,
+       "rc=%d iz=%s" % (rc, _kisa(iz)))
+
+    # (3) MEŞRU KURTARMA: controller hedefin hacmini silip container'ı yeniden
+    # kurar (0 tablo). Kaybedilecek veri yoktur; kemer buna DOKUNMAMALI.
+    rc, cikti, iz = _attach("mariadb-replica", "mariadb",
+                            {"mariadb-replica": _CANLI,
+                             "mariadb": {"RO": 1, "TABLES": 0, "POS": "0-1-1",
+                                         "BSTATE": "0-1-1", "SLAVEPOS": ""}})
+    ck("devir sonrası meşru kurtarma engellenmiyor (rc=0)", rc == 0, _kisa(cikti[-200:]))
+    ck("döküm CANLI düğümden alınıp silinmiş düğüme basılıyor",
+       "DUMP_FROM=mariadb-replica" in iz and "LOAD_INTO=mariadb" in iz, _kisa(iz))
+    ck("CHANGE MASTER canlı düğümü gösteriyor",
+       "CHANGE_MASTER_ON=mariadb HOST=mariadb-replica" in iz, _kisa(iz))
+
+    # (4) YANLIŞ ALARM TESTİ. Hedef DOLU ama gördüğü her şey kaynakta var
+    # (akan bir replikayı elle yeniden tohumlama). Bu koşu ENGELLENMEMELİ.
+    # Not: denetimin önerdiği MASTER_GTID_WAIT ölçütü tam burada -1 döndürüp
+    # meşru akışı reddediyordu (canlı container'da ölçüldü): o fonksiyon yalnız
+    # gtid_slave_pos'a bakar, düğümün kendi binlog'una değil.
+    rc, cikti, iz = _attach("mariadb", "mariadb-replica",
+                            {"mariadb": _BAYAT,
+                             "mariadb-replica": {"RO": 1, "TABLES": 5,
+                                                 "POS": "0-1-95",
+                                                 "BSTATE": "", "SLAVEPOS": "0-1-95"}})
+    ck("kapsanan (geride kalmış) dolu hedefe tohumlama ENGELLENMİYOR", rc == 0,
+       _kisa(cikti[-200:]))
+    ck("bu koşuda döküm gerçekten alınıyor", "DUMP_FROM=mariadb" in iz, _kisa(iz))
+
+    # (5) Aynı kolda gerçekten ileride olan hedef: kaynağın bilmediği yazılar var.
+    rc, cikti, iz = _attach("mariadb", "mariadb-replica",
+                            {"mariadb": dict(_BAYAT, POS="0-1-95", BSTATE="0-1-95"),
+                             "mariadb-replica": {"RO": 0, "TABLES": 5,
+                                                 "POS": "0-1-100", "BSTATE": "0-1-100",
+                                                 "SLAVEPOS": ""}})
+    ck("kaynakta olmayan yazıları olan hedef korunuyor",
+       rc == 1 and "DUMP_FROM" not in iz, "rc=%d iz=%s" % (rc, _kisa(iz)))
+
+    # (6) `-N` TUZAĞI. mariadb istemcisi --skip-column-names ile \G çıktısını
+    # hiç basmaz; bu yüzden "zaten akışta" kısayolu ve Master_Host kemeri ölüydü.
+    # Kısayol çalışmıyorsa sağlıklı bir replika her çağrıda baştan tohumlanır.
+    rc, cikti, iz = _attach("mariadb", "mariadb-replica",
+                            {"mariadb": _BAYAT,
+                             "mariadb-replica": dict(_CANLI, MASTER="mariadb")})
+    ck("akışta olan replika yeniden tohumlanmıyor (SHOW SLAVE STATUS okunabiliyor)",
+       rc == 0 and "zaten akışta" in cikti and "DUMP_FROM" not in iz,
+       _kisa("rc=%d" % rc, cikti[-160:]))
+
+    # (7) Akışta ama YANLIŞ kaynaktan: ters bağlanmış topoloji fark edilmeli.
+    rc, cikti, iz = _attach("mariadb", "mariadb-replica",
+                            {"mariadb": _BAYAT,
+                             "mariadb-replica": dict(_CANLI, MASTER="baska-dugum")})
+    ck("yanlış kaynaktan akan topoloji yakalanıyor",
+       rc == 1 and "YANLIŞ kaynaktan" in cikti and "DUMP_FROM" not in iz,
+       _kisa("rc=%d" % rc, cikti[-160:]))
+
+    # (8) Kaçış kapısı: operatör veriyi bilerek gözden çıkarabilmeli, ama ancak
+    # AÇIKÇA söyleyerek. (Controller bunu hiç kullanmaz; hacmi zaten siler.)
+    rc, cikti, iz = _attach("mariadb", "mariadb-replica",
+                            {"mariadb": _BAYAT, "mariadb-replica": _CANLI},
+                            ek={"FORCE_SEED": "1"})
+    ck("FORCE_SEED=1 kemeri bilerek aşabiliyor", rc == 0 and "DUMP_FROM=mariadb" in iz,
+       "rc=%d iz=%s" % (rc, _kisa(iz)))
+
+    _shutil.rmtree(_mdir, ignore_errors=True)
 
 # =============================================================================
 print()
