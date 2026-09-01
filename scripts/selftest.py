@@ -374,8 +374,24 @@ ck("MariaDB yükseltmesi super_read_only KULLANMIYOR (MariaDB'de yoktur)",
    "SET GLOBAL super_read_only" not in _mdb_fo)
 _mdb_rep = open(os.path.join(ROOT, "scripts", "replication", "mariadb.sh"),
                 encoding="utf-8").read()
-ck("MariaDB tohumlaması replikanın gtid_slave_pos tablosunu EZMİYOR",
-   "--ignore-table=mysql.gtid_slave_pos" in _mdb_rep)
+# Seed dökümü `mysql` sistem şemasını KAPSAMAMALI. --all-databases replikanın
+# kendi sistem tablolarını DROP eder; yükleme yarıda kalırsa mysql.proc ve
+# mysql.gtid_slave_pos yok olur, replikasyon hiç başlamaz ve o düğümden alınan
+# sonraki dökümler de bozulur. Gerçek sunucuda yaşandı.
+_mdb_rep_code = chr(10).join(ln for ln in _mdb_rep.splitlines()
+                                if not ln.lstrip().startswith("#"))
+ck("MariaDB tohumlaması mysql sistem şemasını KOPYALAMIYOR",
+   "--all-databases" not in _mdb_rep_code and "--databases $dbs" in _mdb_rep_code)
+ck("MariaDB tohumlaması hesapları SHOW CREATE USER ile taşıyor",
+   "SHOW CREATE USER" in _mdb_rep and "SHOW GRANTS FOR" in _mdb_rep)
+ck("MariaDB tohumlaması bozuk sistem şemasını onarıyor",
+   "mariadb-upgrade" in _mdb_rep)
+_ready_blk = _mdb_fo.split(chr(10) + "ready)", 1)[1].split(chr(10) + "promote)", 1)[0]
+_ready_blk = chr(10).join(ln for ln in _ready_blk.splitlines()
+                          if not ln.lstrip().startswith("#"))
+ck("MariaDB 'ready' önce replikasyon durumuna, sonra 'zaten primary'ye bakar",
+   "Slave_SQL_Running: Yes" in _ready_blk and "zaten primary" in _ready_blk
+   and _ready_blk.index("Slave_SQL_Running: Yes") < _ready_blk.index("zaten primary"))
 ck("MariaDB tohumlamasında aktarım hataları sessizce yutulmuyor",
    "err_log" in _mdb_rep)
 

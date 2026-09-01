@@ -15,21 +15,23 @@ case "$ACTION" in
 check) r INFO replication | grep -q 'role:master' ;;
 ready)
   # Master ölmüşse master_link_status:down olur — bu NORMALDİR, engel değil.
-  # Bakılan şey: bu replika hiç senkron oldu mu (offset ilerledi mi)?
+  # SIRA ÖNEMLİ: önce replika mı diye bakarız, "zaten master" kısayolu sonra
+  # gelir; aksi halde hiç senkron olmamış bozuk bir düğüm hazır sanılır.
   info="$(r INFO replication || true)"
-  printf '%s
-' "$info" | grep -q 'role:master' && { echo "[redis] $SVC zaten master"; exit 0; }
-  printf '%s
-' "$info" | grep -q 'role:slave' || {
-      echo "[redis] ✗ $SVC replika olarak yapılandırılmamış" >&2; exit 1; }
-  off="$(printf '%s
-' "$info" | grep -o 'slave_repl_offset:[0-9-]*' | cut -d: -f2 | tr -d '[:space:]')"
-  if [ -z "$off" ] || [ "$off" -le 0 ] 2>/dev/null; then
-      echo "[redis] ✗ $SVC hiç senkron olmamış (offset=${off:-yok}) — yükseltme veri kaybıdır" >&2
-      exit 1
+  if printf '%s\n' "$info" | grep -q 'role:slave'; then
+      off="$(printf '%s\n' "$info" | grep -o 'slave_repl_offset:[0-9-]*' | cut -d: -f2 | tr -d '[:space:]')"
+      if [ -z "$off" ] || [ "$off" -le 0 ] 2>/dev/null; then
+          echo "[redis] ✗ $SVC hiç senkron olmamış (offset=${off:-yok}) — yükseltmek veri kaybıdır" >&2
+          exit 1
+      fi
+      echo "[redis] $SVC yükseltmeye hazır (offset: $off)"
+      exit 0
   fi
-  echo "[redis] $SVC yükseltmeye hazır (offset: $off)"
+  printf '%s\n' "$info" | grep -q 'role:master' && { echo "[redis] $SVC zaten master"; exit 0; }
+  echo "[redis] ✗ $SVC replika olarak yapılandırılmamış" >&2
+  exit 1
   ;;
+
 promote)
   if r INFO replication | grep -q 'role:master'; then
       echo "[redis] $SVC zaten master"; exit 0

@@ -24,23 +24,31 @@ case "$ACTION" in
 check) is_primary ;;
 
 ready)
+  # SIRA ÖNEMLİ. Önce "replika olarak yapılandırılmış mı" diye bakarız; ancak
+  # ondan sonra "zaten primary mi" kısayoluna düşeriz. Ters sırada bakan eski
+  # sürüm, SQL iş parçacığı ÖLMÜŞ ama read_only bayrağı kapalı kalmış bozuk bir
+  # replikayı "zaten primary" sanıp devre izin veriyordu; gerçek sunucuda bir
+  # satır böyle kayboldu.
+  #
   # Ana kopya bu noktada çoktan ölmüş olabilir; bu yüzden CANLI bağlantı
-  # aramıyoruz (IO thread "Connecting" olacaktır). Aradığımız şey replikanın
-  # gerçekten senkron olduğunun kanıtı: SQL (uygulama) iş parçacığı sağlam mı.
-  # Hiç veri almamış ya da replikasyonu kırık bir replikayı primary yapmak
-  # SESSİZ VERİ KAYBIDIR — o yüzden burada dururuz ve ana kopyaya dokunmayız.
-  if is_primary; then echo "[mariadb] $SVC zaten primary"; exit 0; fi
-  st="$(m 'SHOW SLAVE STATUS\G' || true)"
-  if [ -z "$st" ]; then
-      echo "[mariadb] ✗ $SVC replika olarak yapılandırılmamış" >&2; exit 1
-  fi
-  if ! printf '%s\n' "$st" | grep -q 'Slave_SQL_Running: Yes'; then
-      echo "[mariadb] ✗ replikasyon sağlıklı değil — yükseltme veri kaybına yol açar" >&2
-      printf '%s\n' "$st" | grep -E 'Last_SQL_Error|Last_IO_Error' \
-          | grep -vE ': *$' >&2 || true
+  # ARAMIYORUZ (IO thread "Connecting" olacaktır). Aradığımız şey, replikanın
+  # aldığı olayları gerçekten UYGULAYABİLDİĞİNİN kanıtı.
+  st="$(m 'SHOW SLAVE STATUS\G' 2>/dev/null || true)"
+  if [ -n "$st" ]; then
+      if printf '%s\n' "$st" | grep -q 'Slave_SQL_Running: Yes'; then
+          echo "[mariadb] $SVC yükseltmeye hazır"
+          exit 0
+      fi
+      echo "[mariadb] ✗ replikasyon sağlıklı değil — yükseltmek veri kaybı olur" >&2
+      printf '%s\n' "$st" | grep -E 'Last_SQL_Error|Last_IO_Error'           | grep -vE ': *$' >&2 || true
       exit 1
   fi
-  echo "[mariadb] $SVC yükseltmeye hazır"
+  # Replikasyon hiç yapılandırılmamış: ya daha önce yükseltilmiş (RESET SLAVE
+  # ALL) ya da hiç kurulmamış. Yazılabilir ise yarım kalmış bir devrin
+  # kurtarılabilmesi için yükseltilmiş kabul ederiz.
+  if is_primary; then echo "[mariadb] $SVC zaten primary"; exit 0; fi
+  echo "[mariadb] ✗ $SVC replika olarak yapılandırılmamış" >&2
+  exit 1
   ;;
 
 promote)
