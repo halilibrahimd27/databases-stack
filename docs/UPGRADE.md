@@ -81,6 +81,16 @@ done
 
 ## Stack'in kendisini güncellemek
 
+> **v1.0 öncesinden geçiyorsanız gateway'i BİR KEZ yeniden yaratın:**
+> ```bash
+> docker compose --env-file .env -p databases-stack up -d --force-recreate gateway
+> ```
+> Yönlendirme tablosu gateway'e tek dosya olarak bağlanır ve Docker dosya
+> mount'unu inode'a bağlar. Eski sürüm bu dosyayı rename ile değiştiriyor,
+> mount'u koparıyordu; container güncel tabloyu göremiyordu. Yeni sürüm
+> yerinde yazıyor ama var olan container hâlâ eski inode'a bağlıdır.
+
+
 ```bash
 cd /opt/databases
 git pull

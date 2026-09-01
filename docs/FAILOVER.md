@@ -121,6 +121,18 @@ Durumu görmek için:
 
 ---
 
+## Devirden sonra dikkat edilecekler
+
+**PostgreSQL'de sıra (sequence) numaralarında atlama olur.** Devirden sonra
+`id` gibi otomatik artan alanlar bir sıçrama gösterebilir (ör. 3'ten 36'ya).
+Bu bir hata değildir: PostgreSQL performans için sıra numaralarını 32'lik
+bloklar hâlinde önceden ayırır ve bu ayırma WAL'a yazılmaz. Devirde
+kullanılmamış blok kaybolur. Numaralar benzersiz kalır, sadece boşluk oluşur.
+Uygulamanız `id`'lerin ardışık olduğunu VARSAYMAMALI.
+
+**Yedekleme otomatik olarak yeni ana kopyayı hedefler.** Betikler container
+adını sabit kullanmaz, `state/topology.json`'dan o anki ana kopyayı çözer.
+
 ## Ne kadar veri kaybedebilirim?
 
 Replikasyon **asenkrondur**. Ana kopyanın ölmeden hemen önce yedeğe
@@ -165,7 +177,7 @@ replikasyonu açın.
 ./stack.sh failover on postgresql
 
 # Ana kopyayı öldür ve izle
-docker kill postgresql
+docker stop postgresql
 watch -n2 './stack.sh failover status'
 
 # ~30 saniye içinde devir olmalı. Uygulamanız kesintiden sonra
@@ -173,9 +185,22 @@ watch -n2 './stack.sh failover status'
 psql -h <sunucu> -p 5432 -U root -d defaultdb -c "SELECT pg_is_in_recovery();"
 #  → f  (yani yazılabilir ana kopya)
 
-# Eski kopyayı yedek olarak geri al
+# Eski kopyayı yedek olarak geri al (verisi silinip baştan kopyalanır)
 ./stack.sh failover rebuild postgresql
+
+# Doğrula: replikasyon artık ters yönde akmalı
+docker exec postgresql-replica psql -U root -d postgres   -c "SELECT application_name, state FROM pg_stat_replication;"
+#  → walreceiver | streaming
 ```
+
+Gerçek bir sunucuda ölçülen süreler (16 GB, 8 çekirdek):
+
+| Adım | Süre |
+|---|---|
+| Arızanın tespiti (3 kontrol × 10 sn) | ~30 sn |
+| Fence + yükseltme + yönlendirme | 1-2 sn |
+| **Toplam kesinti** | **~30 sn** |
+| Eski kopyayı yedek olarak geri alma | 1-2 dk (veri boyutuna bağlı) |
 
 ---
 
