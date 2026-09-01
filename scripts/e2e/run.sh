@@ -32,11 +32,17 @@ LOG_DIR="${LOG_DIR:-$STACK_ROOT/logs}"
 mkdir -p "$LOG_DIR"
 RUN_LOG="$LOG_DIR/e2e_$(date +%Y%m%d_%H%M%S).log"
 
-# Sıra tesadüfi değil: her paket kendinden öncekinin bıraktığı zemine güvenir.
-# security ve sizing en ucuzu ve en az yan etkilisi olduğu için başta; k8s
+# Sıra tesadüfi değil.
+# security ve sizing en ucuz ve en az yan etkili olanlar, başta.
+# lifecycle EN SONDA: katalogdaki HER motoru açıp kapattığı için hem bütçeyi
+#   doldurup hem de replika/devir kurulumlarını dağıtıyor. Ortada çalıştığı
+#   ölçümde kendinden sonraki iki paket (replication, failover) hiç kontrol
+#   çalıştıramadı — replication "ÖLÇÜLMEDİ" (çıkış 2), failover ön koşulda
+#   düştü. Yani en uzun süren paket, en değerli iki paketi ölçüsüz bırakıyordu.
+# k8s
 # EN SONDA ve isteğe bağlı, çünkü k3s aynı host'ta 80/443'ü Docker'dan kapar
 # (bkz. docs/KUBERNETES.md) ve paketin sonundaki temizlik adımı kritiktir.
-GUVENLI=(security sizing lifecycle replication failover backup monitoring)
+GUVENLI=(security sizing replication failover backup monitoring lifecycle)
 ISTEGE_BAGLI=(k8s)
 
 declare -A ACIKLAMA=(
