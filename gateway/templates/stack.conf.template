@@ -70,6 +70,17 @@ server {
         add_header Content-Disposition 'attachment; filename="databases-stack-ca.crt"';
     }
 
+    # Sertifika kurulum rehberi. auth YOK ve HTTPS'e yönlendirilmez: kullanıcı
+    # tam da sertifikaya güvenmediği için buraya geliyor. Statik dosyalar
+    # (style.css) da bu sunucudan servis edilmeli, yoksa sayfa çıplak görünür.
+    location = /setup {
+        root /usr/share/nginx/html;
+        try_files /setup.html =404;
+    }
+    location ~ ^/(style\.css|setup\.html)$ {
+        root /usr/share/nginx/html;
+    }
+
     location / {
         return 301 https://$host$request_uri;
     }
@@ -119,6 +130,14 @@ server {
     location = /catalog.json {
         alias /etc/nginx/catalog.json;
         default_type application/json;
+    }
+
+    # Sertifika rehberi HTTPS tarafında da auth'suz olsun: kullanıcı uyarıyı
+    # geçip girdiyse bile buraya yönlendirebilelim.
+    location = /setup {
+        auth_basic off;
+        root /usr/share/nginx/html;
+        try_files /setup.html =404;
     }
 
     location / {

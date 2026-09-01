@@ -526,10 +526,44 @@ def plan_engine(eid, requested_mb=None):
         limit = min(limit, engine_budget)
         source = "otomatik"
 
+    pre = engine_preconditions(eid)
+    if pre:
+        detail.update(ok=False, reason=pre)
+        return detail
+
     detail.update(ok=True, limit_mb=int(limit), source=source,
                   tuning=compute_tuning(engine, int(limit)),
                   headroom_mb=int(engine_budget - limit))
     return detail
+
+
+def _cpu_flags():
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("flags") or line.startswith("Features"):
+                    return set(line.split(":", 1)[1].split())
+    except Exception:
+        pass
+    return set()
+
+
+def engine_preconditions(eid):
+    """Motora özgü, bellekten BAĞIMSIZ önkoşullar.
+
+    Bunları aktivasyondan önce kontrol ediyoruz: aksi halde container sonsuz
+    crash-loop'a girer ve kullanıcı sebebini ancak docker loglarında bulur.
+    """
+    if eid == "mongodb":
+        ver = _dotenv().get("MONGO_VERSION", "7.0")
+        if not ver.startswith("4.") and "avx" not in _cpu_flags():
+            return ("MongoDB %s bu sunucuda çalışamaz: 5.0 ve sonrası CPU'da AVX "
+                    "komut setini zorunlu tutar, bu işlemcide yok (eski Xeon'lar ve "
+                    "bazı sanallaştırma profillerinde olmaz). Container açılışta "
+                    "'Illegal instruction' ile ölür. Çözüm: .env içinde "
+                    "MONGO_VERSION=4.4 ve MONGO_SHELL=mongo yapın — 4.4 bu CPU'da "
+                    "sorunsuz çalışır." % ver)
+    return None
 
 
 def plan_all():
@@ -1133,6 +1167,11 @@ def do_activate(jid, eid, requested_mb=None):
         err = preflight()
         if err:
             return job_done(jid, False, err)
+
+        pre = engine_preconditions(eid)
+        if pre:
+            job_log(jid, "ÖNKOŞUL SAĞLANMADI:", pre)
+            return job_done(jid, False, pre)
 
         job_log(jid, "kaynak planı hesaplanıyor…")
         p = plan_engine(eid, requested_mb)

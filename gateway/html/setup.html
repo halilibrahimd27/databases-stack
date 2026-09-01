@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Güvenlik sertifikasını kurun</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔒</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="setup-page">
+
+<main class="setup">
+  <header class="setup-head">
+    <span class="setup-icon">🔒</span>
+    <div>
+      <h1>Tek seferlik güvenlik kurulumu</h1>
+      <p class="lead">Bu adımdan sonra tarayıcı uyarısı tamamen kalkar.</p>
+    </div>
+  </header>
+
+  <section class="panel panel-info">
+    <h2>Tarayıcı neden “Güvenli değil” diyor?</h2>
+    <p>
+      Bağlantınız <b>şifreli</b> — sorun şifrelemede değil, <b>kimin imzaladığında</b>.
+      Bu sunucu iç ağda çalışıyor ve bir alan adı yok; alan adı olmadan
+      Let's Encrypt gibi kamuya açık bir sertifika sağlayıcısı sertifika veremez.
+    </p>
+    <p>
+      Bu yüzden kurulum sırasında sunucu <b>kendi sertifika otoritesini</b> üretti.
+      Tarayıcınız bu otoriteyi henüz tanımıyor, o yüzden uyarıyor. Aşağıdaki
+      dosyayı bir kez kurduğunuzda tanıyacak ve uyarı bir daha çıkmayacak.
+    </p>
+  </section>
+
+  <section class="panel">
+    <h2>1. Sertifikayı indirin</h2>
+    <p><a class="btn btn-primary btn-lg" href="/ca.crt" download="databases-stack-ca.crt">
+      Sertifikayı indir (ca.crt)</a></p>
+    <p class="muted">
+      Bu dosya yalnızca <b>ortak anahtar</b> içerir — gizli bir şey değildir,
+      paylaşmak güvenlidir. Özel anahtar sunucuda kalır ve hiçbir zaman gönderilmez.
+    </p>
+  </section>
+
+  <section class="panel">
+    <h2>2. Bilgisayarınıza kurun</h2>
+
+    <details open>
+      <summary><b>Windows</b></summary>
+      <ol>
+        <li>İndirdiğiniz <code>ca.crt</code> dosyasına <b>çift tıklayın</b>.</li>
+        <li><b>Sertifikayı Yükle…</b> → <b>Yerel Bilgisayar</b> → İleri.</li>
+        <li><b>Tüm sertifikaları aşağıdaki depoya yerleştir</b> → <b>Gözat</b> →
+            <b>Güvenilen Kök Sertifika Yetkilileri</b> → Tamam → İleri → Son.</li>
+        <li>Tarayıcıyı <b>tamamen kapatıp</b> yeniden açın.</li>
+      </ol>
+      <p class="muted">Firefox kendi deposunu kullanır:
+        Ayarlar → Gizlilik ve Güvenlik → Sertifikalar → Sertifikaları Görüntüle →
+        Yetkililer → İçe Aktar.</p>
+    </details>
+
+    <details>
+      <summary><b>macOS</b></summary>
+      <ol>
+        <li><code>ca.crt</code> dosyasına çift tıklayın; <b>Anahtar Zinciri Erişimi</b> açılır.</li>
+        <li>Sertifikayı <b>Sistem</b> anahtar zincirine ekleyin.</li>
+        <li>Sertifikaya çift tıklayın → <b>Güven</b> → “Bu sertifikayı kullanırken”
+            → <b>Her Zaman Güven</b>.</li>
+        <li>Tarayıcıyı yeniden başlatın.</li>
+      </ol>
+      <p class="muted">Terminalden:
+        <code>sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain ca.crt</code></p>
+    </details>
+
+    <details>
+      <summary><b>Linux (Ubuntu / Debian)</b></summary>
+      <pre><code>sudo cp ca.crt /usr/local/share/ca-certificates/databases-stack.crt
+sudo update-ca-certificates</code></pre>
+      <p class="muted">Chrome/Chromium ve Firefox kendi depolarını kullanır;
+        tarayıcı ayarlarından “Yetkililer” bölümüne ayrıca eklemeniz gerekebilir.</p>
+    </details>
+
+    <details>
+      <summary><b>Android / iOS</b></summary>
+      <p><b>Android:</b> Ayarlar → Güvenlik → Şifreleme ve kimlik bilgileri →
+         Sertifika yükle → CA sertifikası.</p>
+      <p><b>iOS:</b> Dosyayı Safari ile indirin → Ayarlar → Profil İndirildi →
+         Yükle. Ardından Ayarlar → Genel → Hakkında → <b>Sertifika Güveni Ayarları</b>
+         bölümünden bu sertifikayı <b>etkinleştirin</b> (bu ikinci adım şarttır).</p>
+    </details>
+  </section>
+
+  <section class="panel panel-ok">
+    <h2>3. Panele girin</h2>
+    <p>Sertifikayı kurduktan sonra tarayıcıyı yeniden başlatın ve devam edin:</p>
+    <p><a class="btn btn-primary btn-lg" id="go" href="/">Yönetim paneline git</a></p>
+    <p class="muted">
+      Kurmak istemiyorsanız uyarı ekranında <b>Gelişmiş → Devam et</b> diyerek de
+      girebilirsiniz. Bağlantı yine şifrelidir; yalnız tarayıcı her seferinde uyarır.
+    </p>
+  </section>
+</main>
+
+<script>
+  // Panel her zaman HTTPS'te; bu sayfa HTTP'den de açılabildiği için
+  // hedefi elle kuruyoruz.
+  document.getElementById('go').href = 'https://' + location.hostname + '/';
+</script>
+</body>
+</html>

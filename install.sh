@@ -155,6 +155,22 @@ if volume_has_data mongodb_data; then
         env_set MONGO_SHELL   "mongo"    # mongosh 5.0 ile geldi
     fi
 fi
+# MongoDB 5.0+ CPU'da AVX komut seti İSTER. Eski Xeon'lar, bazı sanallaştırma
+# profilleri (QEMU varsayılan CPU modeli) ve düşük seviye VPS'lerde AVX yoktur;
+# mongod açılışta "Illegal instruction (core dumped)" ile ölür ve sonsuz
+# crash-loop'a girer. 4.4 bu CPU'larda sorunsuz çalışır.
+if ! grep -qm1 ' avx ' /proc/cpuinfo 2>/dev/null; then
+    cur_mv="$(env_get MONGO_VERSION || echo '')"
+    case "$cur_mv" in
+        4.*) ;;
+        *)  warn "Bu işlemcide AVX desteği yok — MongoDB 5.0+ çalışamaz."
+            warn "→ MongoDB sürümü 4.4'te sabitlendi (bu CPU'da çalışan son sürüm)."
+            env_set MONGO_VERSION "4.4"
+            env_set MONGO_SHELL   "mongo"   # mongosh 5.0 ile geldi
+            ;;
+    esac
+fi
+
 if volume_has_data postgresql_data; then
     warn "Mevcut PostgreSQL verisi bulundu. Sürüm 15'te sabitlendi."
     warn "→ Yükseltme pg_upgrade gerektirir: docs/UPGRADE.md"
@@ -252,6 +268,7 @@ CRED=credentials.txt
     echo "databases-stack — erişim bilgileri"
     echo "Üretim tarihi: $(date '+%Y-%m-%d %H:%M:%S')"
     echo
+    echo "Sertifika kurulumu (önce bunu yapın): http://$STACK_HOST_VAL/setup"
     echo "Yönetim paneli : https://$STACK_HOST_VAL/"
     echo "Kullanıcı      : $PANEL_USER_VAL"
     echo "Parola         : $PANEL_PASS_VAL"
@@ -271,9 +288,12 @@ cat <<EOF
   Parola         :  $PANEL_PASS_VAL
                     (ayrıca $CRED dosyasında, mod 600)
 
-  ${YELLOW}Tarayıcı "güvenli değil" derse:${NC} http://$STACK_HOST_VAL/ca.crt
-  adresinden sertifikayı indirip bilgisayarınıza kurun — uyarı kalkar.
-  (Bu iç ağa özel bir sertifika otoritesidir, domain gerektirmez.)
+  ${BOLD}Önce şunu yapın${NC} — tarayıcı uyarısını kalıcı olarak kaldırır:
+  ${BOLD}http://$STACK_HOST_VAL/setup${NC}
+  (adım adım anlatır; iç ağa özel sertifika otoritesidir, domain gerekmez)
+
+  Kurmadan da girebilirsiniz: uyarı ekranında "Gelişmiş → Devam et".
+  Bağlantı yine şifrelidir, tarayıcı sadece imzalayanı tanımaz.
 
   ${BOLD}Sırada ne var?${NC}
   Panele girin, ihtiyacınız olan veritabanının kartındaki
@@ -285,6 +305,7 @@ cat <<EOF
     ./stack.sh enable postgresql # aç
     ./stack.sh disable redis     # kapat
     ./stack.sh backup            # tüm aktif motorları yedekle
+    ./stack.sh doctor            # kurulum sağlık kontrolü
 EOF
 
 if [ ${#PIN_NOTES[@]} -gt 0 ]; then
