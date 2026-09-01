@@ -75,6 +75,40 @@ map $request_method $panel_write {
     OPTIONS 0;
 }
 
+# -----------------------------------------------------------------------------
+# PANEL TEK OTURUMU — bir kez gir, bütün panellere geç
+# -----------------------------------------------------------------------------
+# Paneller ayrı portlarda; tarayıcı için her port AYRI ORIGIN olduğundan basic
+# auth 443'ten 8081'e taşınmaz ve her panelde yeniden sorulur. Çerezler ise
+# port değil HOST başına paylaşılır: dashboard'a girildiğinde bırakılan çerez
+# (snippets/panel-sso.conf) panel portlarına da gider ve orada parola sorulmaz.
+#
+# GÜVENLİK: çerez taşımayan bir istek — yani dışarıdan doğrudan panele gelen
+# biri — normal parola ekranıyla karşılaşır. Sahte çerez de eşleşmez.
+#
+# Ara değişkenin sebebi: $cookie_x, çerez YOKKEN de çerez BOŞKEN de "" döner.
+# Eşleştirmeyi doğrudan yapsaydık ve .env'de sır tanımlı olmasaydı (eski
+# kurulumlar) anahtar "" olurdu ve çerezsiz her istekle eşleşip BÜTÜN
+# PANELLERİ parolasız açardı. Değeri önce sabit bir önekle sarmalayıp yokluğu
+# ayrı bir işaretçiye çevirerek bu ihtimali imkânsız kılıyoruz.
+# Sır, snippet'ten de erişilebilsin diye normal bir nginx değişkenine
+# bağlanıyor. Snippet'ler envsubst'tan GEÇMEZ (nginx imajı yalnız
+# /etc/nginx/templates/*.template dosyalarını işler); snippet içinde
+# ${STACK_PANEL_SSO} yazsaydık nginx onu tanımsız bir değişken sayardı.
+map $host $panel_sso_secret {
+    default "${STACK_PANEL_SSO}";
+}
+
+map $cookie_dbstack_sso $panel_sso_val {
+    default "cookie:$cookie_dbstack_sso";
+    ""      "cookie:-cerez-yok-";
+}
+map $panel_sso_val $panel_auth {
+    default                     "databases-stack paneli";
+    "cookie:${STACK_PANEL_SSO}" off;
+}
+
+
 ssl_session_cache   shared:SSL:10m;
 ssl_session_timeout 1d;
 ssl_session_tickets off;
@@ -259,6 +293,8 @@ Az önce bir işlem başlattıysanız (aktif etme, kapatma, replika kurma) o iş
         root  /usr/share/nginx/html;
         index index.html;
         try_files $uri $uri/ =404;
+        # Panel tek oturumu: buraya yalnız parola doğruysa gelinir.
+        include /etc/nginx/snippets/panel-sso.conf;
     }
 
     include /etc/nginx/snippets/inactive.conf;
@@ -276,7 +312,7 @@ Az önce bir işlem başlattıysanız (aktif etme, kapatma, replika kurma) o iş
 server {
     listen 8081 ssl; http2 on; server_name _;
     include /etc/nginx/snippets/ssl.conf;
-    auth_basic "phpMyAdmin"; auth_basic_user_file /etc/nginx/.htpasswd;
+    auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up phpmyadmin;
         include /etc/nginx/snippets/proxy-panel.conf;
@@ -284,6 +320,24 @@ server {
         # sürer ve o sürede panel tek bayt bile göndermez. Varsayılan 300s ile
         # nginx 5. dakikada bağlantıyı kesiyor, kullanıcı işlemin durduğunu
         # sanıyordu — oysa import sunucuda devam ediyordu.
+        #
+        # ÖDÜNLEŞİM, BİLEREK: bu süre `location /` seviyesinde, yani panelin
+        # HER isteğini kapsıyor. Bedeli şu: arka ucu gerçekten takılmış bir
+        # panelde (cevap vermeyen MariaDB'ye bağlanmaya çalışan phpMyAdmin)
+        # kullanıcı 5 dakika sonra "işlem uzun sürdü" sayfasını değil, 1 saat
+        # boyunca dönen tekerleği görür.
+        # Daraltmayı iki yoldan da denedik, ikisi de daha kötü:
+        #   • Yola göre (`location ~ ^/(import|export)\.php$`): phpMyAdmin 5.2
+        #     imajında öyle dosyalar YOK — kökte yalnız index.php var, import
+        #     index.php?route=/import ile çalışıyor. Yani kural hiçbir import'a
+        #     uymaz, süre sessizce 300s'ye düşer ve yukarıdaki arıza geri gelir.
+        #   • Yönteme göre (yalnız POST uzun olsun): proxy_read_timeout değişken
+        #     kabul etmez, `if` içinde de yazılamaz; ayrıca Adminer'de uzun
+        #     süren SELECT'ler GET ile gider — GET'i kısaltmak onları keserdi.
+        # Sık karşılaşılan "motor kapalı" hali zaten hızlı biter: container yok
+        # → bağlantı 10 saniyede reddedilir (proxy_connect_timeout) → "pasif"
+        # sayfası. 1 saatlik sessizlik yalnız "bağlantı kuruldu ama cevap hiç
+        # gelmiyor" durumunda görülür.
         proxy_read_timeout 3600s;
         proxy_pass http://$up:80;
     }
@@ -294,11 +348,11 @@ server {
 server {
     listen 8082 ssl; http2 on; server_name _;
     include /etc/nginx/snippets/ssl.conf;
-    auth_basic "pgAdmin"; auth_basic_user_file /etc/nginx/.htpasswd;
+    auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up pgadmin;
         include /etc/nginx/snippets/proxy-panel.conf;
-        proxy_read_timeout 3600s;   # yedek yükleme / uzun süren sorgu (bkz. 8081)
+        proxy_read_timeout 3600s;   # yedek yükleme / uzun süren sorgu (ödünleşim: bkz. 8081)
         proxy_pass http://$up:80;
     }
     include /etc/nginx/snippets/inactive.conf;
@@ -308,7 +362,7 @@ server {
 server {
     listen 8083 ssl; http2 on; server_name _;
     include /etc/nginx/snippets/ssl.conf;
-    auth_basic "Mongo Express"; auth_basic_user_file /etc/nginx/.htpasswd;
+    auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up mongo-express;
         # İSTİSNA: Mongo Express'in kendi basic auth'u gateway ile aynı
@@ -338,8 +392,36 @@ server {
         set $panel_origin_deny $panel_write;
         if ($csrf_origin_host = "$host") { set $panel_origin_deny 0; }
         if ($panel_origin_deny = 1) { return 403; }
+        # Engellenen istek nginx'in çıplak "403 Forbidden" sayfasını görmesin:
+        # kullanıcı ne olduğunu anlamaz, panelin bozulduğunu sanır.
+        error_page 403 /_panel_crosssite.html;
         include /etc/nginx/snippets/proxy.conf;
         proxy_pass http://$up:8081;
+    }
+    # Yukarıdaki kontrolün hata sayfası. `internal` → dışarıdan istenemez;
+    # auth_basic kapalı, yoksa hata sayfası ikinci kez parola isterdi.
+    location = /_panel_crosssite.html {
+        internal;
+        auth_basic off;
+        default_type text/html;
+        charset      utf-8;
+        return 403 "<!doctype html>
+<html lang='tr'>
+<meta charset='utf-8'>
+<title>Bu istek durduruldu</title>
+<body style='font-family:system-ui,Segoe UI,Roboto,sans-serif;max-width:640px;margin:64px auto;padding:0 24px;line-height:1.65;color:rgb(32,38,48)'>
+<h1 style='font-size:22px;margin:0 0 16px'>Bu istek durduruldu</h1>
+<p>Bir şeyi değiştiren bu istek panelin kendi sayfasından gelmediği için
+güvenlik gereği durduruldu. <b>Veritabanınızda hiçbir şey değişmedi.</b></p>
+<p>Paneli kullanmak istiyorsanız adresini tarayıcınızın adres çubuğuna kendiniz
+yazıp açın, işlemi oradan yapın.</p>
+<p><a href='/' style='display:inline-block;margin-top:4px;padding:10px 18px;border-radius:10px;background:rgb(36,86,214);color:rgb(255,255,255);text-decoration:none;font-weight:600'>Panelin ana sayfasını aç</a></p>
+<p style='color:rgb(110,118,130);font-size:13px'>Bunu bir bağlantıya tıkladıktan
+sonra gördüyseniz, o sayfa sizin adınıza veritabanınıza komut göndermeye
+çalışmış olabilir.</p>
+</body>
+</html>
+";
     }
     include /etc/nginx/snippets/inactive.conf;
 }
@@ -348,7 +430,7 @@ server {
 server {
     listen 8084 ssl; http2 on; server_name _;
     include /etc/nginx/snippets/ssl.conf;
-    auth_basic "RedisInsight"; auth_basic_user_file /etc/nginx/.htpasswd;
+    auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up redis-insight;
         include /etc/nginx/snippets/proxy-panel.conf;
@@ -361,11 +443,11 @@ server {
 server {
     listen 8085 ssl; http2 on; server_name _;
     include /etc/nginx/snippets/ssl.conf;
-    auth_basic "Adminer"; auth_basic_user_file /etc/nginx/.htpasswd;
+    auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up adminer;
         include /etc/nginx/snippets/proxy-panel.conf;
-        proxy_read_timeout 3600s;   # uzun ALTER TABLE / import (bkz. 8081)
+        proxy_read_timeout 3600s;   # uzun ALTER TABLE / import (ödünleşim: bkz. 8081)
         proxy_pass http://$up:8080;
     }
     include /etc/nginx/snippets/inactive.conf;
@@ -375,7 +457,7 @@ server {
 server {
     listen 8086 ssl; http2 on; server_name _;
     include /etc/nginx/snippets/ssl.conf;
-    auth_basic "Kibana"; auth_basic_user_file /etc/nginx/.htpasswd;
+    auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up kibana;
         include /etc/nginx/snippets/proxy-panel.conf;
@@ -389,7 +471,7 @@ server {
 server {
     listen 8087 ssl; http2 on; server_name _;
     include /etc/nginx/snippets/ssl.conf;
-    auth_basic "Kafka UI"; auth_basic_user_file /etc/nginx/.htpasswd;
+    auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up kafka-ui;
         include /etc/nginx/snippets/proxy-panel.conf;
@@ -402,7 +484,7 @@ server {
 server {
     listen 8088 ssl; http2 on; server_name _;
     include /etc/nginx/snippets/ssl.conf;
-    auth_basic "RabbitMQ"; auth_basic_user_file /etc/nginx/.htpasswd;
+    auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up rabbitmq;
         include /etc/nginx/snippets/proxy-panel.conf;
@@ -415,7 +497,7 @@ server {
 server {
     listen 8089 ssl; http2 on; server_name _;
     include /etc/nginx/snippets/ssl.conf;
-    auth_basic "MinIO"; auth_basic_user_file /etc/nginx/.htpasswd;
+    auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up minio;
         include /etc/nginx/snippets/proxy-panel.conf;
@@ -428,7 +510,7 @@ server {
 server {
     listen 8090 ssl; http2 on; server_name _;
     include /etc/nginx/snippets/ssl.conf;
-    auth_basic "Neo4j"; auth_basic_user_file /etc/nginx/.htpasswd;
+    auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up neo4j;
         include /etc/nginx/snippets/proxy-panel.conf;
@@ -441,7 +523,7 @@ server {
 server {
     listen 8091 ssl; http2 on; server_name _;
     include /etc/nginx/snippets/ssl.conf;
-    auth_basic "ClickHouse"; auth_basic_user_file /etc/nginx/.htpasswd;
+    auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location = / { return 302 /play; }
     location / {
         set $up clickhouse;
@@ -459,7 +541,7 @@ server {
 server {
     listen 8092 ssl; http2 on; server_name _;
     include /etc/nginx/snippets/ssl.conf;
-    auth_basic "Grafana"; auth_basic_user_file /etc/nginx/.htpasswd;
+    auth_basic $panel_auth; auth_basic_user_file /etc/nginx/.htpasswd;
     location / {
         set $up grafana;
         include /etc/nginx/snippets/proxy-panel.conf;

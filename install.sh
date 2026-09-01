@@ -135,6 +135,8 @@ gen_if_empty PANEL_PASSWORD 24        && log "  PANEL_PASSWORD üretildi"
 gen_if_empty PGADMIN_PASSWORD 24      && log "  PGADMIN_PASSWORD üretildi"
 gen_if_empty APP_PASSWORD 24          && log "  APP_PASSWORD üretildi"
 gen_if_empty GRAFANA_PASSWORD 24      && log "  GRAFANA_PASSWORD üretildi"
+# Panellerde ikinci kez parola sorulmasın diye kullanılan çerez sırrı.
+gen_if_empty PANEL_SSO_TOKEN 40       && log "  PANEL_SSO_TOKEN üretildi"
 # Motor başına ayrı parola — tek sızıntı 12 motoru birden açmasın.
 for k in MARIADB_PASSWORD POSTGRES_PASSWORD MONGO_PASSWORD REDIS_PASSWORD \
          MSSQL_PASSWORD CASSANDRA_PASSWORD ELASTIC_PASSWORD KIBANA_SYSTEM_PASSWORD \

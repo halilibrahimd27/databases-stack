@@ -113,6 +113,13 @@ services:
       NGINX_ENVSUBST_FILTER: "^STACK_"
       STACK_CONTROLLER_TOKEN: ${CONTROLLER_TOKEN:?CONTROLLER_TOKEN gerekli — ./install.sh çalıştırın}
       STACK_RESOLVER: ${STACK_RESOLVER:-127.0.0.11}
+      # Panel portları AYRI ORIGIN sayıldığı için tarayıcı, 443'te
+      # girilen parolayı 8081-8092'ye taşımaz ve her panelde yeniden
+      # sorar. Çerezler ise port değil HOST başına paylaşılır: panele
+      # girince bırakılan bu imzalı çerez panel portlarında da gönderilir
+      # ve orada parola sorulmaz. Değeri .env'den gelir; boşsa çerez
+      # yolu kapanır ve her panel yine parola ister (güvenli varsayılan).
+      STACK_PANEL_SSO: ${PANEL_SSO_TOKEN:-}
     volumes:
       - ${STACK_DIR:-.}/gateway/nginx.conf:/etc/nginx/nginx.conf:ro
       # Yönlendirme tablosu — controller üretir, failover'da yeniden yazar.
