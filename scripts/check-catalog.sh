@@ -110,13 +110,35 @@ for e in cat["engines"]:
     if not e.get("plain", {}).get("title"):
         warnings.append("%s: sade açıklama (plain.title) yok" % eid)
 
+# Üretilmiş K8s manifestleri catalog.json ile GÜNCEL mi?
+# Katalog değişip manifestler yeniden üretilmezse depoda BAYAT manifestler
+# kalır; kullanıcı "kubectl apply -k k8s/base" ile eski yapılandırmayı uygular.
+# Sessiz ve fark edilmesi zor bir tutarsızlık — burada yakalanır.
+import os as _os
+cm = "k8s/base/catalog-configmap.yaml"
+if _os.path.exists(cm):
+    embedded, started = [], False
+    for line in open(cm, encoding="utf-8"):
+        if line.strip().startswith("catalog.json: |"):
+            started = True
+            continue
+        if started:
+            embedded.append(line[4:] if line.startswith("    ") else line)
+    try:
+        if json.loads("".join(embedded)) != cat:
+            errors.append("k8s/base/ BAYAT — catalog.json değişmiş. "
+                          "Çalıştırın: python3 scripts/gen-k8s.py")
+    except Exception as _e:
+        errors.append("k8s/base/catalog-configmap.yaml okunamadı: %s" % _e)
+
 for w in warnings:
     print("  uyarı : " + w)
 for x in errors:
     print("  HATA  : " + x)
 
 if errors:
-    print("\n  ✗ %d hata — katalog ile compose ayrışmış." % len(errors))
+    print("\n  ✗ %d hata bulundu." % len(errors))
     sys.exit(1)
-print("  ✓ katalog tutarlı (%d motor, %d servis)" % (len(cat["engines"]), len(services)))
+print("  ✓ katalog tutarlı (%d motor, %d servis, K8s manifestleri güncel)"
+      % (len(cat["engines"]), len(services)))
 PY
