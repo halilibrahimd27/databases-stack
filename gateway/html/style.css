@@ -78,6 +78,10 @@
 
   --ctl-h: 34px;     /* tüm düğmelerin ortak yüksekliği */
   --page:  1280px;
+
+  /* kart ızgarası: taban genişlik ve tek kart kaldığında izin verilen en fazla */
+  --card-basis: 344px;
+  --card-max:   700px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -333,6 +337,8 @@ main {
 .legend-label { font-weight: 600; letter-spacing: .02em; }
 
 .cat-title {
+  flex: 1 0 100%;
+  width: 100%;
   grid-column: 1 / -1;
   margin: 26px 0 0;
   padding-bottom: 8px;
@@ -346,6 +352,8 @@ main {
 .cat-title:first-child { margin-top: 4px; }
 
 .loading {
+  flex: 1 0 100%;
+  width: 100%;
   grid-column: 1 / -1;
   margin: 0;
   padding: 28px 0;
@@ -354,20 +362,24 @@ main {
 }
 
 /* ---------------------------------------- 6. Kart ızgarası ve kartlar ---- */
+/* Kategori başlıkları her satırı böldüğü için ızgara yerine esnek satır
+   kullanıyoruz: tek motorlu bir kategoride kart, boş sütun bırakmak yerine
+   satırı paylaşıp genişliyor. --card-max abartılı genişlemeyi engelliyor. */
 .grid {
-  display: grid;
-  gap: 16px;
-  /* auto-fit: son satırdaki boş sütunlar çökertilir, sağda boşluk kalmaz. */
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 372px), 1fr));
+  display: flex;
+  flex-wrap: wrap;
   align-items: stretch;
-  margin-top: 4px;
+  gap: 16px;
+  margin-top: 10px;
 }
 
 .card {
+  flex: 1 1 var(--card-basis);
+  min-width: 0;
+  max-width: min(var(--card-max), 100%);
   display: flex;
   flex-direction: column;
   gap: 10px;
-  height: 100%;
   padding: 16px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -905,7 +917,7 @@ main {
 
 /* -------------------------------- 13. Duyarlılık ve erişilebilirlik ------ */
 @media (max-width: 1280px) {
-  .grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); }
+  :root { --card-basis: 320px; }
 }
 
 @media (max-width: 900px) {
@@ -914,7 +926,7 @@ main {
   .sys-item { flex: 1 1 120px; min-width: 110px; }
   main { padding: 20px 16px 56px; }
   .banner { margin-left: 16px; margin-right: 16px; }
-  .grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); }
+  :root { --card-basis: 300px; --card-max: 100%; }
   .setup { padding: 24px 16px 56px; }
 }
 
@@ -929,7 +941,7 @@ main {
     padding: 6px 12px;
     border-left: 0;
   }
-  .grid { grid-template-columns: 1fr; }
+  :root { --card-basis: 100%; }
   .card { padding: 14px; }
   .card-actions .btn { flex: 1 1 auto; }
   .modal { padding: 12px; align-items: flex-end; }
