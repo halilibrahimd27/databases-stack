@@ -1,0 +1,647 @@
+{
+  "id": null,
+  "uid": "dbstack-elasticsearch",
+  "title": "Elasticsearch — Genel Durum",
+  "description": "Elasticsearch arama motorunun sağlık ve yük özeti. Üstteki büyük sayılar \"her şey yolunda mı\" sorusunu, alttaki grafikler \"ne kadar yükleniyor ve yavaşlıyor mu\" sorusunu yanıtlar. Renk yeşilse aksiyon gerekmez.",
+  "tags": ["databases-stack", "elasticsearch"],
+  "timezone": "browser",
+  "editable": false,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "fiscalYearStartMonth": 0,
+  "weekStart": "",
+  "links": [],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Elasticsearch erişilebilir mi?",
+      "description": "Elasticsearch'ün izleme sistemine cevap verip vermediğini gösterir. \"Çalışıyor\" yazıyorsa motor ayaktadır ve uygulamalarınız arama yapabilir. \"Kapalı\" yazıyorsa arama yapan her uygulama hata alır: bu panel kırmızıysa önce Elasticsearch'ü yeniden başlatmayı deneyin. Panel boşsa motor hiç açılmamış demektir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "pluginVersion": "11.0.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "Kapalı", "color": "red", "index": 0 },
+                "1": { "text": "Çalışıyor", "color": "green", "index": 1 }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "max(up{job=\"databases\", engine=\"elasticsearch\"})",
+          "instant": false,
+          "legendFormat": "Durum",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Küme sağlık durumu",
+      "description": "Elasticsearch kendi sağlığını üç renkle anlatır. YEŞİL: tüm veri ve yedek kopyaları yerli yerinde. SARI: veriye erişilebiliyor ama yedek kopyası yok — tek sunuculu kurulumlarda bu normaldir, çok sunuculuda bir sunucu kaybolmuş olabilir. KIRMIZI: verinin bir kısmına şu anda hiç erişilemiyor, aramalar eksik sonuç döndürür; hemen bakılması gerekir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "pluginVersion": "11.0.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "YEŞİL — sağlıklı", "color": "green", "index": 0 },
+                "1": { "text": "SARI — yedek kopya eksik", "color": "orange", "index": 1 },
+                "2": { "text": "KIRMIZI — veriye erişilemiyor", "color": "red", "index": 2 },
+                "3": { "text": "KIRMIZI — veriye erişilemiyor", "color": "red", "index": 3 }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "2 * max(elasticsearch_cluster_health_status{engine=\"elasticsearch\", color=\"red\"}) + max(elasticsearch_cluster_health_status{engine=\"elasticsearch\", color=\"yellow\"})",
+          "instant": false,
+          "legendFormat": "Renk",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Java belleği (heap) doluluğu",
+      "description": "Elasticsearch'e ayrılan çalışma belleğinin yüzde kaçının kullanıldığı. %75'in altı normaldir. Sürekli %90'ın üzerinde kalıyorsa motor kendini temizlemekle meşgul olur: aramalar yavaşlar, zaman aşımı hataları başlar, en kötü durumda Elasticsearch kapanır. Bu durumda ya belleği artırın ya da sakladığınız veri miktarını azaltın.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "pluginVersion": "11.0.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 75 },
+              { "color": "red", "value": 90 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "100 * sum(elasticsearch_jvm_memory_used_bytes{engine=\"elasticsearch\", area=\"heap\"}) / sum(elasticsearch_jvm_memory_max_bytes{engine=\"elasticsearch\", area=\"heap\"})",
+          "instant": false,
+          "legendFormat": "Bellek doluluğu",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Disk doluluğu",
+      "description": "Elasticsearch verisinin durduğu diskin yüzde kaçının dolduğu. %85'i geçtiğinde Elasticsearch kendini korumak için yeni veri yazmayı durdurur ve dizinleri salt-okunur yapar — o noktada uygulamanız kayıt ekleyemez. Sarıya döndüğünde (%75) disk büyütmeyi ya da eski verileri silmeyi planlayın; kırmızıya dönmeden müdahale edin.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "pluginVersion": "11.0.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 75 },
+              { "color": "red", "value": 85 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "100 * (1 - sum(elasticsearch_filesystem_data_available_bytes{engine=\"elasticsearch\"}) / sum(elasticsearch_filesystem_data_size_bytes{engine=\"elasticsearch\"}))",
+          "instant": false,
+          "legendFormat": "Disk doluluğu",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Yerleştirilememiş veri parçası",
+      "description": "Elasticsearch veriyi \"parça\" denen bloklara böler ve mümkünse her parçanın bir yedek kopyasını başka bir sunucuda tutar. Bu sayı, şu anda hiçbir sunucuya yerleştirilememiş parçaları gösterir. Tek sunuculu kurulumda yedek kopyalara yer olmadığı için sayı sıfırdan büyük olabilir ve bu beklenen bir durumdur — küme rengi de bu yüzden sarı görünür. Çok sunuculu kurulumda sayı sıfırdan büyük kalıp düşmüyorsa bir sunucu kaybolmuş ya da diski dolmuş olabilir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 4 },
+      "pluginVersion": "11.0.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "mappings": [
+            {
+              "type": "value",
+              "options": { "0": { "text": "0 — hepsi yerinde", "color": "green", "index": 0 } }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(elasticsearch_cluster_health_unassigned_shards{engine=\"elasticsearch\"})",
+          "instant": false,
+          "legendFormat": "Yerleşemeyen parça",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Saklanan veri boyutu",
+      "description": "Elasticsearch'ün diskte tuttuğu arama verisinin toplam boyutu. Tek başına iyi ya da kötü bir sayı değildir; önemli olan eğilimidir. Küçük grafikte durmadan yükselen bir çizgi görüyorsanız veriniz sürekli büyüyor demektir — \"Disk doluluğu\" paneli kırmızıya dönmeden eski kayıtları temizlemeyi ya da disk büyütmeyi planlayın.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 4 },
+      "pluginVersion": "11.0.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "bytes",
+          "decimals": 1,
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "blue", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(elasticsearch_indices_store_size_bytes{engine=\"elasticsearch\"})",
+          "instant": false,
+          "legendFormat": "Veri boyutu",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Saniyedeki arama ve kayıt işlemi",
+      "description": "Elasticsearch'ün saniyede kaç arama yaptığı ve kaç yeni kayıt yazdığı — yani üzerindeki iş yükü. Gün içinde inip çıkması normaldir; iş saatlerinde yükselip gece düşmesi beklenir. Hiçbir uygulama kullanılmadığı halde çizgi sürekli yüksekse beklenmedik bir kaynak veri yazıyor olabilir. Bu grafik yükselirken \"Ortalama arama süresi\" de uzuyorsa motor gelen yüke yetişemiyor demektir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "pluginVersion": "11.0.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "ops",
+          "min": 0,
+          "decimals": 2,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "işlem/sn",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(rate(elasticsearch_indices_search_query_total{engine=\"elasticsearch\"}[5m]))",
+          "instant": false,
+          "legendFormat": "Arama (sorgu) / sn",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(rate(elasticsearch_indices_indexing_index_total{engine=\"elasticsearch\"}[5m]))",
+          "instant": false,
+          "legendFormat": "Kayıt yazma / sn",
+          "range": true,
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Ortalama arama süresi",
+      "description": "Bir aramanın ortalama ne kadar sürdüğü. Kullanıcıların \"arama yavaşladı\" dediği şey tam olarak budur. Yarım saniyenin altı iyidir (yeşil çizginin altı). 1 saniyeyi aşıp orada kalıyorsa yavaşlama gözle görülür hale gelmiştir; en sık sebepleri bellek darlığı, disk doluluğu ve aynı anda gelen çok fazla istektir. Hiç arama yapılmayan dönemlerde grafik boş kalır, bu normaldir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "pluginVersion": "11.0.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "s",
+          "min": 0,
+          "decimals": 3,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "saniye",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.5 },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(rate(elasticsearch_indices_search_query_time_seconds{engine=\"elasticsearch\"}[5m])) / sum(rate(elasticsearch_indices_search_query_total{engine=\"elasticsearch\"}[5m]))",
+          "instant": false,
+          "legendFormat": "Ortalama arama süresi",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Önbellek isabet oranı",
+      "description": "Elasticsearch sık tekrarlanan aramaların cevabını hafızasında saklar. Bu oran, aramaların yüzde kaçının diske hiç gitmeden hafızadan karşılandığını gösterir — yüksek olması iyidir. Oran sürekli düşükse ya her arama birbirinden farklıdır (bu normaldir, endişelenmeyin) ya da önbelleğe ayrılan bellek yetersizdir. Aramalar da yavaşlıyorsa ikinci ihtimali düşünün. Hiç arama yapılmadığı dönemlerde grafik boş kalır.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "pluginVersion": "11.0.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 1,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "yüzde",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 40 },
+              { "color": "green", "value": 70 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": ["mean", "min", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "100 * sum(rate(elasticsearch_indices_query_cache_count{engine=\"elasticsearch\", cache=\"hit\"}[5m])) / (sum(rate(elasticsearch_indices_query_cache_count{engine=\"elasticsearch\", cache=\"hit\"}[5m])) + sum(rate(elasticsearch_indices_query_cache_count{engine=\"elasticsearch\", cache=\"miss\"}[5m])))",
+          "instant": false,
+          "legendFormat": "Hafızadan karşılanan arama oranı",
+          "range": true,
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Aşırı yüklenme belirtileri",
+      "description": "Elasticsearch aynı anda işleyebileceğinden fazla istek gelince önce sıraya alır, sıra da dolarsa isteği geri çevirir. \"Geri çevrilen istek\" her zaman sıfır olmalıdır: sıfırdan büyükse uygulamanız o anda hata alıyor ve bu doğrudan kullanıcıya yansıyor demektir. \"Sırada bekleyen istek\" kısa süreli tepeler yapabilir, ama sürekli yüksek kalıyorsa motor gelen yüke yetişemiyordur — yükü azaltın ya da Elasticsearch'e daha fazla kaynak verin.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "pluginVersion": "11.0.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "unit": "short",
+          "min": 0,
+          "decimals": 2,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "adet",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Geri çevrilen istek / sn" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } },
+              { "id": "custom.fillOpacity", "value": 30 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Sırada bekleyen istek" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max", "lastNotNull"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(rate(elasticsearch_thread_pool_rejected_count{engine=\"elasticsearch\"}[5m]))",
+          "instant": false,
+          "legendFormat": "Geri çevrilen istek / sn",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(elasticsearch_thread_pool_queue_count{engine=\"elasticsearch\"})",
+          "instant": false,
+          "legendFormat": "Sırada bekleyen istek",
+          "range": true,
+          "refId": "B"
+        }
+      ]
+    }
+  ]
+}

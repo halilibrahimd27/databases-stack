@@ -1,0 +1,22 @@
+# =============================================================================
+# Grafana veri kaynağı — otomatik kurulur
+# =============================================================================
+# Kullanıcının Grafana'da elle veri kaynağı tanımlaması gerekmez. Panel
+# açıldığında grafikler zaten doludur. "Kullanıcıdan bilemeyeceği şeyi isteme"
+# ilkesinin karşılığı budur.
+# =============================================================================
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: dbstack-prometheus      # panolar bu uid'ye referans verir, sabit kalmalı
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      # Toplama aralığıyla aynı: Grafana daha ince çözünürlük isteyip boş
+      # grafik çizmesin.
+      timeInterval: 30s
+      httpMethod: POST

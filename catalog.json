@@ -49,7 +49,9 @@
       },
       "exporter": {
         "service": "mariadb-exporter",
-        "metrics_path": "/metrics/mariadb"
+        "metrics_path": "/metrics/mariadb",
+        "port": 9104,
+        "scrape_path": "/metrics"
       },
       "replication": {
         "mode": "primary-replica",
@@ -164,7 +166,9 @@
       },
       "exporter": {
         "service": "postgres-exporter",
-        "metrics_path": "/metrics/postgresql"
+        "metrics_path": "/metrics/postgresql",
+        "port": 9187,
+        "scrape_path": "/metrics"
       },
       "replication": {
         "mode": "primary-replica",
@@ -283,7 +287,9 @@
       },
       "exporter": {
         "service": "mongodb-exporter",
-        "metrics_path": "/metrics/mongodb"
+        "metrics_path": "/metrics/mongodb",
+        "port": 9216,
+        "scrape_path": "/metrics"
       },
       "replication": {
         "mode": "replica-set",
@@ -385,7 +391,9 @@
       },
       "exporter": {
         "service": "redis-exporter",
-        "metrics_path": "/metrics/redis"
+        "metrics_path": "/metrics/redis",
+        "port": 9121,
+        "scrape_path": "/metrics"
       },
       "replication": {
         "mode": "primary-replica",
@@ -567,7 +575,9 @@
       "panel": null,
       "exporter": {
         "service": "cassandra-exporter",
-        "metrics_path": "/metrics/cassandra"
+        "metrics_path": "/metrics/cassandra",
+        "port": 9500,
+        "scrape_path": "/metrics"
       },
       "replication": {
         "mode": "native-cluster",
@@ -674,7 +684,9 @@
       },
       "exporter": {
         "service": "elasticsearch-exporter",
-        "metrics_path": "/metrics/elasticsearch"
+        "metrics_path": "/metrics/elasticsearch",
+        "port": 9114,
+        "scrape_path": "/metrics"
       },
       "replication": {
         "mode": "native-cluster",
@@ -771,7 +783,9 @@
       },
       "exporter": {
         "service": "kafka-exporter",
-        "metrics_path": "/metrics/kafka"
+        "metrics_path": "/metrics/kafka",
+        "port": 9308,
+        "scrape_path": "/metrics"
       },
       "replication": {
         "mode": "native-cluster",
@@ -863,7 +877,9 @@
       "exporter": {
         "service": "rabbitmq",
         "metrics_path": "/metrics/rabbitmq",
-        "builtin": true
+        "builtin": true,
+        "port": 15692,
+        "scrape_path": "/metrics"
       },
       "replication": {
         "mode": "native-cluster",
@@ -953,7 +969,9 @@
       "exporter": {
         "service": "clickhouse",
         "metrics_path": "/metrics/clickhouse",
-        "builtin": true
+        "builtin": true,
+        "port": 9363,
+        "scrape_path": "/metrics"
       },
       "replication": {
         "mode": "native-cluster",
@@ -1144,7 +1162,9 @@
       "exporter": {
         "service": "minio",
         "metrics_path": "/metrics/minio",
-        "builtin": true
+        "builtin": true,
+        "port": 9000,
+        "scrape_path": "/minio/v2/metrics/cluster"
       },
       "replication": {
         "mode": "native-cluster",

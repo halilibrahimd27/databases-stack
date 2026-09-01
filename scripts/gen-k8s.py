@@ -320,6 +320,13 @@ def main():
     files.append("namespace.yaml")
 
     for e in cat["engines"]:
+        # "tool" türü kayıtlar (izleme gibi yardımcı modüller) veritabanı
+        # değildir: kalıcı disk, istemci portu ve boyutlandırma profili
+        # veritabanı varsayımlarına göre yazılmıştır. K8s'te bu işi zaten
+        # kube-prometheus-stack gibi olgun Helm chart'ları yapıyor; onların
+        # yerine yarım bir StatefulSet üretmek kullanıcıyı yanıltır.
+        if e.get("kind", "database") != "database":
+            continue
         name = "engine-%s.yaml" % e["id"]
         open(os.path.join(base, name), "w", encoding="utf-8").write(statefulset(e))
         files.append(name)

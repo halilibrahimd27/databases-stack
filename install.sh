@@ -134,6 +134,7 @@ gen_if_empty KIBANA_ENCRYPTION_KEY 48 && log "  KIBANA_ENCRYPTION_KEY üretildi"
 gen_if_empty PANEL_PASSWORD 24        && log "  PANEL_PASSWORD üretildi"
 gen_if_empty PGADMIN_PASSWORD 24      && log "  PGADMIN_PASSWORD üretildi"
 gen_if_empty APP_PASSWORD 24          && log "  APP_PASSWORD üretildi"
+gen_if_empty GRAFANA_PASSWORD 24      && log "  GRAFANA_PASSWORD üretildi"
 # Motor başına ayrı parola — tek sızıntı 12 motoru birden açmasın.
 for k in MARIADB_PASSWORD POSTGRES_PASSWORD MONGO_PASSWORD REDIS_PASSWORD \
          MSSQL_PASSWORD CASSANDRA_PASSWORD ELASTIC_PASSWORD KIBANA_SYSTEM_PASSWORD \
@@ -263,6 +264,9 @@ ok "state/crontab hazır — yüklemek için: crontab state/crontab"
 # =============================================================================
 # ÖZET
 # =============================================================================
+GRAFANA_USER_VAL="$(env_get GRAFANA_USER)"; [ -z "$GRAFANA_USER_VAL" ] && GRAFANA_USER_VAL=admin
+GRAFANA_PASS_VAL="$(env_get GRAFANA_PASSWORD)"
+[ -z "$GRAFANA_PASS_VAL" ] && GRAFANA_PASS_VAL="$(env_get DB_PASSWORD)"
 CRED=credentials.txt
 {
     echo "databases-stack — erişim bilgileri"
@@ -272,6 +276,11 @@ CRED=credentials.txt
     echo "Yönetim paneli : https://$STACK_HOST_VAL/"
     echo "Kullanıcı      : $PANEL_USER_VAL"
     echo "Parola         : $PANEL_PASS_VAL"
+    echo
+    echo "İzleme panosu  : https://$STACK_HOST_VAL:8092/  (aynı panel parolası)"
+    echo "  Grafana'ya ziyaretçi olarak girersiniz; pano düzenlemek için:"
+    echo "  Kullanıcı    : ${GRAFANA_USER_VAL}"
+    echo "  Parola       : ${GRAFANA_PASS_VAL}"
     echo
     echo "Veritabanı parolaları .env dosyasındadır."
     echo "Bir veritabanının bağlantı bilgisini panelden 'Bağlantı bilgisi' ile alın."

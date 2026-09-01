@@ -1,0 +1,876 @@
+{
+  "id": null,
+  "uid": "dbstack-kafka",
+  "title": "Apache Kafka — Genel Durum",
+  "description": "Kafka mesaj kuyruğunun sağlık ve yük özeti. Üstteki büyük sayılar \"her şey yolunda mı\" sorusunu, alttaki grafikler \"ne kadar yükleniyor\" sorusunu yanıtlar. Renk yeşilse aksiyon gerekmez.",
+  "tags": ["databases-stack", "kafka"],
+  "timezone": "browser",
+  "editable": false,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "fiscalYearStartMonth": 0,
+  "weekStart": "",
+  "links": [],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Kafka erişilebilir mi?",
+      "description": "Kafka'nın ölçüm servisine ulaşılıp ulaşılamadığını gösterir. \"Çalışıyor\" yazıyorsa sistem ayakta demektir. \"Erişilemiyor\" görürseniz Kafka durmuş ya da ağ bağlantısı kopmuştur; bu durumda uygulamalar ne mesaj gönderebilir ne de mesaj okuyabilir. Hemen ilgilenilmesi gereken tek panel budur.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "pluginVersion": "11.1.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Erişilemiyor",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "Çalışıyor",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(up{engine=\"kafka\", job=\"databases\"})",
+          "instant": true,
+          "range": false,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Sunucu (broker) sayısı",
+      "description": "Kümede şu an çalışan Kafka sunucusu sayısı. Bu yığın tek sunucuyla kurulur, yani normal değer 1'dir. 0 görüyorsanız Kafka kapalıdır. Daha önce 3 iken 2'ye düştüyse bir sunucu arızalanmış demektir; veri hâlâ okunabilir ama yedeklilik azalmıştır.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "pluginVersion": "11.1.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(kafka_brokers{engine=\"kafka\"})",
+          "instant": true,
+          "range": false,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Kopyası eksik bölüm",
+      "description": "Olması gerektiği kadar yedek kopyası bulunmayan bölüm sayısı. Sağlıklı bir sistemde bu değer 0'dır. Sıfırdan büyükse bir sunucu düşmüş ya da kopyalama geride kalmıştır: o bölümdeki mesajlar şu an tek kopya halinde durur ve yeni bir arıza olursa kaybolabilir. Tek sunuculu kurulumda bu değer zaten hep 0 kalır.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "pluginVersion": "11.1.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(kafka_topic_partition_under_replicated_partition{engine=\"kafka\"})",
+          "instant": true,
+          "range": false,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "En yüksek okuma gecikmesi",
+      "description": "Mesajları okuyan uygulamalar arasında en çok geride kalanın kaç mesaj gerisinde olduğunu gösterir. Küçük ve sabit bir sayı normaldir. Sayı sürekli büyüyorsa okuyan uygulama, gelen mesajları üretildiği hızda işleyemiyor demektir: işler birikir ve veriler gecikmeli işlenir. Sarı uyarıdır, kırmızıda okuyan uygulamayı hızlandırmak gerekir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "pluginVersion": "11.1.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "Veri yok",
+          "unit": "suffix: mesaj",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1000
+              },
+              {
+                "color": "red",
+                "value": 50000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "max(kafka_consumergroup_lag{engine=\"kafka\"})",
+          "instant": true,
+          "range": false,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Konu (topic) sayısı",
+      "description": "Kafka'da tanımlı konu sayısı. Konu, mesajların türüne göre ayrıldığı posta kutusu gibidir; her uygulama kendi konusunu kullanır. Kafka'nın kendi iç konuları da bu sayıya dahildir, bu yüzden hiç konu açmasanız bile sayı 1-2 görünebilir. Beklemediğiniz hızda artıyorsa bir uygulama her çalıştığında yeni konu açıyor olabilir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "pluginVersion": "11.1.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "text"
+          },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "text",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "count(kafka_topic_partitions{engine=\"kafka\"})",
+          "instant": true,
+          "range": false,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Toplam bölüm (partition) sayısı",
+      "description": "Tüm konuların bölüm sayısı toplamı. Bölüm, bir konunun paralel çalışan şeridi gibidir: ne kadar çok bölüm varsa o kadar çok uygulama aynı anda okuyabilir. Tek sunucuda binlerce bölüm bellek ve disk baskısı yaratır; sayı birkaç bini aşıyorsa konu ve bölüm tasarımını gözden geçirin.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "pluginVersion": "11.1.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2000
+              },
+              {
+                "color": "red",
+                "value": 4000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(kafka_topic_partitions{engine=\"kafka\"})",
+          "instant": true,
+          "range": false,
+          "legendFormat": "__auto",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Saniyede yazılan mesaj (konuya göre)",
+      "description": "Her konuya saniyede kaç yeni mesaj yazıldığı. Sistemin ne kadar yüklendiğini gösteren ana grafiktir. Ani sıçramalar toplu iş veya kampanya anlamına gelebilir; asıl dikkat edilmesi gereken, normalde trafik olan bir konunun çizgisinin sıfıra düşmesidir — bu, mesaj gönderen uygulamanın durduğu anlamına gelir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "pluginVersion": "11.1.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "Veri yok",
+          "unit": "suffix: mesaj/sn",
+          "decimals": 1,
+          "min": 0,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "mesaj/sn",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (topic) (rate(kafka_topic_partition_current_offset{engine=\"kafka\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{topic}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Okunmayı bekleyen mesaj (gecikme)",
+      "description": "Her okuyucu grubunun daha işlemediği mesaj sayısı. Çizgi düz ya da inişteyse okuyucu trafiğe yetişiyor demektir, sorun yoktur. Sürekli yükselen bir çizgi darboğaz işaretidir: mesajlar üretildiği hızda işlenemiyor. Bu durumda okuyan uygulamayı hızlandırmak veya kopya sayısını artırmak gerekir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "pluginVersion": "11.1.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "Veri yok",
+          "unit": "suffix: mesaj",
+          "decimals": 0,
+          "min": 0,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "bekleyen mesaj",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (consumergroup, topic) (kafka_consumergroup_lag{engine=\"kafka\"})",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{consumergroup}} → {{topic}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Saniyede okunan mesaj (okuyucu grubuna göre)",
+      "description": "Mesajları okuyan uygulama gruplarının saniyede kaç mesaj işlediği. Bu değer soldaki \"saniyede yazılan mesaj\" grafiğine yakınsa sistem dengededir. Yazma hızının altında kalırsa gecikme birikmeye başlar. Sıfıra düşmesi, okuyan uygulamanın durduğu ya da hata alıp yeniden başlamaya çalıştığı anlamına gelir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "pluginVersion": "11.1.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "Veri yok",
+          "unit": "suffix: mesaj/sn",
+          "decimals": 1,
+          "min": 0,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "mesaj/sn",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (consumergroup) (rate(kafka_consumergroup_current_offset{engine=\"kafka\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{consumergroup}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Diskte saklanan mesaj sayısı (konuya göre)",
+      "description": "Her konuda şu an diskte duran mesaj sayısı. Kafka mesajları saklama süresi dolana kadar tutar (varsayılan 7 gün), bu yüzden sayının yüksek olması tek başına sorun değildir. Grafiğin merdiven gibi inip çıkması normaldir: eski mesajlar silinince düşer. Hiç düşmeden sürekli büyüyorsa ve disk doluyorsa saklama süresini kısaltmak gerekir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "pluginVersion": "11.1.0",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "Veri yok",
+          "unit": "suffix: mesaj",
+          "decimals": 0,
+          "min": 0,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "saklanan mesaj",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (topic) (kafka_topic_partition_current_offset{engine=\"kafka\"} - kafka_topic_partition_oldest_offset{engine=\"kafka\"})",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{topic}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

@@ -27,8 +27,17 @@ profiles = {p.strip() for grp in profiles for p in grp.split(",")}
 errors, warnings = [], []
 panel_ports, client_ports = {}, {}
 
+# Katalogda iki tür kayıt var:
+#   kind "database" (varsayılan) — istemcinin bağlandığı bir veritabanı
+#   kind "tool"                  — yalnız web arayüzü olan yardımcı modül
+#                                  (ör. izleme). İstemci portu ve TCP
+#                                  yönlendirmesi olmaz; panel ZORUNLUDUR,
+#                                  çünkü kullanıcının tek erişim yolu odur.
 for e in cat["engines"]:
     eid = e["id"]
+    kind = e.get("kind", "database")
+    if kind not in ("database", "tool"):
+        errors.append("%s: bilinmeyen kind '%s'" % (eid, kind))
 
     for s in e["services"]:
         if s not in services:
@@ -69,8 +78,13 @@ for e in cat["engines"]:
         if ('"%d:%d"' % (r_["listen"], r_["listen"]) not in compose
                 and (":%d\"" % r_["listen"]) not in compose):
             errors.append("%s: %d portu gateway'de yayınlanmıyor" % (eid, r_["listen"]))
-    if not e.get("route"):
+    if kind == "database" and not e.get("route"):
         errors.append("%s: route tanımı yok — istemciler bağlanamaz" % eid)
+    if kind == "tool":
+        if e.get("route") or e.get("client_ports"):
+            errors.append("%s: tool türünde istemci portu/route olmaz" % eid)
+        if not p:
+            errors.append("%s: tool türünde panel ZORUNLU — erişim yolu kalmaz" % eid)
 
     # --- failover tutarlılığı ---
     fo = e.get("failover", {})
@@ -109,6 +123,54 @@ for e in cat["engines"]:
             errors.append("%s: %s factor >= 1.0 — motor kendi limitini aşar" % (eid, t["env"]))
     if not e.get("plain", {}).get("title"):
         warnings.append("%s: sade açıklama (plain.title) yok" % eid)
+
+# Katalogdaki exporter portu ile gateway'in metrik ucundaki port AYNI olmalı.
+# İzleme, Prometheus hedeflerini KATALOGDAN üretiyor; gateway ise kendi
+# metrik ucunu şablondan. İkisi ayrışırsa biri sessizce boş veri toplar —
+# ve bunu ancak grafiklerin hiç dolmadığını fark ettiğinizde anlarsınız.
+_tpl_lines = open("gateway/templates/stack.conf.template", encoding="utf-8").read().splitlines()
+
+
+def _metrics_block(eid):
+    """/metrics/<eid> location bloğunun satırları. Regex yerine satır tarama:
+    şablonda girinti ya da yorum değişince sessizce eşleşmeyi bırakan bir
+    desen, kontrolü çalışıyor sanıp hiçbir şey doğrulamaz hale getirir."""
+    baslik = "location = /metrics/" + eid + " {"
+    for k, ln in enumerate(_tpl_lines):
+        if ln.strip() == baslik:
+            blok = []
+            for ln2 in _tpl_lines[k + 1:]:
+                if ln2.strip() == "}":
+                    return blok
+                blok.append(ln2)
+            return blok
+    return None
+
+
+_kontrol_edilen = 0
+for e in cat["engines"]:
+    ex = e.get("exporter") or {}
+    if not ex.get("port"):
+        continue
+    blok = _metrics_block(e["id"])
+    if blok is None:
+        errors.append("%s: exporter tanımlı ama gateway'de /metrics/%s ucu yok"
+                      % (e["id"], e["id"]))
+        continue
+    pm = re.search(r"proxy_pass http://\$up:(\d+)", chr(10).join(blok))
+    if not pm:
+        errors.append("%s: /metrics/%s ucunda proxy_pass yok" % (e["id"], e["id"]))
+        continue
+    _kontrol_edilen += 1
+    if int(pm.group(1)) != int(ex["port"]):
+        errors.append("%s: exporter portu ayrışmış — katalog %s, gateway %s"
+                      % (e["id"], ex["port"], pm.group(1)))
+
+# Kontrolün gerçekten iş yaptığını kanıtla: hiçbir motor eşleşmediyse desen
+# bozulmuş demektir ve bu kontrol sessizce hiçbir şey doğrulamıyordur.
+if any((e.get("exporter") or {}).get("port") for e in cat["engines"]) and not _kontrol_edilen:
+    errors.append("exporter portu kontrolü hiçbir motoru eşleştiremedi — "
+                  "gateway şablonunun biçimi değişmiş olabilir")
 
 # Üretilmiş K8s manifestleri catalog.json ile GÜNCEL mi?
 # Katalog değişip manifestler yeniden üretilmezse depoda BAYAT manifestler

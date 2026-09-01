@@ -53,6 +53,8 @@ volumes:
   clickhouse_data:
   neo4j_data:
   minio_data:
+  prometheus_data:
+  grafana_data:
   pgadmin_data:
   redisinsight_data:
 
@@ -1157,3 +1159,135 @@ services:
       resources:
         limits:
           memory: ${MINIO_MEM_LIMIT:-512M}
+
+  # ===========================================================================
+  # İZLEME (profile: monitoring)
+  # ===========================================================================
+  # Motorların exporter'ları her zaman vardı ama onları OKUYAN bir yüz yoktu;
+  # kullanıcı kendi Prometheus'unu kurup scrape config yazmak zorundaydı — yani
+  # tam da "kullanıcıdan bilemeyeceği şeyi istemek". Bu profil o boşluğu
+  # kapatır: açtığınızda grafikler hazır gelir, kapattığınızda sıfır RAM.
+  # ---------------------------------------------------------------------------
+
+  prometheus:
+    <<: *svc
+    profiles: [monitoring]
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v2.55.1}
+    container_name: prometheus
+    user: "nobody"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      # Saklama süresi VE boyutu birlikte sınırlanır. Yalnız süre sınırlansaydı
+      # yoğun bir kurulumda disk sessizce dolar ve veritabanları yazmayı
+      # bırakırdı — izleme aracının üretimi düşürmesi kabul edilemez.
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}"
+      - "--storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-2GB}"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ${STACK_DIR}/config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${STACK_DIR}/config/prometheus/rules:/etc/prometheus/rules:ro
+      # Hedef listesini controller üretir. Prometheus dosyayı file_sd ile
+      # izler; motor açılıp kapandıkça yeniden başlatma GEREKMEZ.
+      - ${STACK_DIR}/state/prometheus:/etc/prometheus/targets:ro
+      - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9090/-/healthy >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: ${PROMETHEUS_MEM_LIMIT:-512M}
+
+  grafana:
+    <<: *svc
+    profiles: [monitoring]
+    image: ${GRAFANA_IMAGE:-grafana/grafana-oss:11.3.1}
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-${DB_PASSWORD}}
+      # Panel zaten gateway'in basic-auth'u arkasında. İkinci bir giriş ekranı
+      # koymak, kullanıcıya hatırlaması gereken ikinci bir parola vermek
+      # demekti; anonim ziyaretçi "Viewer" olarak girer, düzenlemek isteyen
+      # admin ile giriş yapar (parola credentials.txt içinde).
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # İç ağ kurulumu: dışarı hiçbir istek gitmesin.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_LOG_LEVEL: warn
+    volumes:
+      - ${STACK_DIR}/config/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${STACK_DIR}/config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: ${GRAFANA_MEM_LIMIT:-256M}
+
+  # Container başına CPU/bellek/disk. Bu ürün belleği OTOMATİK hesapladığı için
+  # "hesap doğru muydu" sorusunun görsel cevabı buradan gelir. Ayrıca exporter'ı
+  # olmayan motorlar (MSSQL, Neo4j) da en azından kaynak tarafından görünür olur.
+  cadvisor:
+    <<: *svc
+    profiles: [monitoring]
+    image: ${CADVISOR_IMAGE:-gcr.io/cadvisor/cadvisor:v0.49.1}
+    container_name: cadvisor
+    command:
+      # Varsayılan cAdvisor her şeyi toplar ve şişer; yalnız ihtiyacımız olan
+      # toplayıcılar açık.
+      - "--docker_only=true"
+      - "--housekeeping_interval=30s"
+      - "--disable_metrics=percpu,sched,tcp,udp,advtcp,process,hugetlb,referenced_memory,cpu_topology,resctrl"
+    privileged: true
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    deploy:
+      resources:
+        limits:
+          memory: ${CADVISOR_MEM_LIMIT:-192M}
+
+  # Sunucunun kendi RAM/disk/CPU durumu. "Disk doluyor" uyarısı buradan gelir;
+  # veritabanları için disk dolması en sert arıza biçimidir.
+  node-exporter:
+    <<: *svc
+    profiles: [monitoring]
+    image: ${NODE_EXPORTER_IMAGE:-prom/node-exporter:v1.8.2}
+    container_name: node-exporter
+    pid: host
+    command:
+      - "--path.rootfs=/host"
+      - "--collector.disable-defaults"
+      - "--collector.filesystem"
+      - "--collector.meminfo"
+      - "--collector.cpu"
+      - "--collector.loadavg"
+      - "--collector.diskstats"
+    volumes:
+      - /:/host:ro,rslave
+    deploy:
+      resources:
+        limits:
+          memory: ${NODE_EXPORTER_MEM_LIMIT:-64M}

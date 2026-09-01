@@ -1,0 +1,45 @@
+# =============================================================================
+# Prometheus — databases-stack
+# =============================================================================
+# Bu dosya ELLE DÜZENLENMEZ ve hedef listesi içermez.
+#
+# Hedefler `state/prometheus/targets.json` dosyasından okunur; onu controller
+# üretir (routes.conf ile aynı mantık). Bir motoru açıp kapattığınızda hedef
+# listesi kendiliğinden güncellenir ve Prometheus DOSYAYI YENİDEN OKUR —
+# yeniden başlatma ya da reload gerekmez. Kapalı motorun exporter'ı zaten
+# çalışmadığı için listede de bulunmaz; böylece "down" alarmı yağmaz.
+#
+# Neden gateway'in 9443 portundan değil de doğrudan exporter'lardan topluyoruz:
+# Prometheus da aynı Docker ağında. Aradan TLS ve basic-auth çıkarınca hem
+# sertifika dağıtma derdi hem de gateway'e gereksiz yük kalkıyor. 9443 ucu,
+# DIŞARIDAKİ bir Prometheus için duruyor (kurumsal izleme zaten varsa).
+# =============================================================================
+
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  evaluation_interval: 30s
+  external_labels:
+    stack: databases-stack
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # --- Veritabanı exporter'ları (controller tarafından üretilir) -------------
+  - job_name: databases
+    honor_labels: true
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/*.json
+        refresh_interval: 15s
+
+  # --- Prometheus'un kendisi -------------------------------------------------
+  # "İzleme çalışıyor mu" sorusunun cevabı. Kendini toplamayan bir Prometheus,
+  # sessizce durduğunda bunu kimseye söyleyemez.
+  - job_name: prometheus
+    static_configs:
+      - targets: ['127.0.0.1:9090']
+        labels:
+          engine: prometheus
+          engine_name: Prometheus

@@ -1,0 +1,23 @@
+# =============================================================================
+# Grafana pano sağlayıcısı — panolar dosyadan yüklenir
+# =============================================================================
+# Panolar `config/grafana/dashboards/` altında JSON olarak durur ve salt-okunur
+# bağlanır. Böylece panolar da kodun bir parçası olur: sürüm kontrolünde
+# durur, kurulumda kendiliğinden gelir, kazara silinemez.
+#
+# Kullanıcı kendi panosunu yapmak isterse Grafana arayüzünden yeni pano
+# oluşturabilir; bu klasördekiler korunur.
+# =============================================================================
+apiVersion: 1
+
+providers:
+  - name: databases-stack
+    orgId: 1
+    folder: Veritabanları
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

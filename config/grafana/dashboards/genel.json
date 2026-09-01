@@ -1,0 +1,674 @@
+{
+  "id": null,
+  "uid": "dbstack-genel",
+  "title": "Genel Bakış — Her Şey Yolunda mı?",
+  "description": "Tek ekranda 'her şey yolunda mı?' sorusunun cevabı. Üstteki dört kutu bakışta durumu söyler, tablo hangi motorun ayakta olduğunu gösterir, alttaki grafikler her motorun ne kadar bellek ve işlemci kullandığını ve sunucuda ne kadar yer kaldığını anlatır.",
+  "tags": ["databases-stack", "genel"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "fiscalYearStartMonth": 0,
+  "weekStart": "",
+  "links": [],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Cevap vermeyen bileşen sayısı",
+      "description": "İzlenen bileşenlerden kaç tanesi şu an cevap vermiyor. 0 ise her şey ayakta, yapacak bir şey yok. 1 ya da daha fazlaysa o motoru kullanan uygulamalar hata almaya başlar: hangisi olduğunu aşağıdaki tablodan görün, sonra kayıtlara bakın (./stack.sh logs <motor>). Kapattığınız motorlar burada sayılmaz — kapalı olmak arıza değildir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "Yok — hepsi çalışıyor", "color": "green", "index": 0 }
+              }
+            }
+          ],
+          "noValue": "Veri yok",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "none",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "count(up{job=\"databases\"} == 0) or vector(0)",
+          "instant": true,
+          "range": false,
+          "legendFormat": "Cevap vermeyen",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Sunucunun RAM doluluğu",
+      "description": "Sunucudaki toplam belleğin yüzde kaçı kullanılıyor. %75'in altı rahat. %90'ı geçtiyse sunucu darda demektir: yeni motor açmayın, açık motorlardan birini kapatmayı ya da sunucuya RAM eklemeyi düşünün. Bellek tamamen dolarsa işletim sistemi süreçleri kendiliğinden öldürmeye başlar ve veritabanları habersiz kapanabilir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "noValue": "Veri yok",
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 75 },
+              { "color": "red", "value": 90 }
+            ]
+          },
+          "unit": "percent",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "100 * (1 - avg(node_memory_MemAvailable_bytes) / avg(node_memory_MemTotal_bytes))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Kullanılan",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Diskin doluluğu",
+      "description": "Sunucunun ana diskinin yüzde kaçı dolu. Veritabanları için diskin dolması en sert arıza biçimidir: yazma durur, bazı motorlar bozuk durumda kalabilir. %80'i geçtiyse eski yedekleri temizlemeye başlayın (backups/ klasörü), %90'ı geçtiyse acildir — yer açın ya da disk ekleyin.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "noValue": "Veri yok",
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 80 },
+              { "color": "red", "value": 90 }
+            ]
+          },
+          "unit": "percent",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "100 * (1 - avg(node_filesystem_avail_bytes{mountpoint=\"/\"}) / avg(node_filesystem_size_bytes{mountpoint=\"/\"}))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Dolu",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Belleği en dolu motor",
+      "description": "Kendisine ayrılan bellek sınırına en çok yaklaşan container ve doluluk oranı. Bu yığın belleği otomatik hesaplayıp dağıtır; buradaki oran hesabın tutup tutmadığını söyler. %90'ı geçen bir motor er ya da geç bellek yetersizliğinden kapanır: sunucuda boş RAM varsa o motoru kapatıp yeniden açın (bellek yeniden hesaplanır), yoksa başka bir motoru kapatın.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "noValue": "Veri yok",
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 75 },
+              { "color": "red", "value": 90 }
+            ]
+          },
+          "unit": "percent",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "topk(1, 100 * sum by (name) (container_memory_usage_bytes{name=~\".+\"}) / sum by (name) (container_spec_memory_limit_bytes{name=~\".+\"} > 0))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Motorların durumu",
+      "description": "Açık olan her bileşenin şu anki durumu. 'Çalışıyor' ise sorun yok. 'Erişilemiyor' yazan bir satır varsa o motora bağlanılamıyor demektir ve onu kullanan uygulamalar hata alır; kayıtlara bakın: ./stack.sh logs <motor>. Kapattığınız motorlar bu listede hiç görünmez — liste yalnız açık olanları izler. İzleme bileşenleri de (Prometheus gibi) burada görünebilir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 9, "w": 10, "x": 0, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "filterable": false,
+            "inspect": false
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "Erişilemiyor", "color": "red", "index": 0 },
+                "1": { "text": "Çalışıyor", "color": "green", "index": 1 }
+              }
+            }
+          ],
+          "noValue": "Veri yok",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Durum" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "basic" } },
+              { "id": "custom.width", "value": 160 }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "up{job=\"databases\"}",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true,
+              "engine": true,
+              "stack": true
+            },
+            "includeByName": {},
+            "indexByName": {},
+            "renameByName": { "engine_name": "Motor", "Value": "Durum" }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": { "fields": {}, "sort": [{ "field": "Motor", "desc": false }] }
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "bargauge",
+      "title": "Ayrılan belleğin ne kadarı kullanılıyor?",
+      "description": "Her container'ın kullandığı bellek, kendisine ayrılan sınırın yüzde kaçı. Bu panel bu ürünün can damarıdır: bellek otomatik hesaplanıp dağıtıldığı için hesabın doğru çıkıp çıkmadığını burada gözünüzle görürsünüz. %75'e kadar normaldir. Sürekli %90'ın üstünde duran bir motor günün birinde bellek yetersizliğinden kapanır: sunucuda boş RAM varsa motoru kapatıp yeniden açın, yoksa başka bir motoru kapatın. Sürekli %20'nin altında kalan bir motora ise gereğinden fazla bellek ayrılmış olabilir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 9, "w": 14, "x": 10, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "noValue": "Veri yok",
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 75 },
+              { "color": "red", "value": 90 }
+            ]
+          },
+          "unit": "percent",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "gradient",
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "left",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "100 * sum by (name) (container_memory_usage_bytes{name=~\".+\"}) / sum by (name) (container_spec_memory_limit_bytes{name=~\".+\"} > 0)",
+          "instant": true,
+          "range": false,
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Motorların bellek kullanımı",
+      "description": "Her container'ın zaman içinde kullandığı bellek. Veritabanları belleği önbellek olarak kullanır; çizginin yavaşça yükselip bir yerde düzleşmesi normaldir, hatta beklenir. Endişelenmeniz gereken iki şey var: çizgi hiç düzleşmeden sürekli tırmanıyorsa ya da testere dişi gibi tepe yapıp birden dibe düşüyorsa (o motor bellek yetersizliğinden kapanıp yeniden başlıyor olabilir). Sınıra ne kadar yaklaşıldığını üstteki oran panelinden görebilirsiniz.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "bellek",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "min": 0,
+          "noValue": "Veri yok",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (name) (container_memory_usage_bytes{name=~\".+\"})",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Motorların işlemci kullanımı",
+      "description": "Her container'ın işlemci kullanımı. %100, bir çekirdeğin tamamının kullanıldığı anlamına gelir; sunucuda birden çok çekirdek olduğu için %100'ün üstü tek başına sorun değildir. Yüksek olması iş yapıldığı anlamına gelir, kötü değildir. Dikkat edilecek durum: bir motor uzun süre yüksekte takılı kalıyorsa sorgular yavaşlar — ağır bir sorgu ya da döngüye girmiş bir uygulama olabilir. Çizginin sıfıra düşmesi ise o motora hiç iş gelmediğini gösterir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "çekirdek kullanımı",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "min": 0,
+          "noValue": "Veri yok",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "percent",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "max"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "100 * sum by (name) (rate(container_cpu_usage_seconds_total{name=~\".+\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Sunucunun toplam bellek kullanımı",
+      "description": "Sunucunun tamamında kullanılan bellek ile takılı olan toplam bellek. İki çizgi arasındaki boşluk, yeni bir motor açtığınızda kullanılabilecek yer kadardır; boşluk kapanıyorsa yeni motor açmayın, önce yer açın. Not: veritabanlarının önbellek için tuttuğu bellek de burada 'kullanılan' görünür, bu normaldir — asıl bakılacak yer üstteki yüzde kutusudur.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "bellek",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "min": 0,
+          "noValue": "Veri yok",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "bytes"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Sunucudaki toplam bellek" },
+            "properties": [
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "text" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull"],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "avg(node_memory_MemTotal_bytes) - avg(node_memory_MemAvailable_bytes)",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Kullanılan bellek",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "avg(node_memory_MemTotal_bytes)",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Sunucudaki toplam bellek",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Diskte kalan boş alan ve gidişat",
+      "description": "Ana diskte kalan boş alan. Kesikli çizgi, son 6 saatteki gidişat aynı hızda sürerse 24 saat sonra ne kadar yer kalacağını tahmin eder — 'disk ne zaman dolar' sorusunun cevabı budur. Kesikli çizgi sıfıra doğru iniyorsa beklemeyin: eski yedekleri temizleyin (backups/ klasörü) ya da disk ekleyin. Çizginin her gece basamak basamak inip yedek temizliğinde geri yükselmesi normaldir; asıl tehlike hiç geri yükselmemesidir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "boş alan",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "min": 0,
+          "noValue": "Veri yok",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "bytes"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Bu hızla giderse 24 saat sonra" },
+            "properties": [
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": ["lastNotNull", "min"],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "avg(node_filesystem_avail_bytes{mountpoint=\"/\"})",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Şu an kalan boş alan",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "avg(predict_linear(node_filesystem_avail_bytes{mountpoint=\"/\"}[6h], 24 * 3600))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Bu hızla giderse 24 saat sonra",
+          "refId": "B"
+        }
+      ]
+    }
+  ]
+}

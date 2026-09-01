@@ -1,0 +1,1122 @@
+{
+  "id": null,
+  "uid": "dbstack-mariadb",
+  "title": "MariaDB — Genel Durum",
+  "description": "MariaDB'nin sağlık ve yük özeti. Üst sıradaki kutular 'her şey yolunda mı' sorusuna, alttaki grafikler 'ne kadar yükleniyor ve nerede takılıyor' sorusuna cevap verir. Renkler yeşilse bir şey yapmanız gerekmez.",
+  "tags": ["databases-stack", "mariadb"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "fiscalYearStartMonth": 0,
+  "weekStart": "",
+  "links": [],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Durum",
+      "description": "MariaDB'ye bağlanılabiliyor mu? 'Çalışıyor' yazıyorsa veritabanı ayakta ve sorgu kabul ediyor. 'Erişilemiyor' yazıyorsa veritabanı kapalı, çökmüş ya da parola/ağ sorunu var demektir; uygulamalarınız o sırada veritabanına ulaşamaz. Motoru kasıtlı olarak kapattıysanız bu kutunun boş ya da kırmızı olması normaldir. Beklenmedik bir kırmızı görürseniz günlüklere bakın: ./stack.sh logs mariadb",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Veri yok",
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Erişilemiyor",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "Çalışıyor",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "mysql_up{engine=\"mariadb\"}",
+          "legendFormat": "Durum",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Bağlantı Doluluğu",
+      "description": "Aynı anda açık olan bağlantıların, izin verilen üst sınıra oranı. Her uygulama bağlantısı bu sınırdan bir yer kaplar. %90'ı geçerse yeni bağlantılar reddedilmeye başlar ve uygulamalar 'Too many connections' hatası alır. Kısa süreli yükselmeler normaldir; sürekli %70'in üzerinde seyrediyorsa ya uygulamanın bağlantı havuzunu küçültün ya da üst sınırı yükseltin (.env içindeki MARIADB_MAX_CONNECTIONS).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Veri yok",
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "100 * mysql_global_status_threads_connected{engine=\"mariadb\"} / on(instance) mysql_global_variables_max_connections{engine=\"mariadb\"}",
+          "legendFormat": "Doluluk",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Çalışan Sorgu",
+      "description": "Şu anda gerçekten iş yapan bağlantı sayısı. Açık bağlantıların çoğu boşta bekler; bu sayı ise veritabanının o an ne kadar meşgul olduğunu gösterir. Normalde tek haneli seyreder ve anlık sıçramalar zararsızdır. Uzun süre yüksek kalıyorsa sorgular birikiyor demektir: nedeni genelde yavaş sorgular ya da kilit beklemeleridir, aşağıdaki grafiklere bakın.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Veri yok",
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 20
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "mysql_global_status_threads_running{engine=\"mariadb\"}",
+          "legendFormat": "Çalışan",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Bellekteki Veri",
+      "description": "MariaDB'nin, diske gitmeden okuyabilmek için RAM'de tuttuğu veri miktarı (InnoDB tampon havuzu). Bu sayının zamanla artıp ayrılan alanın tamamına yaklaşması NORMALDİR ve sorun değildir; veritabanı 'ısınıyor', yani sık kullanılan veriyi belleğe alıyor demektir. Boş kalması ise veritabanının yeni açıldığını ya da hiç kullanılmadığını gösterir. Asıl bakılması gereken yer aşağıdaki 'Önbellek İsabet Oranı' grafiğidir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Veri yok",
+          "unit": "decbytes",
+          "decimals": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "mysql_global_status_innodb_buffer_pool_bytes_data{engine=\"mariadb\"}",
+          "legendFormat": "Bellekteki veri",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Saniyedeki Sorgu Sayısı",
+      "description": "Veritabanının saniyede kaç sorgu işlediği — sistemin ne kadar yüklendiğini gösteren en temel ölçü. 'Doğru' bir değeri yoktur, önemli olan sizin alışılmış seviyenizdir. Uygulamalarınız çalışırken çizginin sıfıra düşmesi bağlantının koptuğuna işaret eder. Alışılmadık ve sürekli bir sıçrama ise beklenmedik bir yük ya da hatalı bir uygulama döngüsü anlamına gelir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Veri yok",
+          "unit": "suffix:sorgu/sn",
+          "min": 0,
+          "decimals": 1,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "sorgu/sn",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max"],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(mysql_global_status_queries{engine=\"mariadb\"}[5m])",
+          "legendFormat": "Sorgu",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Bağlantılar ve Üst Sınır",
+      "description": "Açık bağlantı sayısının zaman içindeki seyri ile izin verilen üst sınır. 'Açık bağlantı' çizgisi kesikli kırmızı sınır çizgisine yaklaşıyorsa yeni bağlantılar birazdan reddedilecek demektir; uygulamada bağlantı havuzunu küçültün ya da sınırı yükseltin. 'Çalışan' çizgisi o an iş yapan bağlantıları gösterir: açık bağlantılar sabitken bu çizgi sürekli tırmanıyorsa sorgular sıkışıyordur.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Veri yok",
+          "unit": "suffix:bağlantı",
+          "min": 0,
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "bağlantı",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Üst sınır"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [10, 10]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Açık bağlantı"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Çalışan"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": ["max"],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "mysql_global_status_threads_connected{engine=\"mariadb\"}",
+          "legendFormat": "Açık bağlantı",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "mysql_global_status_threads_running{engine=\"mariadb\"}",
+          "legendFormat": "Çalışan",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "mysql_global_variables_max_connections{engine=\"mariadb\"}",
+          "legendFormat": "Üst sınır",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Önbellek İsabet Oranı",
+      "description": "Okuma isteklerinin yüzde kaçı diske hiç gitmeden bellekten karşılandı. Yüksek olması iyidir: %99'un üzeri ideal, %95'in altına düşüp orada kalıyorsa veritabanı sürekli diske gidiyor ve her işlem yavaşlar — genelde tampon havuzu küçük kalmıştır (.env içindeki MARIADB_BUFFER_POOL). Veritabanı yeni açıldığında ya da hiç trafik yokken bu grafiğin düşük veya boş olması normaldir; yorum yapmak için birkaç saatlik gerçek kullanım gerekir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Veri yok",
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 2,
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 95
+              },
+              {
+                "color": "green",
+                "value": 99
+              }
+            ]
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "isabet %",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": ["min", "mean"],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "100 * (1 - rate(mysql_global_status_innodb_buffer_pool_reads{engine=\"mariadb\"}[5m]) / rate(mysql_global_status_innodb_buffer_pool_read_requests{engine=\"mariadb\"}[5m]))",
+          "legendFormat": "Bellekten karşılanan",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Yavaş Sorgular ve Bağlantı Hataları",
+      "description": "Dakikada kaç sorunlu olay yaşandığı. 'Yavaş sorgu': belirlenen süreden uzun süren sorgular — sıfırdan farklıysa uygulamanız yavaşlıyor demektir, ilk bakılacak yer eksik indekslerdir. 'Reddedilen bağlantı': yanlış parola, yetki sorunu ya da bağlantı sınırının dolması yüzünden hiç kurulamayan bağlantılar. 'Kopan bağlantı': düzgün kapatılmadan kesilen bağlantılar (ağ sorunu ya da uygulamanın çökmesi). Günde birkaç tane görmek normaldir; çizgiler sürekli sıfırın üzerindeyse incelenmelidir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Veri yok",
+          "unit": "suffix:olay/dk",
+          "min": 0,
+          "decimals": 2,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "olay/dakika",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Yavaş sorgu"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Reddedilen bağlantı"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Kopan bağlantı"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": ["max"],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(mysql_global_status_slow_queries{engine=\"mariadb\"}[5m]) * 60",
+          "legendFormat": "Yavaş sorgu",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(mysql_global_status_aborted_connects{engine=\"mariadb\"}[5m]) * 60",
+          "legendFormat": "Reddedilen bağlantı",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(mysql_global_status_aborted_clients{engine=\"mariadb\"}[5m]) * 60",
+          "legendFormat": "Kopan bağlantı",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Kilit Beklemeleri",
+      "description": "Aynı satırı aynı anda değiştirmek isteyen işlemler sıraya girer ve birbirini bekletir. 'Şu an bekleyen' o anda sırada bekleyen işlem sayısını, 'Dakikada bekleme' ise ne sıklıkla beklendiğini gösterir. Ara sıra kısa beklemeler normaldir ve kendiliğinden geçer. Çizgiler uzun süre sıfırın üzerinde kalıyorsa uygulamalar birbirini kilitliyor demektir: yazma işlemleri yavaşlar, uzun bekleyen işlemler zaman aşımına uğrayıp hata döndürebilir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Veri yok",
+          "unit": "short",
+          "min": 0,
+          "decimals": 2,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "işlem",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Şu an bekleyen"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Dakikada bekleme"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "calcs": ["max"],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "mysql_global_status_innodb_row_lock_current_waits{engine=\"mariadb\"}",
+          "legendFormat": "Şu an bekleyen",
+          "range": true,
+          "instant": false
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(mysql_global_status_innodb_row_lock_waits{engine=\"mariadb\"}[5m]) * 60",
+          "legendFormat": "Dakikada bekleme",
+          "range": true,
+          "instant": false
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Replikasyon Gecikmesi",
+      "description": "Yedek kopyanın (replika), ana veritabanının kaç saniye gerisinde kaldığı. Sıfıra yakın olmalıdır. Yedek kopya kullanmıyorsanız bu panelin 'Veri yok' göstermesi tamamen normaldir, bir arıza değildir. Gecikme büyürken otomatik devir (failover) yapılırsa aradaki veri kaybolur; birkaç dakikayı aşıp orada kalıyorsa ağ ya da disk darboğazına bakın, sürerse yedeği yeniden kurun: ./stack.sh failover rebuild mariadb",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Veri yok",
+          "unit": "s",
+          "min": 0,
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
+            ]
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "saniye",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "calcs": ["max"],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "mysql_slave_status_seconds_behind_master{engine=\"mariadb\"}",
+          "legendFormat": "Gecikme",
+          "range": true,
+          "instant": false
+        }
+      ]
+    }
+  ]
+}

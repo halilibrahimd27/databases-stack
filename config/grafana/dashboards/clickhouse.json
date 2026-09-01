@@ -1,0 +1,944 @@
+{
+  "id": null,
+  "uid": "dbstack-clickhouse",
+  "title": "ClickHouse — Genel Bakış",
+  "description": "ClickHouse'un sağlık durumu ve yükü. Üst sıradaki büyük sayılar 'her şey yolunda mı' sorusunu, alttaki grafikler 'ne kadar yükleniyor' sorusunu cevaplar. Her panelin sağ üstündeki (i) işaretine gelirseniz sayının ne anlama geldiği ve ne zaman endişelenmeniz gerektiği yazar.",
+  "tags": ["databases-stack", "clickhouse"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "graphTooltip": 1,
+  "fiscalYearStartMonth": 0,
+  "weekStart": "",
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "links": [],
+  "annotations": {
+    "list": []
+  },
+  "templating": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Erişilebilirlik",
+      "description": "ClickHouse ayakta mı? 'Çalışıyor' yazıyorsa sunucu 30 saniyede bir sorulan yoklamaya cevap veriyor demektir. 'Cevap vermiyor' yazıyorsa motor ya kapalı ya da takılmış durumdadır; uygulamalarınız bağlanamaz, hata alır. Motoru siz kapattıysanız kutu 'Veri yok' gösterir, bu normaldir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "noValue": "Veri yok",
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Cevap vermiyor",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "Çalışıyor",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "up{job=\"databases\", engine=\"clickhouse\"}",
+          "legendFormat": "Durum",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Açık bağlantı sayısı",
+      "description": "Şu anda ClickHouse'a bağlı istemci sayısı (HTTP arayüzü ve native protokol birlikte). Normalde uygulamanızın bağlantı havuzu kadar olur ve dalgalanır. Sayı sürekli tırmanıp hiç düşmüyorsa uygulama açtığı bağlantıları kapatmıyordur; bir noktadan sonra sunucu yeni bağlantı kabul etmez ve uygulama 'bağlanamadı' hatası verir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "Veri yok",
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 200
+              },
+              {
+                "color": "red",
+                "value": 500
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum({__name__=~\"ClickHouseMetrics_(TCP|HTTP)Connection\", engine=\"clickhouse\"})",
+          "legendFormat": "Bağlantı",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Şu an çalışan sorgu",
+      "description": "Tam bu anda işlenmekte olan sorgu sayısı. Birkaç tane olması gayet normaldir. Sayı uzun süre yüksek kalıyorsa sorgular birikiyor demektir: ya sorgular ağırdır ya da sunucu yetişemiyordur. ClickHouse'un varsayılan üst sınırı 100 eş zamanlı sorgudur; oraya dayanılırsa yeni sorgular doğrudan reddedilir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "Veri yok",
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 30
+              },
+              {
+                "color": "red",
+                "value": 70
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "ClickHouseMetrics_Query{engine=\"clickhouse\"}",
+          "legendFormat": "Çalışan sorgu",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Kullanılan bellek",
+      "description": "ClickHouse'un o an ayırdığı bellek. ClickHouse sorgu sırasında belleği bolca kullanır; sayının inip çıkması normaldir. Motora tanınan bellek tavanına dayanırsa büyük sorgular 'bellek sınırı aşıldı' hatasıyla iptal edilir. Değer sürekli tavana yakın seyrediyorsa ya sunucuya RAM eklemek ya da sorguları küçültmek (daha az satır, daha az sütun) gerekir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "min": 0,
+          "noValue": "Veri yok",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "wideLayout": true,
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "ClickHouseMetrics_MemoryTracking{engine=\"clickhouse\"}",
+          "legendFormat": "Bellek",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Saniyedeki sorgu sayısı",
+      "description": "Saniyede çalıştırılan okuma (SELECT) ve yazma (INSERT) sorgusu sayısı. İşinizin yoğunluğunu gösterir; tek başına 'yüksek' ya da 'düşük' diye bir doğrusu yoktur. Bakılacak şey şekildir: çizginin beklenmedik anda sıfıra düşmesi uygulamanın bağlanamadığına, saatlerce süren ani bir zıplama ise beklenmeyen bir yüke işaret eder. Karşılaştırmak için sağ üstten zaman aralığını 'son 7 gün' yapıp geçen haftanın aynı saatine bakın.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: sorgu/sn",
+          "decimals": 2,
+          "min": 0,
+          "noValue": "Veri yok",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "barAlignment": 0,
+            "spanNulls": false,
+            "insertNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisLabel": "sorgu/sn",
+            "axisColorMode": "text",
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(ClickHouseProfileEvents_SelectQuery{engine=\"clickhouse\"}[5m])",
+          "legendFormat": "Okuma (SELECT)",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(ClickHouseProfileEvents_InsertQuery{engine=\"clickhouse\"}[5m])",
+          "legendFormat": "Yazma (INSERT)",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Hata ile biten sorgular",
+      "description": "Saniyede kaç sorgunun hata alarak sonlandığı. Sağlıklı bir sistemde bu çizgi sıfırda, düz durur ve grafik yeşildir. Çizgi yukarı kalkıp kırmızıya dönüyorsa uygulamanız o anda hata alıyor demektir: yanlış yazılmış sorgu, aşılan bellek sınırı ya da olmayan bir tablo. Tek tük sıçramalar genelde uygulama tarafındaki bir hatadır; sürekli devam ediyorsa günlüklere bakın: ./stack.sh logs clickhouse",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: hata/sn",
+          "decimals": 2,
+          "min": 0,
+          "noValue": "Veri yok",
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.001
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "gradientMode": "opacity",
+            "barAlignment": 0,
+            "spanNulls": false,
+            "insertNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisLabel": "hata/sn",
+            "axisColorMode": "text",
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(ClickHouseProfileEvents_FailedQuery{engine=\"clickhouse\"}[5m])",
+          "legendFormat": "Başarısız sorgu",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Önbellek isabet oranı",
+      "description": "ClickHouse'un okuduğu verinin yüzde kaçını diske gitmeden bellekteki önbellekten karşıladığı. Yüzde 90'ın üstü iyidir, yeşil görünür. Uzun süre yüzde 70'in altında kalıyorsa neredeyse her sorgu diske iniyor demektir; sorgular gözle görülür şekilde yavaşlar. Çare genelde sunucuya RAM eklemek ya da sorguların taradığı veriyi azaltmaktır. Hiç sorgu çalışmayan sakin saatlerde hesaplanacak bir şey olmadığı için çizgide boşluk olur; bu bir arıza değildir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "max": 100,
+          "noValue": "Veri yok",
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 70
+              },
+              {
+                "color": "green",
+                "value": 90
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "barAlignment": 0,
+            "spanNulls": false,
+            "insertNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisLabel": "yüzde",
+            "axisColorMode": "text",
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "100 * rate(ClickHouseProfileEvents_MarkCacheHits{engine=\"clickhouse\"}[5m])\n/\n(\n  rate(ClickHouseProfileEvents_MarkCacheHits{engine=\"clickhouse\"}[5m])\n  +\n  rate(ClickHouseProfileEvents_MarkCacheMisses{engine=\"clickhouse\"}[5m])\n)",
+          "legendFormat": "İsabet oranı",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Saniyede işlenen satır sayısı",
+      "description": "Saniyede okunan ve yazılan satır sayısı. ClickHouse'un asıl iş hacmi budur: sorgu sayısı az olsa bile burada milyonlar görmek son derece normaldir, çünkü tek bir sorgu milyonlarca satır tarayabilir. 'Yazılan' çizgisi beklediğiniz veri akışını göstermiyorsa (örneğin gece boyunca sıfırsa ama veri akması gerekiyorsa) veriyi besleyen tarafta bir sorun vardır. 'Okunan' çizgisinin sürekli çok yüksek olması, sorguların gereğinden fazla veri taradığına işaret edebilir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: satır/sn",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "Veri yok",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "gradientMode": "opacity",
+            "barAlignment": 0,
+            "spanNulls": false,
+            "insertNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisLabel": "satır/sn",
+            "axisColorMode": "text",
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(ClickHouseProfileEvents_SelectedRows{engine=\"clickhouse\"}[5m])",
+          "legendFormat": "Okunan satır",
+          "range": true
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "rate(ClickHouseProfileEvents_InsertedRows{engine=\"clickhouse\"}[5m])",
+          "legendFormat": "Yazılan satır",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Diskteki veri boyutu",
+      "description": "Tablolarınızın diskte kapladığı toplam yer (ClickHouse veriyi sıkıştırarak sakladığı için bu, gönderdiğiniz ham veriden çok daha küçüktür). Zamanla artması beklenir. Basamak basamak ani sıçramalar toplu veri yüklemesidir. Önemli olan eğimdir: bu hızla artmaya devam ederse diskin ne zaman dolacağını buradan kestirebilirsiniz. Diskin dolması ClickHouse'ta en sert arızadır, yazma tamamen durur; yer daralmadan eski verileri temizleyin veya disk ekleyin.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "decimals": 1,
+          "min": 0,
+          "noValue": "Veri yok",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 18,
+            "gradientMode": "opacity",
+            "barAlignment": 0,
+            "spanNulls": false,
+            "insertNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisLabel": "boyut",
+            "axisColorMode": "text",
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "ClickHouseAsyncMetrics_TotalBytesOfMergeTreeTables{engine=\"clickhouse\"}",
+          "legendFormat": "Tabloların toplam boyutu",
+          "range": true
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "En kalabalık bölümdeki parça sayısı",
+      "description": "ClickHouse gelen veriyi diskte 'parça' adı verilen dosyalara yazar ve arka planda bunları sürekli birleştirir. Sağlıklı durumda sayı birkaç yüzü geçmez ve grafik yeşil kalır. 300'ün üstü (sarı çizgi), birleştirmenin yazma hızına yetişemediği anlamına gelir. 1000'e yaklaşırsa (kırmızı çizgi) ClickHouse yazmaları kasıtlı olarak yavaşlatmaya başlar, 3000'de ise INSERT'leri tamamen reddeder ve veri kaydedilemez. Sebebi neredeyse her zaman aynıdır: satır satır, çok sık INSERT yapmak. Çözüm, veriyi biriktirip binlerce satırlık paketler halinde göndermektir.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "dbstack-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix: parça",
+          "decimals": 0,
+          "min": 0,
+          "noValue": "Veri yok",
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 300
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "barAlignment": 0,
+            "spanNulls": false,
+            "insertNulls": false,
+            "showPoints": "never",
+            "pointSize": 5,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisPlacement": "auto",
+            "axisLabel": "parça sayısı",
+            "axisColorMode": "text",
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom",
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "dbstack-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "ClickHouseAsyncMetrics_MaxPartCountForPartition{engine=\"clickhouse\"}",
+          "legendFormat": "Parça sayısı",
+          "range": true
+        }
+      ]
+    }
+  ]
+}

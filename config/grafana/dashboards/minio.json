@@ -1,0 +1,599 @@
+{
+  "id": null,
+  "uid": "dbstack-minio",
+  "title": "MinIO — Dosya ve Görsel Depolama",
+  "description": "MinIO nesne depolamanın sağlık ve yük durumu. Üst sıradaki renkli kutular \"her şey yolunda mı?\" sorusunu, alttaki grafikler \"ne kadar yükleniyor?\" sorusunu cevaplar. Yeşil iyi, sarı dikkat, kırmızı acil demektir.",
+  "tags": ["databases-stack", "minio"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "graphTooltip": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "fiscalYearStartMonth": 0,
+  "weekStart": "",
+  "links": [],
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Erişilebilir mi?",
+      "description": "MinIO şu anda cevap veriyor mu? \"Çalışıyor\" ise dosya yükleme ve indirme hizmeti ayaktadır. \"Erişilemiyor\" görüyorsanız uygulamalarınız dosyalara ulaşamaz, yükleme ekranları hata verir. Motoru bilerek kapattıysanız bu normaldir; kapatmadıysanız kayıtlara bakın: ./stack.sh logs minio",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "Erişilemiyor", "color": "red", "index": 1 },
+                "1": { "text": "Çalışıyor", "color": "green", "index": 0 }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "up{job=\"databases\", engine=\"minio\"}",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Durum",
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Depolama Sağlığı",
+      "description": "MinIO'nun kendi iç sağlık kontrolü. \"Sağlıklı\" ise dosyalar güvenle yazılıp okunabiliyor demektir. \"Sorunlu\" çıkarsa depolama yazma yapamayacak durumdadır: genellikle bir disk düşmüştür ya da yer kalmamıştır. Bu kutu kırmızıyken yeni dosya yüklemeleri başarısız olabilir, hemen aşağıdaki disk ve alan panellerine bakın.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "Sorunlu", "color": "red", "index": 1 },
+                "1": { "text": "Sağlıklı", "color": "green", "index": 0 }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "max(minio_cluster_health_status{engine=\"minio\"})",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Sağlık",
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Çevrimdışı Disk",
+      "description": "MinIO'nun ulaşamadığı disk sayısı. Bu sayı normalde 0 olmalıdır ve öyle kalmalıdır. 1 veya daha fazlaysa bir disk arızalanmış ya da bağlantısı kopmuş demektir. Tek diskli kurulumda (bu yığının varsayılanı) yedek kopya olmadığı için bu doğrudan veri kaybı riskidir: hemen sunucunun disk durumunu kontrol edin ve yedeklerinizin güncel olduğundan emin olun.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(minio_cluster_drive_offline_total{engine=\"minio\"})",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Çevrimdışı disk",
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Şu An İşlenen İstek",
+      "description": "Tam bu anda işlenmekte olan dosya isteği (yükleme/indirme) sayısı — veritabanlarındaki \"açık bağlantı\" sayısının MinIO'daki karşılığıdır. Kısa süreli yükselmeler normaldir. Sayı uzun süre yüksek kalıyorsa MinIO gelen isteklere yetişemiyor demektir: dosya yüklemeleri yavaşlar ve uygulamalarda zaman aşımı hataları başlar. Hiç dosya işlemi yapılmadıysa \"Veri yok\" görünür, bu normaldir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "decimals": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 20 },
+              { "color": "red", "value": 100 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(minio_s3_requests_inflight_total{engine=\"minio\"})",
+          "instant": false,
+          "range": true,
+          "legendFormat": "İşlenen istek",
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Kullanılan Disk Alanı",
+      "description": "MinIO'nun dosyaları sakladığı diskin yüzde kaçının dolu olduğu. %75'i geçtiğinde (sarı) yer açmayı planlayın. %90'ı geçerse (kırmızı) durum acildir: disk tamamen dolduğunda yeni dosya yüklenemez ve yükleme işlemleri hata vermeye başlar. Yer açmak için eski dosyaları ya da eski yedekleri silin, veya sunucunun diskini büyütün.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "percent",
+          "decimals": 1,
+          "min": 0,
+          "max": 100,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 75 },
+              { "color": "red", "value": 90 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "100 * (1 - sum(minio_cluster_capacity_usable_free_bytes{engine=\"minio\"}) / sum(minio_cluster_capacity_usable_total_bytes{engine=\"minio\"}))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Doluluk",
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Bellek Kullanımı",
+      "description": "MinIO'nun kullandığı RAM miktarı. Bu yığında MinIO'ya varsayılan olarak 512 MB sınır verilir (.env içindeki MINIO_MEM_LIMIT). Sınıra dayanılırsa işletim sistemi MinIO'yu aniden kapatır ve dosya hizmeti kesilir. Renkler 512 MB varsayılanına göre ayarlıdır: sarı yaklaşıyorsunuz, kırmızı sınırın dibindesiniz demektir. Sürekli kırmızıysa MINIO_MEM_LIMIT değerini artırın.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "bytes",
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 402653184 },
+              { "color": "red", "value": 469762048 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "wideLayout": true,
+        "showPercentChange": false,
+        "percentChangeColorMode": "standard"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(minio_node_process_resident_memory_bytes{engine=\"minio\"})",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Bellek",
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Saniyedeki Dosya İşlemi (türe göre)",
+      "description": "MinIO'ya saniyede kaç dosya isteği geldiğini türüne göre gösterir: putobject = dosya yükleme, getobject = dosya indirme, listobjectsv2 = klasör listeleme, headobject = dosya var mı sorgusu. Bu grafik \"sistem ne kadar yükleniyor?\" sorusunun cevabıdır. Yüksek olması tek başına kötü değildir; asıl dikkat edilecek şey, bu çizgiler artarken yandaki hata grafiğinin de yükselmesidir — o zaman MinIO yükün altında kalıyor demektir. Hiç işlem yoksa grafik boş görünür, bu normaldir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "noValue": "Veri yok",
+          "unit": "reqps",
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "istek/sn",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (api) (rate(minio_s3_requests_total{engine=\"minio\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "{{api}}",
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Hatalı İstekler",
+      "description": "Saniyede kaç isteğin hatayla sonuçlandığı. \"Sunucu hatası\" MinIO'nun kendi tarafındaki gerçek arızadır ve sıfıra yakın olmalıdır; sürekli görülüyorsa disk, yer veya kaynak sorunu vardır ve dosya yüklemeleri kayboluyor olabilir. \"İstemci hatası\" ise çoğu zaman normaldir (olmayan bir dosyanın sorulması, yanlış şifreyle erişim denemesi). Ancak istemci hataları birdenbire fırladıysa bir uygulamanın erişim anahtarı veya ayarları bozulmuş olabilir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "noValue": "Veri yok",
+          "unit": "reqps",
+          "min": 0,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "hata/sn",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Sunucu hatası (MinIO kaynaklı)" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "İstemci hatası (çoğunlukla normal)" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(rate(minio_s3_requests_errors_total{engine=\"minio\"}[5m])) - sum(rate(minio_s3_requests_4xx_errors_total{engine=\"minio\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Sunucu hatası (MinIO kaynaklı)",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(rate(minio_s3_requests_4xx_errors_total{engine=\"minio\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "İstemci hatası (çoğunlukla normal)",
+          "refId": "B"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Ağ Trafiği (yükleme / indirme)",
+      "description": "Saniyede MinIO'ya ne kadar veri yüklendiği (gelen) ve MinIO'dan ne kadar veri indirildiği (giden). Sunucunun ağ ya da disk hızının sınırına dayanıp dayanmadığınızı buradan anlarsınız: çizgi belli bir seviyede tavan yapıp düzleşiyor ve aynı anda kullanıcılar \"yükleme çok yavaş\" diyorsa darboğaz oradadır. Yavaşlık şikâyeti yokken yüksek trafik görmek sorun değildir, sadece sistemin yoğun çalıştığını gösterir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "noValue": "Veri yok",
+          "unit": "Bps",
+          "min": 0,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "saniyedeki veri",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(rate(minio_s3_traffic_received_bytes{engine=\"minio\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Gelen (dosya yükleniyor)",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(rate(minio_s3_traffic_sent_bytes{engine=\"minio\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Giden (dosya indiriliyor)",
+          "refId": "B"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Kalan Boş Alan",
+      "description": "MinIO'nun dosya saklamak için kullanabileceği boş alanın zaman içindeki değişimi. Buradaki asıl bilgi çizginin EĞİMİdir: sürekli aşağı iniyorsa diskin ne zaman dolacağını kabaca görebilir, dolmadan önce önlem alabilirsiniz. Alan tamamen bittiğinde dosya yükleme durur ve uygulamalar hata verir. Çizgi düz gidiyorsa yeni dosya birikmiyor demektir, sorun yoktur.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "noValue": "Veri yok",
+          "unit": "bytes",
+          "min": 0,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "boş alan",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": ["min", "lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(minio_cluster_capacity_usable_free_bytes{engine=\"minio\"})",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Boş alan",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(minio_cluster_capacity_usable_total_bytes{engine=\"minio\"})",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Toplam alan",
+          "refId": "B"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    }
+  ]
+}

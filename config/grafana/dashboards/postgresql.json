@@ -1,0 +1,597 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "PostgreSQL çalışıyor mu?",
+      "description": "Veritabanının şu anda cevap verip vermediğini gösterir. Yeşil ise her şey yolunda, uygulamalarınız bağlanabilir. Kırmızı ise veritabanı cevap vermiyor demektir, hemen bakılmalıdır. Hiçbir değer görünmüyorsa (Kapalı) PostgreSQL bu sunucuda açık değildir; panodan aktif edebilirsiniz.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "color": "red", "index": 1, "text": "Cevap vermiyor" },
+                "1": { "color": "green", "index": 0, "text": "Çalışıyor" }
+              }
+            }
+          ],
+          "noValue": "Kapalı",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "min(pg_up{engine=\"postgresql\"})",
+          "instant": false,
+          "legendFormat": "Durum",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Açık bağlantı sayısı",
+      "description": "Şu anda veritabanına bağlı olan uygulama ve oturum sayısı. Bu sayı tek başına iyi ya da kötü değildir; yanındaki Bağlantı doluluğu paneli üst sınıra ne kadar yaklaşıldığını söyler. Sayı hiç düşmeden sürekli artıyorsa uygulamanız bağlantıları kapatmayı unutuyor olabilir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "Veri yok",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "text", "value": null }]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(pg_stat_database_numbackends{engine=\"postgresql\"})",
+          "instant": false,
+          "legendFormat": "Açık bağlantı",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Bağlantı doluluğu",
+      "description": "Açık bağlantıların, izin verilen üst sınıra oranı. Yeşil (%70 altı) normaldir. Sarı ise yoğunluk var, göz ucuyla izleyin. Kırmızı (%85 üstü) ise sınıra dayanılıyor demektir: sınıra ulaşıldığında veritabanı yeni bağlantıları reddeder ve uygulamalar too many connections hatası almaya başlar.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 1,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "noValue": "Veri yok",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "#EAB839", "value": 70 },
+              { "color": "red", "value": 85 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "100 * sum(pg_stat_database_numbackends{engine=\"postgresql\"}) / max(pg_settings_max_connections{engine=\"postgresql\"})",
+          "instant": false,
+          "legendFormat": "Doluluk",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Toplam veri boyutu",
+      "description": "Bu sunucudaki bütün PostgreSQL veritabanlarının diskte kapladığı toplam yer. Zamanla yavaşça büyümesi normaldir ve beklenir. Kısa sürede hızla büyüyorsa sunucunun boş disk alanını kontrol edin: disk dolduğunda PostgreSQL yazma işlemlerini tamamen durdurur ve uygulamalar veri kaydedemez.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 1,
+          "mappings": [],
+          "noValue": "Veri yok",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "text", "value": null }]
+          },
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(pg_database_size_bytes{engine=\"postgresql\"})",
+          "instant": false,
+          "legendFormat": "Toplam boyut",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Önbellek isabet oranı",
+      "description": "Okunan verinin yüzde kaçının yavaş diske gidilmeden hızlı bellekten karşılandığını gösterir. %98 ve üstü beklenen değerdir. Uzun süre %90'ın altında kalıyorsa veritabanına ayrılan bellek iş yükü için yetersiz demektir ve sorgular gözle görülür şekilde yavaşlar. Veritabanı boştayken hiç okuma olmadığı için değer görünmeyebilir; bu normaldir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 1,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "noValue": "Okuma yok",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "#EAB839", "value": 90 },
+              { "color": "green", "value": 98 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "100 * sum(rate(pg_stat_database_blks_hit{engine=\"postgresql\"}[5m])) / (sum(rate(pg_stat_database_blks_hit{engine=\"postgresql\"}[5m])) + sum(rate(pg_stat_database_blks_read{engine=\"postgresql\"}[5m])))",
+          "instant": false,
+          "legendFormat": "İsabet oranı",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Kesintisiz çalışma süresi",
+      "description": "PostgreSQL'in en son başlatılmasından bu yana geçen süre, gün olarak. Siz yeniden başlatmadığınız hâlde bu süre sık sık sıfırlanıyorsa veritabanı kendi kendine çöküp yeniden açılıyor demektir; en sık nedeni yetersiz bellektir. Sarı renk, veritabanının yakın zamanda yeniden başladığını söyler.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 1,
+          "mappings": [],
+          "min": 0,
+          "noValue": "Kapalı",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "#EAB839", "value": null },
+              { "color": "green", "value": 0.04 }
+            ]
+          },
+          "unit": "suffix: gün"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "(time() - max(pg_postmaster_start_time_seconds{engine=\"postgresql\"})) / 86400",
+          "instant": false,
+          "legendFormat": "Çalışma süresi",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Son 1 saatteki kilitlenme",
+      "description": "İki işlemin birbirini beklemesi yüzünden veritabanının birini zorla iptal etmek zorunda kaldığı durumların (deadlock) sayısı. Sağlıklı bir sistemde 0 olmalıdır. Sıfırdan büyükse bazı kayıt işlemleri yarıda kesilmiş ve uygulama hata almış demektir. Sürekli tekrar ediyorsa uygulamanın aynı verilere farklı sırayla yazması araştırılmalıdır.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 0,
+          "mappings": [],
+          "min": 0,
+          "noValue": "Veri yok",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "#EAB839", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "round(sum(increase(pg_stat_database_deadlocks{engine=\"postgresql\"}[1h])))",
+          "instant": false,
+          "legendFormat": "Kilitlenme",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Bağlantı sayısı ve üst sınır",
+      "description": "Zaman içinde açık olan bağlantı sayısı ile izin verilen üst sınırın karşılaştırması. Mavi çizginin gün içinde inip çıkması normaldir. Mavi çizgi kırmızı kesikli sınıra yaklaşıyorsa önlem alın: sınıra ulaşıldığında yeni bağlantılar reddedilir. Çözüm genellikle uygulamada bağlantı havuzu kullanmak ya da sınırı yükseltmektir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "bağlantı",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Üst sınır" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } },
+              { "id": "custom.fillOpacity", "value": 0 },
+              { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(pg_stat_database_numbackends{engine=\"postgresql\"})",
+          "instant": false,
+          "legendFormat": "Açık bağlantı",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "max(pg_settings_max_connections{engine=\"postgresql\"})",
+          "instant": false,
+          "legendFormat": "Üst sınır",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Saniyedeki işlem sayısı",
+      "description": "Veritabanının saniyede kaç iş tamamladığı. Yeşil çizgi normal iş yükünüzdür; gün içinde inip çıkması beklenir ve hiç iş yokken sıfıra inmesi normaldir. Turuncu çizgi, yarıda kesilip geri alınan işleri gösterir; yeşile göre çok küçük kalmalıdır. Turuncu sürekli yükseliyorsa uygulama hata alıyor ya da işlemleri iptal ediyor demektir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "işlem / sn",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Tamamlanan işlem" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Geri alınan işlem" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(rate(pg_stat_database_xact_commit{engine=\"postgresql\"}[5m]))",
+          "instant": false,
+          "legendFormat": "Tamamlanan işlem",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum(rate(pg_stat_database_xact_rollback{engine=\"postgresql\"}[5m]))",
+          "instant": false,
+          "legendFormat": "Geri alınan işlem",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Tutulan kilit sayısı (türüne göre)",
+      "description": "Kilit, bir işlem veriyi değiştirirken başkalarının aynı veriye dokunmasını engelleyen sıra bekletme mekanizmasıdır. Kilit sayısının işlerle birlikte inip çıkması normaldir. Sayı uzun süre yüksek kalıp düşmüyorsa sorgular birbirini bekliyor, yani sistem yavaşlıyor olabilir; bu durumda uygulamada uzun süren ya da kapatılmayı unutulan işlemleri arayın.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "kilit",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "calcs": [], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "editorMode": "code",
+          "expr": "sum by (mode) (pg_locks_count{engine=\"postgresql\"})",
+          "instant": false,
+          "legendFormat": "{{mode}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "pluginVersion": "11.0.0"
+    }
+  ],
+  "preload": false,
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["databases-stack", "postgresql"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "PostgreSQL — Genel Bakış",
+  "uid": "dbstack-postgresql",
+  "version": 1,
+  "weekStart": ""
+}

@@ -1,0 +1,75 @@
+# =============================================================================
+# Uyarı kuralları — sade tutuldu, kasıtlı olarak.
+# =============================================================================
+# Amaç, veritabanı uzmanı olmayan birinin "bir şey ters gidiyor mu?" sorusuna
+# bakışta cevap alması. Bu yüzden kural sayısı az, eşikler geniş ve her
+# uyarının açıklamasında NE YAPILACAĞI yazıyor. Yüzlerce hassas kural, uzman
+# olmayan kullanıcı için gürültüden başka bir şey değildir.
+#
+# Bu kurallar Grafana'da "Uyarılar" panelinde görünür. Bildirim (e-posta,
+# Slack) kurmak isterseniz Grafana > Alerting > Contact points.
+# =============================================================================
+
+groups:
+  - name: databases-stack
+    rules:
+      # --- Motor erişilemiyor -------------------------------------------------
+      - alert: MotorErisilemiyor
+        expr: up{job="databases"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          ozet: '{{ $labels.engine_name }} 2 dakikadır cevap vermiyor'
+          ne_yapmali: >-
+            Panelden motorun durumuna bakın. Kapalıysa normaldir. Açık
+            görünüyorsa: ./stack.sh logs {{ $labels.engine }}
+
+      # --- Bellek sınırına dayanma -------------------------------------------
+      # Container limiti aşılırsa çekirdek süreci öldürür (OOM). Öncesinde
+      # uyarmak, gece yarısı gelen "veritabanı düştü" mesajından iyidir.
+      - alert: BellekSinirinaYaklasiyor
+        expr: |
+          (container_memory_usage_bytes / container_spec_memory_limit_bytes > 0.90)
+          and (container_spec_memory_limit_bytes > 0)
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          ozet: '{{ $labels.name }} ayrılan belleğin %90ından fazlasını kullanıyor'
+          ne_yapmali: >-
+            Sunucuda boş RAM varsa motoru kapatıp yeniden açın; bellek
+            yeniden hesaplanır. Yoksa başka bir motoru kapatın.
+
+      # --- Replikasyon geride kaldı ------------------------------------------
+      - alert: ReplikasyonGeride
+        expr: |
+          mysql_slave_status_seconds_behind_master > 300
+          or pg_replication_lag_seconds > 300
+          or redis_master_last_io_seconds_ago > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          ozet: '{{ $labels.engine_name }} yedek kopyası 5 dakikadan fazla geride'
+          ne_yapmali: >-
+            Bu durumda otomatik devir yapılırsa geride kalan veri kaybolur.
+            Ağ ya da disk darboğazına bakın; sürerse yedeği yeniden kurun:
+            ./stack.sh failover rebuild {{ $labels.engine }}
+
+      # --- Disk doluyor -------------------------------------------------------
+      # Veritabanları için disk dolması en sert arıza biçimidir: yazma durur,
+      # bazı motorlar bozuk durumda kalır. Erken uyarı şart.
+      - alert: DiskDoluyor
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} /
+           node_filesystem_size_bytes{mountpoint="/"}) < 0.10
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          ozet: 'Diskte %10dan az yer kaldı'
+          ne_yapmali: >-
+            Eski yedekleri temizleyin (backups/ altında) ya da disk ekleyin.
+            PostgreSQL kullanıyorsanız boşta kalan replikasyon slot'u WAL
+            biriktiriyor olabilir: ./stack.sh replica off postgresql

@@ -1,0 +1,593 @@
+{
+  "id": null,
+  "uid": "dbstack-cassandra",
+  "title": "Cassandra",
+  "description": "Cassandra motorunun sağlık ve yük durumu. Her panelin açıklamasında sayının ne anlama geldiği ve ne zaman endişelenmeniz gerektiği yazar.",
+  "tags": ["databases-stack", "cassandra"],
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "weekStart": "",
+  "fiscalYearStartMonth": 0,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "links": [],
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Durum",
+      "description": "Cassandra'nın izleme sistemine cevap verip vermediğini gösterir. \"Çalışıyor\" ise motor ayaktadır. \"Erişilemiyor\" yazıyorsa ve motoru siz kapatmadıysanız uygulamalarınız da bağlanamıyor olabilir; kayıtlara bakın: ./stack.sh logs cassandra . Motoru kendiniz kapattıysanız burada \"Veri yok\" yazması normaldir, arıza değildir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "up{job=\"databases\", engine=\"cassandra\"}",
+          "instant": true,
+          "range": false,
+          "legendFormat": "Durum"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "none",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "Erişilemiyor", "color": "red", "index": 0 },
+                "1": { "text": "Çalışıyor", "color": "green", "index": 1 }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Açık bağlantı sayısı",
+      "description": "Şu anda Cassandra'ya bağlı olan uygulama bağlantılarının sayısı. Uygulamalarınız çalışırken bu sayının sürekli 0 olması, hiçbirinin bağlanamadığı anlamına gelir. Sayı sürekli büyüyüp bir daha düşmüyorsa bir uygulama açtığı bağlantıları kapatmıyordur; bunlar birikince sunucunun belleği ve dosya sınırı tükenir, yeni bağlantılar reddedilmeye başlar.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:client:connectednativeclients:value\"}",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Bağlantı"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 500 },
+              { "color": "red", "value": 1000 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Java belleği kullanımı",
+      "description": "Cassandra'ya ayrılan Java belleğinin (heap) yüzde kaçının dolu olduğu. %75'in altı normaldir. Sürekli %90'ın üstünde kalıyorsa motor zamanının çoğunu bellek temizliğine harcar: sorgular yavaşlar ve en kötü durumda motor durur. Kalıcı olarak yüksekse .env dosyasındaki CASSANDRA_HEAP değerini artırıp motoru yeniden başlatın.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "100 * cassandra_stats{engine=\"cassandra\", name=\"java:lang:memory:heapmemoryusage:used\"} / ignoring(name) cassandra_stats{engine=\"cassandra\", name=\"java:lang:memory:heapmemoryusage:max\"}",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Bellek"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "percent",
+          "decimals": 0,
+          "min": 0,
+          "max": 100,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 75 },
+              { "color": "red", "value": 90 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Saklanan veri boyutu",
+      "description": "Bu düğümde saklanan verinin diskte kapladığı yer. Sayının kendisi tek başına iyi ya da kötü değildir; önemli olan sunucunun diskinde yeterli boş yer kalmasıdır. Cassandra veriyi arka planda birleştirirken geçici olarak ek yer kullanır, bu yüzden diskin yaklaşık yarısını boş tutmak güvenlidir. Renk kabaca uyarır: sarı ve kırmızı, disk planlaması yapma vaktinin geldiği anlamına gelir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:storage:load:count\"}",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Veri"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "bytes",
+          "min": 0,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 53687091200 },
+              { "color": "red", "value": 214748364800 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Saniyedeki okuma ve yazma",
+      "description": "Uygulamalarınızın saniyede kaç okuma ve kaç yazma isteği gönderdiği. Motorun ne kadar yüklendiğini gösterir; yüksek olması tek başına kötü değildir. Bu grafik yükselirken \"Sorgu süresi\" de yükseliyorsa motor gelen yüke yetişemiyor demektir. Uygulamalarınız çalışırken çizgiler beklenmedik biçimde sıfıra düşerse bağlantı kesilmiş olabilir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "rate(cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:read:latency:count\"}[5m])",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Okuma"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "B",
+          "editorMode": "code",
+          "expr": "rate(cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:write:latency:count\"}[5m])",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Yazma"
+        }
+      ],
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "decimals": 1,
+          "min": 0,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "işlem/sn",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Sorgu süresi (en yavaş sorgular)",
+      "description": "Sorguların ne kadar sürdüğü. Gösterilen değer şu demektir: her 100 sorgudan 99'u bu süreden daha hızlı tamamlandı — yani en yavaş sorguların bile üst sınırı. Birkaç milisaniye normaldir. Çizgi kesikli uyarı çizgilerinin üstüne çıkıyorsa kullanıcılar yavaşlığı fark eder; sebebi genellikle yükün artması ya da diskin yetişememesidir. Hiç sorgu gelmediğinde grafiğin boş kalması normaldir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:read:latency:99thpercentile\"}",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Okuma"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "B",
+          "editorMode": "code",
+          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:clientrequest:write:latency:99thpercentile\"}",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Yazma"
+        }
+      ],
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "noValue": "Veri yok",
+          "unit": "µs",
+          "min": 0,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "gecikme",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50000 },
+              { "color": "red", "value": 200000 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Hatalar ve zaman aşımları",
+      "description": "Karşılanamayan isteklerin saniyedeki sayısı. Sağlıklı bir motorda hepsi sıfırdır ve sıfırda kalmalıdır. Yeniden başlatma sırasındaki kısa bir sıçrama sorun değildir; ancak çizgiler dakikalarca sıfırın üstünde kalıyorsa uygulamalarınız hata alıyor, yazmak istediğiniz veri kaydedilmemiş olabilir. \"Yeterli kopya yok\", verinin kopyasını tutan düğümlerin yeterli sayıda ayakta olmadığını gösterir. \"Düşen iç mesaj\" ise motorun aşırı yüklendiğini ve yetişemediği işleri attığını gösterir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "sum(rate(cassandra_stats{engine=\"cassandra\", name=~\"org:apache:cassandra:metrics:clientrequest:(read|write):timeouts:count\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Zaman aşımı"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "B",
+          "editorMode": "code",
+          "expr": "sum(rate(cassandra_stats{engine=\"cassandra\", name=~\"org:apache:cassandra:metrics:clientrequest:(read|write):unavailables:count\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Yeterli kopya yok"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "C",
+          "editorMode": "code",
+          "expr": "sum(rate(cassandra_stats{engine=\"cassandra\", name=~\"org:apache:cassandra:metrics:clientrequest:(read|write):failures:count\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Başarısız istek"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "D",
+          "editorMode": "code",
+          "expr": "sum(rate(cassandra_stats{engine=\"cassandra\", name=~\"org:apache:cassandra:metrics:droppedmessage:.*:dropped:count\"}[5m]))",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Düşen iç mesaj"
+        }
+      ],
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "decimals": 2,
+          "min": 0,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "hata/sn",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Zaman aşımı" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Yeterli kopya yok" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Başarısız istek" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "dark-red" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Düşen iç mesaj" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }]
+          }
+        ]
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Bekleyen iş kuyruğu",
+      "description": "Motorun sıraya aldığı ama henüz yapamadığı işler. Kısa süreli birikmeler normaldir ve kendiliğinden boşalır. Kuyruk sürekli büyüyor ve bir daha sıfıra dönmüyorsa motor gelen yüke yetişemiyor demektir: önce sorgular yavaşlar, sonra zaman aşımı hataları başlar. \"Bekleyen birleştirme\" uzun süre yüksek kalırsa okumalar yavaşlar ve veri diskte beklenenden çok yer kaplar.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:threadpools:request:readstage:pendingtasks:value\"}",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Bekleyen okuma"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "B",
+          "editorMode": "code",
+          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:threadpools:request:mutationstage:pendingtasks:value\"}",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Bekleyen yazma"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "C",
+          "editorMode": "code",
+          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:compaction:pendingtasks:value\"}",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Bekleyen birleştirme"
+        }
+      ],
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "noValue": "Veri yok",
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "bekleyen iş",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Önbellek isabet oranı",
+      "description": "Cassandra'nın aradığı bilgiyi diske gitmeden bellekten bulma oranı. Burada yüksek olmak iyidir: %90 ve üstü çok iyidir, %70'in altına düşerse motor çok sık diske gidiyor demektir ve sorgular yavaşlar. Bu durumda sunucuda boş RAM varsa motora ayrılan belleği artırmak yardımcı olur. Yeni açılmış ya da henüz hiç sorgu almamış bir motorda grafiğin boş görünmesi normaldir.",
+      "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 21 },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "dbstack-prometheus" },
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "cassandra_stats{engine=\"cassandra\", name=\"org:apache:cassandra:metrics:cache:keycache:hitrate:value\"}",
+          "instant": false,
+          "range": true,
+          "legendFormat": "Bellekten karşılanan"
+        }
+      ],
+      "options": {
+        "legend": { "calcs": ["lastNotNull", "min"], "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "noValue": "Veri yok",
+          "unit": "percentunit",
+          "decimals": 0,
+          "min": 0,
+          "max": 1,
+          "mappings": [],
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "isabet oranı",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.7 },
+              { "color": "green", "value": 0.9 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}
