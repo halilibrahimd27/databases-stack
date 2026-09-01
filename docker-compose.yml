@@ -188,7 +188,10 @@ services:
     healthcheck:
       # Adminer imajında wget/curl YOK — PHP ile kontrol ediyoruz. Bu aynı
       # zamanda daha iyi bir test: gerçekten HTTP sunucusuna istek atıyor.
-      test: ["CMD-SHELL", "php -r 'exit(@file_get_contents("http://127.0.0.1:8080/") === false ? 1 : 0);'"]
+      test:
+        - CMD-SHELL
+        - >-
+          php -r 'exit(@file_get_contents("http://127.0.0.1:8080/") === false ? 1 : 0);'
       interval: 30s
       timeout: 5s
       retries: 3
