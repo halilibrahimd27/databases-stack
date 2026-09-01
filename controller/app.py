@@ -1171,12 +1171,17 @@ def do_activate(jid, eid, requested_mb=None):
         pre = engine_preconditions(eid)
         if pre:
             job_log(jid, "ÖNKOŞUL SAĞLANMADI:", pre)
+            record_event("activate_refused", eid,
+                         "%s açılamadı: %s" % (engine["name"], pre), level="warning")
             return job_done(jid, False, pre)
 
         job_log(jid, "kaynak planı hesaplanıyor…")
         p = plan_engine(eid, requested_mb)
         if not p.get("ok"):
             job_log(jid, "REDDEDİLDİ:", p.get("reason"))
+            record_event("activate_refused", eid,
+                         "%s açılamadı: %s" % (engine["name"], p.get("reason", "")),
+                         level="warning")
             return job_done(jid, False, p.get("reason"), {"plan": p})
 
         job_log(jid, "plan: limit=%d MB (%s), bütçe sonrası kalan=%d MB"
@@ -1218,6 +1223,10 @@ def do_activate(jid, eid, requested_mb=None):
         st = load_state()
         st["profiles"] = list(set(st.get("profiles", [])) | {engine["profile"]})
         save_state(st)
+        record_event("activate", eid,
+                     "%s açıldı — %d MB ayrıldı%s"
+                     % (engine["name"], p["limit_mb"],
+                        "" if p.get("with_panel", True) else " (bellek dar, web paneli atlandı)"))
         job_done(jid, True, None, {"plan": p})
     except Exception as e:
         job_log(jid, "HATA:", repr(e))
@@ -1263,6 +1272,10 @@ def do_deactivate(jid, eid):
         tun = load_tuning()
         tun.pop(eid, None)  # bir dahaki açılışta güncel koşullara göre yeniden planla
         save_tuning(tun)
+        if rc == 0:
+            record_event("deactivate", eid,
+                         "%s kapatıldı — belleği serbest bırakıldı (veriler duruyor)"
+                         % engine["name"])
         job_done(jid, rc == 0, None if rc == 0 else "stop başarısız")
     except Exception as e:
         job_log(jid, "HATA:", repr(e))
@@ -1348,6 +1361,9 @@ def do_replication(jid, eid, enable):
             st = load_state()
             st["profiles"] = list(set(st["profiles"]) | {profile})
             save_state(st)
+            record_event("replication", eid,
+                         "%s için yedek kopya kuruldu (%s)"
+                         % (engine["name"], rep.get("replica_service", "")))
             return job_done(jid, True)
 
         # devre dışı bırak
@@ -1374,6 +1390,7 @@ def do_replication(jid, eid, enable):
                 run(compose_base() + ["--profile", engine["profile"], "up", "-d",
                                       engine["primary_service"]], timeout=900)
         save_state(st)
+        record_event("replication", eid, "%s yedek kopyası kaldırıldı" % engine["name"])
         job_done(jid, True)
     except Exception as e:
         job_log(jid, "HATA:", repr(e))

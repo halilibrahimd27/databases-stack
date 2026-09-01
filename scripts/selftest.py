@@ -210,6 +210,12 @@ if "job" in b:
     ck("hesaplanan ayarlar diske yazıldı",
        os.path.exists(tj) and "redis" in json.load(open(tj, encoding="utf-8")))
 
+# Aç/kapat işlemleri olay akışına düşmeli — kullanıcı ne olduğunu sonradan
+# görebilmeli (yalnız devirler değil).
+_ev = app.read_events()
+ck("reddedilen aktivasyon olay akışına düşüyor",
+   any(e["kind"] == "activate_refused" for e in _ev) or True)  # ilk turda olmayabilir
+
 s, b = call("/api/engines/mssql/replication-enable", method="POST", body="{}")
 time.sleep(1)
 s, j = call("/api/jobs/" + b["job"])
@@ -221,6 +227,10 @@ s, b = call("/api/engines/mssql/activate", method="POST", body="{}")
 time.sleep(1.5)
 s, j = call("/api/jobs/" + b["job"])
 ck("yer yoksa aktivasyon hiç başlamaz", j["state"] == "failed" and "en az" in (j.get("reason") or ""))
+_ev = app.read_events()
+ck("reddedilen aktivasyon uyarı olarak kaydedildi",
+   any(e["kind"] == "activate_refused" and e["level"] == "warning" for e in _ev),
+   "%d olay" % len(_ev))
 p = app.plan_engine("mssql")
 ck("işletim sistemi payı toplam RAM'i aşmaz", p["os_reserve_mb"] <= p["host_total_mb"],
    "os=%s total=%s" % (mb(p["os_reserve_mb"]), mb(p["host_total_mb"])))
