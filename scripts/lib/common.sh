@@ -106,12 +106,46 @@ require_cmd() {
     done
 }
 
+# Docker eksikse KOPYALANABİLİR bir kurulum komutu ver. "docker bulunamadı,
+# kurun" demek kullanıcıyı arama motoruna yollar; ürünün "tek komutla kurulur"
+# iddiasıyla çelişir.
+_docker_install_hint() {
+    cat >&2 <<'HINT'
+
+  Docker kurulu değil. Ubuntu/Debian için (kopyalayıp yapıştırın):
+
+    curl -fsSL https://get.docker.com | sudo sh
+    sudo usermod -aG docker $USER
+    newgrp docker
+
+  Sonra bu betiği tekrar çalıştırın:  ./install.sh
+  Diğer dağıtımlar: https://docs.docker.com/engine/install/
+
+HINT
+}
+
 require_docker() {
-    require_cmd docker
-    docker compose version >/dev/null 2>&1 \
-        || die "Docker Compose v2 gerekli ('docker compose'). Docker'ı güncelleyin."
-    docker info >/dev/null 2>&1 \
-        || die "Docker çalışmıyor ya da bu kullanıcının yetkisi yok (sudo gerekebilir)."
+    if ! command -v docker >/dev/null 2>&1; then
+        _docker_install_hint
+        die "Docker bulunamadı."
+    fi
+    if ! docker compose version >/dev/null 2>&1; then
+        err "Docker Compose v2 gerekli — 'docker compose' alt komutu yok."
+        _docker_install_hint
+        die "Docker sürümünüz eski."
+    fi
+    if ! docker info >/dev/null 2>&1; then
+        err "Docker çalışmıyor ya da bu kullanıcının yetkisi yok."
+        cat >&2 <<'HINT'
+
+  Şunları deneyin:
+    sudo systemctl start docker      # servis kapalıysa
+    sudo usermod -aG docker $USER    # yetki yoksa
+    newgrp docker                    # grubu bu oturuma uygula
+
+HINT
+        die "Docker'a erişilemiyor."
+    fi
 }
 
 # ------------------------------------------------------------- kilitleme ---
