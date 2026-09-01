@@ -251,6 +251,13 @@ ck("her motorun istemci portu tabloda",
        for e in cat["engines"] for r in e.get("route", [])))
 ck("kafka container içi 29092'ye yönleniyor (advertised listener)",
    "kafka:29092" in routes)
+# Bu dosya gateway'e TEK DOSYA olarak bind-mount edilir; docker mount'u inode'a
+# bağlar. Yeniden yazarken inode değişirse container eskimiş tabloyu görür ve
+# devirden sonra bağlantılar kopar — sessiz ve pahalı bir hata.
+_ino_before = os.stat(app.ROUTES_FILE).st_ino
+app.write_routes()
+ck("yönlendirme tablosu YERİNDE yazılıyor (bind-mount inode'u korunuyor)",
+   os.stat(app.ROUTES_FILE).st_ino == _ino_before)
 ck("minio S3 API'si 9002'den 9000'e yönleniyor",
    "listen 9002;" in routes and "minio:9000" in routes)
 
