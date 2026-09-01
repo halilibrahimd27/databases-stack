@@ -1132,6 +1132,25 @@ def _js_dengesizlik(src):
 
 _js_sorun = _js_dengesizlik(open("gateway/html/app.js", encoding="utf-8").read())
 ck("dashboard app.js dengeli (yarım commit yakalanır)", not _js_sorun, _js_sorun)
+
+
+# --- install.sh'te `set -e` + başarısız komut ikamesi tuzağı ----------------
+# install.sh `set -euo pipefail` ile çalışıyor. Bu kabukta `VAR="$(cmd)"`
+# biçiminde cmd başarısız olursa ATAMA da başarısız olur ve betik ORACIKTA
+# ölür — hiçbir hata mesajı basmadan. env_get, aranan anahtar .env'de yoksa
+# 1 döndürür.
+#
+# Gerçek bir olaydı: GRAFANA_USER hiçbir zaman üretilmediği için
+# `GRAFANA_USER_VAL="$(env_get GRAFANA_USER)"` satırı kurulumu tam da özet
+# bölümünden ÖNCE öldürüyordu. Ekranda her şey başarılı görünüyor, çekirdek
+# servisler gerçekten ayağa kalkıyor, ama credentials.txt hiç yazılmıyor ve
+# kullanıcı panel parolasını HİÇ göremiyordu. Sunucuyu silip sıfırdan kurunca
+# yakalandı.
+_inst = open("install.sh", encoding="utf-8").read()
+_korumasiz = re.findall(r'^\s*[A-Za-z_][A-Za-z0-9_]*="\$\(env_get [A-Z_]+\)"',
+                        _inst, re.M)
+ck("install.sh'te korumasız env_get ataması yok (set -e sessizce öldürür)",
+   not _korumasiz, "; ".join(x.strip() for x in _korumasiz))
 # Denetimin kendisi de doğrulanıyor: kasten bozulmuş bir örneği yakalayamıyorsa
 # kontrol sessizce hiçbir şey doğrulamıyor demektir.
 ck("bu denetim bozuk dosyayı gerçekten yakalıyor",

@@ -227,7 +227,7 @@ ok "certs/ hazır — CA'yı istemcilere kurmak için: http://$STACK_HOST_VAL/ca
 # =============================================================================
 heading "7/8  Panel girişi"
 PANEL_USER_VAL="$(env_get PANEL_USER || echo admin)"
-PANEL_PASS_VAL="$(env_get PANEL_PASSWORD)"
+PANEL_PASS_VAL="$(env_get PANEL_PASSWORD || true)"   # bkz. aşağıdaki set -e notu
 [ -z "$PANEL_PASS_VAL" ] && PANEL_PASS_VAL="$(env_get DB_PASSWORD)"
 
 # htpasswd yoksa docker ile üret — ek paket kurdurmamak için.
@@ -266,9 +266,17 @@ ok "state/crontab hazır — yüklemek için: crontab state/crontab"
 # =============================================================================
 # ÖZET
 # =============================================================================
-GRAFANA_USER_VAL="$(env_get GRAFANA_USER)"; [ -z "$GRAFANA_USER_VAL" ] && GRAFANA_USER_VAL=admin
-GRAFANA_PASS_VAL="$(env_get GRAFANA_PASSWORD)"
-[ -z "$GRAFANA_PASS_VAL" ] && GRAFANA_PASS_VAL="$(env_get DB_PASSWORD)"
+# DİKKAT — `set -e` ile atamalar: `VAR="$(cmd)"` biçiminde cmd başarısız
+# olursa ATAMA da başarısız olur ve betik ORACIKTA ölür. env_get, anahtar
+# .env'de yoksa 1 döner; GRAFANA_USER hiçbir zaman üretilmediği için bu satır
+# kurulumu tam da özet bölümünden ÖNCE öldürüyordu: çekirdek servisler ayağa
+# kalkıyor, ekranda her şey başarılı görünüyor, ama credentials.txt hiç
+# yazılmıyor ve kullanıcı parolasını HİÇ göremiyordu. Temiz kurulum testinde
+# yakalandı; çıkış kodu 1 idi ama son satır "[✓] state/crontab hazır"dı.
+GRAFANA_USER_VAL="$(env_get GRAFANA_USER || true)"
+[ -n "$GRAFANA_USER_VAL" ] || GRAFANA_USER_VAL=admin
+GRAFANA_PASS_VAL="$(env_get GRAFANA_PASSWORD || true)"
+[ -n "$GRAFANA_PASS_VAL" ] || GRAFANA_PASS_VAL="$(env_get DB_PASSWORD || true)"
 CRED=credentials.txt
 {
     echo "databases-stack — erişim bilgileri"
