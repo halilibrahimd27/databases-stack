@@ -75,7 +75,7 @@
       },
       "resources": {
         "min_mb": 512,
-        "share": 0.3,
+        "share": 0.2,
         "max_mb": 16384,
         "overhead_mb": 320,
         "panel_mb": 256,
@@ -190,7 +190,7 @@
       },
       "resources": {
         "min_mb": 512,
-        "share": 0.2,
+        "share": 0.15,
         "max_mb": 8192,
         "overhead_mb": 576,
         "panel_mb": 512,
@@ -312,7 +312,7 @@
       },
       "resources": {
         "min_mb": 512,
-        "share": 0.2,
+        "share": 0.15,
         "max_mb": 8192,
         "overhead_mb": 320,
         "panel_mb": 256,
@@ -411,7 +411,7 @@
       },
       "resources": {
         "min_mb": 128,
-        "share": 0.1,
+        "share": 0.08,
         "max_mb": 4096,
         "overhead_mb": 320,
         "panel_mb": 256,
@@ -501,7 +501,7 @@
       },
       "resources": {
         "min_mb": 2048,
-        "share": 0.3,
+        "share": 0.22,
         "max_mb": 16384,
         "overhead_mb": 0,
         "panel_mb": 0,
@@ -590,7 +590,7 @@
       },
       "resources": {
         "min_mb": 1024,
-        "share": 0.2,
+        "share": 0.15,
         "max_mb": 8192,
         "overhead_mb": 128,
         "panel_mb": 0,
@@ -697,7 +697,7 @@
       },
       "resources": {
         "min_mb": 1024,
-        "share": 0.25,
+        "share": 0.18,
         "max_mb": 16384,
         "overhead_mb": 1088,
         "panel_mb": 1024,
@@ -793,7 +793,7 @@
       },
       "resources": {
         "min_mb": 768,
-        "share": 0.15,
+        "share": 0.12,
         "max_mb": 4096,
         "overhead_mb": 576,
         "panel_mb": 512,
@@ -886,7 +886,7 @@
       },
       "resources": {
         "min_mb": 384,
-        "share": 0.1,
+        "share": 0.08,
         "max_mb": 2048,
         "overhead_mb": 0,
         "panel_mb": 0,
@@ -976,7 +976,7 @@
       },
       "resources": {
         "min_mb": 512,
-        "share": 0.25,
+        "share": 0.18,
         "max_mb": 16384,
         "overhead_mb": 0,
         "panel_mb": 0,
@@ -1068,7 +1068,7 @@
       },
       "resources": {
         "min_mb": 768,
-        "share": 0.2,
+        "share": 0.14,
         "max_mb": 8192,
         "overhead_mb": 0,
         "panel_mb": 0,

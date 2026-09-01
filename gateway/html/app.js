@@ -82,8 +82,14 @@ async function activate(engine) {
     infoBox(engine.name + ' şu an açılamıyor', `
       <p>${esc(plan.reason)}</p>
       <div class="plan-line"><span>Sunucu toplam belleği</span><b>${mb(plan.host_total_mb)}</b></div>
-      <div class="plan-line"><span>Zaten açık veritabanları</span><b>${mb(plan.committed_mb)}</b></div>
+      <div class="plan-line"><span>İşletim sistemi payı</span><b>${mb(plan.os_reserve_mb)}</b></div>
+      <div class="plan-line"><span>Açık veritabanlarına ayrılan</span><b>${mb(plan.committed_mb)}</b></div>
       <div class="plan-line"><span>Bu veritabanı için gereken en az</span><b>${mb(plan.min_mb + plan.overhead_mb)}</b></div>
+      <p class="note"><b>Neden "boş bellek var" ama açılmıyor?</b>
+      Ayrılan bellek, açık veritabanlarının <b>büyüyebileceği üst sınırdır</b> —
+      şu anki gerçek kullanımları daha düşük olabilir. Bu sınırlar söz verilmiş
+      olduğu için yeniden dağıtılamaz; aksi halde iki veritabanı aynı anda
+      büyüdüğünde işletim sistemi birini öldürürdü.</p>
       <p class="note">Açık bir veritabanını kapatırsanız bu kart tekrar
       kullanılabilir hâle gelir.</p>`);
     return;
@@ -295,9 +301,18 @@ function render() {
   $('#sys-disk').textContent = mb(sys.disk_free_mb) + ' boş';
 
   if (sys.mem_total_mb) {
-    const used = sys.mem_total_mb - (sys.mem_available_mb || 0);
-    const pct  = Math.min(100, Math.round((used / sys.mem_total_mb) * 100));
-    $('#sys-mem').textContent = mb(used) + ' / ' + mb(sys.mem_total_mb);
+    // Üst barda AYRILAN belleği gösteriyoruz, gerçek kullanımı değil.
+    // Karar mekanizması ayrılan tavanlara göre çalışır: bir motorun limiti,
+    // o motorun büyüyebileceği üst sınırdır ve o kadarı ona söz verilmiştir.
+    // Gerçek kullanımı gösterip bütçeyi tavanlara göre reddetmek "14 GB boş
+    // ama açılmıyor" gibi çelişkili görünüyordu; ikisini birlikte veriyoruz.
+    const committed = (sys.stack_committed_mb || 0)
+                    + (sys.os_reserve_mb || 0) + (sys.core_reserve_mb || 0);
+    const real = sys.mem_total_mb - (sys.mem_available_mb || 0);
+    const pct  = Math.min(100, Math.round((committed / sys.mem_total_mb) * 100));
+    $('#sys-mem').textContent = mb(committed) + ' / ' + mb(sys.mem_total_mb);
+    const rel = $('#sys-mem-real');
+    if (rel) rel.textContent = 'gerçek kullanım ' + mb(real);
     const bar = $('#sys-mem-bar');
     bar.style.width = pct + '%';
     bar.className = 'meter-fill' + (pct > 90 ? ' crit' : pct > 75 ? ' hot' : '');

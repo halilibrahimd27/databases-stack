@@ -294,8 +294,12 @@ backup_rabbitmq() {
 backup_minio() {
     local f; f="$(out_path minio full tar.gz)"
     blog "MinIO nesneleri yedekleniyor…"
-    # Nesneler değişmezdir (immutable); veri dizinini tar'lamak tutarlıdır.
-    "${IO_NICE[@]}" docker exec minio tar -cf - -C /data . 2>>"$LOG_FILE" \
+    # MinIO imajında `tar` YOKTUR (busybox bile değil, tek statik ikili).
+    # Bu yüzden arşivi container'ın içinde değil `docker cp` ile DOCKER'a
+    # yaptırıyoruz: `docker cp <container>:<yol> -` tar akışını stdout'a verir
+    # ve imajın içinde hiçbir araç gerektirmez.
+    # Nesneler değişmezdir (immutable), veri dizinini kopyalamak tutarlıdır.
+    "${IO_NICE[@]}" docker cp "minio:/data/." - 2>>"$LOG_FILE" \
         | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "MinIO arşivi alınamadı"; rm -f "$f"; return 1; }
     verify_backup "$f"
