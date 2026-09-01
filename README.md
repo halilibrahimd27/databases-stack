@@ -20,10 +20,18 @@ Sen hiçbir teknik değer girmezsin.
 
 ## Kurulum
 
+**Önkoşul:** Docker (yoksa `install.sh` size kurulum komutunu verir):
+
 ```bash
+curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER && newgrp docker
+```
+
+Sonra:
+
+```bash
+sudo mkdir -p /opt/databases && sudo chown $USER:$USER /opt/databases
 git clone https://github.com/halilibrahimd27/databases-stack.git /opt/databases
-cd /opt/databases
-sudo ./install.sh
+cd /opt/databases && ./install.sh
 ```
 
 Bu kadar. Soru sormaz. Parolaları, TLS sertifikalarını ve sunucu adresini kendisi
