@@ -343,6 +343,8 @@ def compose_base():
     cmd += ["--env-file", os.path.join(PROJECT_DIR, ".env")]
     if os.path.exists(TUNING_ENV):
         cmd += ["--env-file", TUNING_ENV]
+    if os.path.exists(ROLES_ENV):
+        cmd += ["--env-file", ROLES_ENV]
     cmd += ["-p", PROJECT]
     return cmd
 
@@ -624,6 +626,7 @@ def connection_info(eid):
 TOPOLOGY_FILE = os.path.join(STATE_DIR, "topology.json")
 ROUTES_FILE = os.path.join(STATE_DIR, "routes.conf")
 EVENTS_FILE = os.path.join(STATE_DIR, "events.jsonl")
+ROLES_ENV = os.path.join(STATE_DIR, "roles.env")
 
 FAILOVER_INTERVAL = int(os.environ.get("FAILOVER_INTERVAL", "10"))     # saniye
 FAILOVER_STRIKES = int(os.environ.get("FAILOVER_STRIKES", "3"))        # üst üste hata
@@ -697,6 +700,60 @@ def write_routes():
         f.flush()
         os.fsync(f.fileno())
     return ROUTES_FILE
+
+
+def write_roles():
+    """state/roles.env — hangi düğümün primary, hangisinin standby olduğunu yazar.
+
+    Servis TANIMLARI rol taşımaz; rol bu dosyadaki env değişkenleriyle verilir.
+    Devirden sonra roller yer değiştirdiğinde eski primary'yi yeni primary'nin
+    yedeği olarak geri alabilmek için şart — aksi halde boş bir ikinci primary
+    olarak açılır ve replikasyon hiç kurulamaz.
+    """
+    topo = load_topology()
+    lines = ["# OTOMATİK ÜRETİLDİ — controller yazar. Replikasyon rollerini tutar.",
+             "# Boş STANDBY_OF = o düğüm PRIMARY demektir.", ""]
+
+    def emit(prim_var, rep_var, primary_svc, default_primary, default_replica, port=None):
+        if primary_svc == default_primary:      # roller özgün hâlinde
+            lines.append("%s=" % prim_var)
+            lines.append("%s=%s" % (rep_var, default_primary))
+        else:                                   # devir olmuş, roller ters
+            lines.append("%s=%s" % (prim_var, default_replica))
+            lines.append("%s=" % rep_var)
+
+    for e in CATALOG.engines:
+        rep = e.get("replication", {})
+        if rep.get("mode") != "primary-replica":
+            continue
+        eid = e["id"]
+        prim = topo.get(eid, {}).get("primary", e["primary_service"])
+        lines.append("# --- %s (ana kopya: %s) ---" % (eid, prim))
+        if eid == "postgresql":
+            emit("POSTGRES_STANDBY_OF", "POSTGRES_REPLICA_STANDBY_OF", prim,
+                 "postgresql", "postgresql-replica")
+        elif eid == "redis":
+            # Redis'te "replicaof no one" = primary. İki alan gerektiği için
+            # host ve port ayrı ayrı yazılır.
+            if prim == "redis":
+                lines += ["REDIS_STANDBY_OF=no", "REDIS_STANDBY_PORT=one",
+                          "REDIS_REPLICA_STANDBY_OF=redis", "REDIS_REPLICA_STANDBY_PORT=6379",
+                          "REDIS_REPLICA_READ_ONLY=yes"]
+            else:
+                lines += ["REDIS_STANDBY_OF=redis-replica", "REDIS_STANDBY_PORT=6379",
+                          "REDIS_REPLICA_STANDBY_OF=no", "REDIS_REPLICA_STANDBY_PORT=one",
+                          "REDIS_REPLICA_READ_ONLY=no"]
+        elif eid == "mariadb":
+            if prim == "mariadb":
+                lines += ["MARIADB_READ_ONLY=OFF", "MARIADB_REPLICA_READ_ONLY=ON"]
+            else:
+                lines += ["MARIADB_READ_ONLY=ON", "MARIADB_REPLICA_READ_ONLY=OFF"]
+        lines.append("")
+
+    os.makedirs(os.path.dirname(ROLES_ENV), exist_ok=True)
+    with open(ROLES_ENV, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    return ROLES_ENV
 
 
 def reload_gateway():
@@ -855,6 +912,7 @@ def perform_failover(eid, reason, jid=None):
                  "failovers": int(prev.get("failovers", 0)) + 1,
                  "previous_primary": old, "reason": reason}
     save_topology(topo)
+    write_roles()      # roller yer değiştirdi — yeni rol dosyasını üret
     write_routes()
     reload_gateway()
 
@@ -883,6 +941,9 @@ def rebuild_standby(eid, jid=None):
         job_log(jid, *m) if jid else log(*m)
 
     jl("Eski primary yeni primary'nin replikası olarak kuruluyor:", old)
+    # Rolleri ÖNCE yaz: container yaratılırken doğru STANDBY_OF değerini
+    # görmeli, yoksa yine primary olarak açılır.
+    write_roles()
     run(["docker", "rm", "-f", old], timeout=120)
 
     # Eski verinin silinmesi ZORUNLU — yoksa yeni primary ile ayrışmış geçmiş
@@ -904,8 +965,10 @@ def rebuild_standby(eid, jid=None):
     if rc != 0:
         return False, "Replika yeniden kurulamadı"
 
+    # PostgreSQL ve Redis rol env'iyle kendi kendine bağlanır (entrypoint /
+    # --replicaof). MariaDB'de dump+CHANGE MASTER gerekir; betik onu yapar.
     script = script_path("replication", eid)
-    if os.path.exists(script):
+    if os.path.exists(script) and eid == "mariadb":
         env = script_env()
         env.update(REPLICATION_PRIMARY=current_primary(engine), REPLICATION_STANDBY=old)
         rc, out, err = run(["sh", script, "attach"], timeout=1800, env=env)
@@ -1506,8 +1569,9 @@ def main():
         # de sorunsuz açılır (nginx boş include'a kızmaz); burada doldurup
         # tazeliyoruz. Böylece tablo tek bir yerde, burada üretiliyor.
         try:
+            write_roles()
             write_routes()
-            log("yönlendirme tablosu yazıldı:", ROUTES_FILE)
+            log("rol ve yönlendirme tabloları yazıldı")
             threading.Timer(5.0, reload_gateway).start()
         except Exception as e:
             log("yönlendirme tablosu yazılamadı:", e)

@@ -221,6 +221,8 @@ services:
       # tamamını eziyordu — burada yalnız bu üç anahtar override edilir.)
       - ${STACK_DIR:-.}/config/mariadb/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
     command:
+      - "--server-id=${MARIADB_SERVER_ID:-1}"
+      - "--read-only=${MARIADB_READ_ONLY:-OFF}"
       - "--innodb-buffer-pool-size=${MARIADB_BUFFER_POOL:-1G}"
       - "--innodb-log-file-size=${MARIADB_LOG_FILE_SIZE:-256M}"
       - "--max-connections=${MARIADB_MAX_CONNECTIONS:-200}"
@@ -292,8 +294,8 @@ services:
       MARIADB_ROOT_PASSWORD: ${MARIADB_PASSWORD:-${DB_PASSWORD}}
       MARIADB_AUTO_UPGRADE: "1"
     command: >
-      --server-id=2
-      --read-only=ON
+      --server-id=${MARIADB_REPLICA_SERVER_ID:-2}
+      --read-only=${MARIADB_REPLICA_READ_ONLY:-ON}
       --relay-log=relay-bin
       --log-bin=mysql-bin
       --binlog-format=ROW
@@ -327,23 +329,64 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-root}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-${DB_PASSWORD}}
       PGDATA: /var/lib/postgresql/data/pgdata
-      # Replikasyon açılınca kullanılır; primary'de her zaman hazır dursun.
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+      # Rol: boş = primary. Devirden sonra controller burayı doldurup bu
+      # düğümü yeni primary'nin yedeği yapar (state/roles.env üzerinden).
+      PG_STANDBY_OF: ${POSTGRES_STANDBY_OF:-}
+      PG_SLOT: ${POSTGRES_SLOT_PRIMARY:-replica_from_primary}
+      POSTGRES_REPLICATION_USER: ${POSTGRES_REPLICATION_USER:-replicator}
+      POSTGRES_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD:-${POSTGRES_PASSWORD:-${DB_PASSWORD}}}
     volumes:
       - postgresql_data:/var/lib/postgresql/data
-    command: >
-      postgres
-      -c shared_buffers=${POSTGRES_SHARED_BUFFERS:-512MB}
-      -c effective_cache_size=${POSTGRES_EFFECTIVE_CACHE:-1536MB}
-      -c max_connections=${POSTGRES_MAX_CONNECTIONS:-200}
-      -c max_worker_processes=${POSTGRES_MAX_WORKERS:-8}
-      -c max_locks_per_transaction=${POSTGRES_MAX_LOCKS:-64}
-      -c work_mem=${POSTGRES_WORK_MEM:-4MB}
-      -c log_min_duration_statement=2000
-      -c wal_level=replica
-      -c max_wal_senders=10
-      -c max_replication_slots=10
-      -c hot_standby=on
+    # ROL SABİT DEĞİL — PG_STANDBY_OF ile belirlenir:
+    #   boş     → bu düğüm PRIMARY
+    #   dolu    → o düğümden klonlanıp STANDBY olarak açılır
+    # Devirden sonra eski primary'yi yeni primary'nin yedeği yapabilmek için
+    # şart. Sabit "primary" tanımı olsaydı, geri alırken boş bir ikinci
+    # primary olarak açılır ve replikasyon kurulamazdı.
+    # Replika servisi de aynı entrypoint'i kullanır; ikisi simetriktir.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        if [ -n "$${PG_STANDBY_OF:-}" ] && [ ! -s "$$PGDATA/PG_VERSION" ]; then
+          echo "[rol] STANDBY olarak kuruluyor, kaynak: $$PG_STANDBY_OF"
+          export PGPASSWORD="$${POSTGRES_REPLICATION_PASSWORD:-$$POSTGRES_PASSWORD}"
+          until pg_isready -h "$$PG_STANDBY_OF" -U "$${POSTGRES_REPLICATION_USER:-replicator}" -q; do
+            echo "[rol] kaynak bekleniyor: $$PG_STANDBY_OF"; sleep 2
+          done
+          rm -rf "$$PGDATA"; mkdir -p "$$PGDATA"; chmod 700 "$$PGDATA"
+          pg_basebackup -h "$$PG_STANDBY_OF" -U "$${POSTGRES_REPLICATION_USER:-replicator}" \
+            -D "$$PGDATA" -Fp -Xs -P -R -S "$$PG_SLOT" -C
+          echo "[rol] klon tamam"
+        fi
+        exec docker-entrypoint.sh "$$@"
+      - bash
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-512MB}
+      - -c
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE:-1536MB}
+      - -c
+      - max_connections=${POSTGRES_MAX_CONNECTIONS:-200}
+      - -c
+      - max_worker_processes=${POSTGRES_MAX_WORKERS:-8}
+      - -c
+      - max_locks_per_transaction=${POSTGRES_MAX_LOCKS:-64}
+      - -c
+      - work_mem=${POSTGRES_WORK_MEM:-4MB}
+      - -c
+      - log_min_duration_statement=2000
+      - -c
+      - wal_level=replica
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - hot_standby=on
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-root} -d ${DEFAULT_DATABASE:-defaultdb}"]
       interval: 30s
@@ -415,37 +458,62 @@ services:
     container_name: postgresql-replica
     user: postgres
     environment:
-      PGPASSWORD: ${POSTGRES_REPLICATION_PASSWORD:-${POSTGRES_PASSWORD:-${DB_PASSWORD}}}
       PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-${DB_PASSWORD}}
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      # Varsayılan rol: 'postgresql' düğümünün yedeği. Devirden sonra bu düğüm
+      # primary olur ve controller burayı BOŞALTIR (state/roles.env).
+      PG_STANDBY_OF: ${POSTGRES_REPLICA_STANDBY_OF-postgresql}
+      PG_SLOT: ${POSTGRES_REPLICATION_SLOT:-replica_1}
+      POSTGRES_REPLICATION_USER: ${POSTGRES_REPLICATION_USER:-replicator}
+      POSTGRES_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD:-${POSTGRES_PASSWORD:-${DB_PASSWORD}}}
     volumes:
       - postgresql_replica_data:/var/lib/postgresql/data
-    # Veri dizini boşsa primary'den pg_basebackup ile klonla, sonra standby aç.
-    # Dizin doluysa doğrudan başlat (yeniden başlatmalarda tekrar klonlamaz).
+    # Primary ile AYNI entrypoint — rol yalnızca PG_STANDBY_OF ile belirlenir.
     entrypoint:
       - bash
       - -c
       - |
         set -e
-        if [ ! -s "$$PGDATA/PG_VERSION" ]; then
-          echo "[replica] primary bekleniyor..."
-          until pg_isready -h postgresql -U ${POSTGRES_REPLICATION_USER:-replicator} -q; do sleep 2; done
-          echo "[replica] pg_basebackup başlıyor"
+        if [ -n "$${PG_STANDBY_OF:-}" ] && [ ! -s "$$PGDATA/PG_VERSION" ]; then
+          echo "[rol] STANDBY olarak kuruluyor, kaynak: $$PG_STANDBY_OF"
+          export PGPASSWORD="$${POSTGRES_REPLICATION_PASSWORD:-$$POSTGRES_PASSWORD}"
+          until pg_isready -h "$$PG_STANDBY_OF" -U "$${POSTGRES_REPLICATION_USER:-replicator}" -q; do
+            echo "[rol] kaynak bekleniyor: $$PG_STANDBY_OF"; sleep 2
+          done
           rm -rf "$$PGDATA"; mkdir -p "$$PGDATA"; chmod 700 "$$PGDATA"
-          pg_basebackup -h postgresql -U ${POSTGRES_REPLICATION_USER:-replicator} \
-            -D "$$PGDATA" -Fp -Xs -P -R -S ${POSTGRES_REPLICATION_SLOT:-replica_1} -C
-          echo "[replica] klon tamam"
+          pg_basebackup -h "$$PG_STANDBY_OF" -U "$${POSTGRES_REPLICATION_USER:-replicator}"             -D "$$PGDATA" -Fp -Xs -P -R -S "$$PG_SLOT" -C
+          echo "[rol] klon tamam"
         fi
-        # KRİTİK: standby'ın max_connections / max_worker_processes /
-        # max_locks_per_transaction değerleri primary'den KÜÇÜK OLAMAZ.
-        # Küçükse PostgreSQL kurtarmayı reddeder:
-        #   FATAL: recovery aborted because of insufficient parameter settings
-        # Bu yüzden primary ile AYNI env değişkenleri kullanılıyor.
-        exec docker-entrypoint.sh postgres           -c hot_standby=on           -c max_connections=${POSTGRES_MAX_CONNECTIONS:-200}           -c max_worker_processes=${POSTGRES_MAX_WORKERS:-8}           -c max_locks_per_transaction=${POSTGRES_MAX_LOCKS:-64}           -c max_wal_senders=10           -c max_replication_slots=10           -c shared_buffers=${POSTGRES_SHARED_BUFFERS:-512MB}           -c work_mem=${POSTGRES_WORK_MEM:-4MB}
+        exec docker-entrypoint.sh "$$@"
+      - bash
+    command:
+      - postgres
+      - -c
+      - hot_standby=on
+      # Standby'ın bu üç değeri primary'den KÜÇÜK OLAMAZ; küçükse PostgreSQL
+      # kurtarmayı reddeder ve container crash-loop'a girer.
+      - -c
+      - max_connections=${POSTGRES_MAX_CONNECTIONS:-200}
+      - -c
+      - max_worker_processes=${POSTGRES_MAX_WORKERS:-8}
+      - -c
+      - max_locks_per_transaction=${POSTGRES_MAX_LOCKS:-64}
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_replication_slots=10
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-512MB}
+      - -c
+      - work_mem=${POSTGRES_WORK_MEM:-4MB}
+      - -c
+      - wal_level=replica
     depends_on:
       postgresql:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres || exit 1"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-root} || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -601,6 +669,7 @@ services:
     container_name: redis
     command: >
       redis-server
+      --replicaof ${REDIS_STANDBY_OF:-no} ${REDIS_STANDBY_PORT:-one}
       --requirepass ${REDIS_PASSWORD:-${DB_PASSWORD}}
       --masterauth ${REDIS_PASSWORD:-${DB_PASSWORD}}
       --appendonly ${REDIS_APPENDONLY:-yes}
@@ -669,11 +738,11 @@ services:
     container_name: redis-replica
     command: >
       redis-server
-      --replicaof redis 6379
+      --replicaof ${REDIS_REPLICA_STANDBY_OF:-redis} ${REDIS_REPLICA_STANDBY_PORT:-6379}
       --requirepass ${REDIS_PASSWORD:-${DB_PASSWORD}}
       --masterauth ${REDIS_PASSWORD:-${DB_PASSWORD}}
       --appendonly ${REDIS_APPENDONLY:-yes}
-      --replica-read-only yes
+      --replica-read-only ${REDIS_REPLICA_READ_ONLY:-yes}
       --maxmemory ${REDIS_MAXMEMORY:-384mb}
       --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
     volumes:

@@ -31,6 +31,7 @@ export STACK_ROOT
 
 ENV_FILE="${ENV_FILE:-$STACK_ROOT/.env}"
 TUNING_ENV="$STACK_ROOT/state/tuning.env"
+ROLES_ENV="$STACK_ROOT/state/roles.env"
 COMPOSE_FILE="$STACK_ROOT/docker-compose.yml"
 CATALOG="$STACK_ROOT/catalog.json"
 
@@ -133,6 +134,8 @@ acquire_lock() {
 compose() {
     local args=(--project-directory "$STACK_ROOT" -f "$COMPOSE_FILE" --env-file "$ENV_FILE")
     [ -f "$TUNING_ENV" ] && args+=(--env-file "$TUNING_ENV")
+    # roles.env replikasyon rollerini tutar (hangi düğüm primary).
+    [ -f "$ROLES_ENV" ] && args+=(--env-file "$ROLES_ENV")
     # Etkin override'lar (replikasyon vb.) state.json'da tutulur
     if [ -f "$STACK_ROOT/state/state.json" ] && command -v python3 >/dev/null 2>&1; then
         local ov

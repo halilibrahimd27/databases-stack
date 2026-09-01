@@ -310,6 +310,20 @@ ck("3306 artık yeni ana kopyaya yönleniyor",
    "default mariadb-replica:3306;" in routes2)
 ck("eski ana kopya yedek portundan (3307) erişilebilir",
    "listen 3307;" in routes2 and "default mariadb:3306;" in routes2)
+# Devirden sonra roller yer değiştirmeli. Servis tanımları sabit rol taşısaydı
+# eski primary'yi yedek olarak geri almak imkânsız olurdu (boş ikinci primary
+# olarak açılırdı).
+app.ROLES_ENV = "/tmp/dbstack-selftest/roles.env"
+app.write_roles()
+roles = open(app.ROLES_ENV, encoding="utf-8").read()
+ck("devir sonrası roller ters çevriliyor (rol dosyası)",
+   "POSTGRES_STANDBY_OF=postgresql-replica" in roles
+   and "POSTGRES_REPLICA_STANDBY_OF=
+" in roles + "
+")
+ck("MariaDB read_only rolü takip ediyor",
+   "MARIADB_READ_ONLY=ON" in roles and "MARIADB_REPLICA_READ_ONLY=OFF" in roles)
+
 evs = app.read_events()
 ck("devir kritik olay olarak kaydedildi",
    any(e["kind"] == "failover" and e["level"] == "critical" for e in evs))
