@@ -1,0 +1,1138 @@
+{
+  "version": 2,
+  "_comment": [
+    "MOTOR KATALOĞU — TEK YETKİ KAYNAĞI.",
+    "Bu dosyayı okuyanlar: gateway/html/app.js (dashboard kartları),",
+    "controller/app.py (aktivasyon izin listesi), backup.sh (hangi motor yedeklenir),",
+    "scripts/gen-k8s.py (K8s manifestleri), scripts/check-catalog.sh (tutarlılık testi).",
+    "Yeni bir motor eklemek = buraya bir kayıt + docker-compose.yml'e aynı profile'lı",
+    "servisler. check-catalog.sh ikisinin ayrışmadığını doğrular."
+  ],
+  "categories": {
+    "relational": "İlişkisel",
+    "document": "Doküman",
+    "keyvalue": "Key-Value",
+    "widecolumn": "Wide-Column",
+    "search": "Arama & Log",
+    "streaming": "Mesajlaşma & Streaming",
+    "analytics": "Analitik (OLAP)",
+    "graph": "Graph",
+    "object": "Nesne Depolama"
+  },
+  "engines": [
+    {
+      "id": "mariadb",
+      "name": "MariaDB",
+      "icon": "🐬",
+      "category": "relational",
+      "summary": "MySQL uyumlu ilişkisel veritabanı. Genel amaçlı OLTP.",
+      "profile": "mariadb",
+      "primary_service": "mariadb",
+      "services": [
+        "mariadb",
+        "phpmyadmin",
+        "mariadb-exporter"
+      ],
+      "client_ports": [
+        {
+          "port": 3306,
+          "proto": "tcp",
+          "label": "MySQL protokolü"
+        }
+      ],
+      "panel": {
+        "name": "phpMyAdmin",
+        "port": 8081,
+        "services": [
+          "phpmyadmin"
+        ]
+      },
+      "exporter": {
+        "service": "mariadb-exporter",
+        "metrics_path": "/metrics/mariadb"
+      },
+      "replication": {
+        "mode": "primary-replica",
+        "profile": "mariadb-replica",
+        "replica_service": "mariadb-replica",
+        "replica_port": 3307,
+        "note": "GTID tabanlı asenkron replikasyon. Replika read-only açılır."
+      },
+      "backup": {
+        "supported": true,
+        "kind": "logical",
+        "ext": "sql.gz"
+      },
+      "connection": {
+        "username": "root",
+        "database": "defaultdb",
+        "password_env": "MARIADB_PASSWORD"
+      },
+      "k8s": {
+        "image_env": "MARIADB_VERSION",
+        "data_path": "/var/lib/mysql",
+        "port": 3306
+      },
+      "resources": {
+        "min_mb": 512,
+        "share": 0.3,
+        "max_mb": 16384,
+        "overhead_mb": 320,
+        "panel_mb": 256,
+        "exporter_mb": 64,
+        "tuning": [
+          {
+            "env": "MARIADB_MEM_LIMIT",
+            "kind": "limit",
+            "fmt": "M"
+          },
+          {
+            "env": "MARIADB_BUFFER_POOL",
+            "kind": "fraction",
+            "factor": 0.6,
+            "min_mb": 128,
+            "fmt": "M"
+          },
+          {
+            "env": "MARIADB_LOG_FILE_SIZE",
+            "kind": "fraction",
+            "factor": 0.12,
+            "min_mb": 64,
+            "max_mb": 2048,
+            "fmt": "M"
+          },
+          {
+            "env": "MARIADB_MAX_CONNECTIONS",
+            "kind": "per_gb",
+            "factor": 125,
+            "min": 100,
+            "max": 1000,
+            "fmt": "int"
+          }
+        ]
+      },
+      "plain": {
+        "title": "Klasik tablolu veri için en yaygın seçim",
+        "detail": "Kullanıcılar, siparişler, ürünler gibi satır-sütun verisi. WordPress, Laravel, çoğu web uygulaması bunu ister.",
+        "badge": "En sık kullanılan"
+      },
+      "failover": {
+        "supported": true,
+        "mode": "supervised",
+        "promote_script": "mariadb",
+        "note": "Replika yükseltilir ve yazmaya açılır. Eski primary fence edilir (durdurulur) — iki primary'nin aynı anda yazması (split-brain) böyle engellenir."
+      },
+      "route": [
+        {
+          "listen": 3306,
+          "upstream_port": 3306
+        }
+      ]
+    },
+    {
+      "id": "postgresql",
+      "name": "PostgreSQL",
+      "icon": "🐘",
+      "category": "relational",
+      "summary": "Gelişmiş ilişkisel veritabanı. JSONB, GIS, full-text.",
+      "profile": "postgresql",
+      "primary_service": "postgresql",
+      "services": [
+        "postgresql",
+        "pgadmin",
+        "postgres-exporter"
+      ],
+      "client_ports": [
+        {
+          "port": 5432,
+          "proto": "tcp",
+          "label": "PostgreSQL protokolü"
+        }
+      ],
+      "panel": {
+        "name": "pgAdmin",
+        "port": 8082,
+        "services": [
+          "pgadmin"
+        ]
+      },
+      "exporter": {
+        "service": "postgres-exporter",
+        "metrics_path": "/metrics/postgresql"
+      },
+      "replication": {
+        "mode": "primary-replica",
+        "profile": "postgresql-replica",
+        "replica_service": "postgresql-replica",
+        "replica_port": 5433,
+        "note": "pg_basebackup + streaming replication. Replika hot-standby (okunabilir)."
+      },
+      "backup": {
+        "supported": true,
+        "kind": "logical",
+        "ext": "sql.gz"
+      },
+      "connection": {
+        "username": "root",
+        "database": "defaultdb",
+        "password_env": "POSTGRES_PASSWORD"
+      },
+      "k8s": {
+        "image_env": "POSTGRES_VERSION",
+        "data_path": "/var/lib/postgresql/data",
+        "port": 5432
+      },
+      "resources": {
+        "min_mb": 512,
+        "share": 0.2,
+        "max_mb": 8192,
+        "overhead_mb": 576,
+        "panel_mb": 512,
+        "exporter_mb": 64,
+        "tuning": [
+          {
+            "env": "POSTGRES_MEM_LIMIT",
+            "kind": "limit",
+            "fmt": "M"
+          },
+          {
+            "env": "POSTGRES_SHARED_BUFFERS",
+            "kind": "fraction",
+            "factor": 0.25,
+            "min_mb": 128,
+            "fmt": "MB"
+          },
+          {
+            "env": "POSTGRES_EFFECTIVE_CACHE",
+            "kind": "fraction",
+            "factor": 0.6,
+            "min_mb": 256,
+            "fmt": "MB"
+          },
+          {
+            "env": "POSTGRES_MAX_CONNECTIONS",
+            "kind": "per_gb",
+            "factor": 100,
+            "min": 50,
+            "max": 400,
+            "fmt": "int"
+          },
+          {
+            "env": "POSTGRES_WORK_MEM",
+            "kind": "workmem",
+            "fmt": "MB"
+          }
+        ]
+      },
+      "plain": {
+        "title": "Tablolu veri + gelişmiş özellikler",
+        "detail": "MariaDB ile aynı işi yapar; JSON, harita/konum verisi ve karmaşık sorgularda daha güçlüdür.",
+        "badge": "En sık kullanılan"
+      },
+      "failover": {
+        "supported": true,
+        "mode": "supervised",
+        "promote_script": "postgresql",
+        "note": "Standby pg_ctl promote ile primary olur. Eski primary fence edilir; geri döndüğünde otomatik primary OLMAZ, replika olarak yeniden kurulur."
+      },
+      "route": [
+        {
+          "listen": 5432,
+          "upstream_port": 5432
+        }
+      ]
+    },
+    {
+      "id": "mongodb",
+      "name": "MongoDB",
+      "icon": "🍃",
+      "category": "document",
+      "summary": "Doküman veritabanı. Şemasız JSON/BSON kayıtlar.",
+      "profile": "mongodb",
+      "primary_service": "mongodb",
+      "services": [
+        "mongodb",
+        "mongo-express",
+        "mongodb-exporter"
+      ],
+      "client_ports": [
+        {
+          "port": 27017,
+          "proto": "tcp",
+          "label": "MongoDB protokolü"
+        }
+      ],
+      "panel": {
+        "name": "Mongo Express",
+        "port": 8083,
+        "services": [
+          "mongo-express"
+        ]
+      },
+      "exporter": {
+        "service": "mongodb-exporter",
+        "metrics_path": "/metrics/mongodb"
+      },
+      "replication": {
+        "mode": "replica-set",
+        "profile": "mongodb-replica",
+        "replica_service": "mongodb-replica-1",
+        "replica_port": 27018,
+        "note": "Replica set (rs0). Primary de --replSet ile yeniden başlar — kesinti olur.",
+        "extra_services": [
+          "mongodb-arbiter"
+        ]
+      },
+      "backup": {
+        "supported": true,
+        "kind": "dump",
+        "ext": "tar.gz"
+      },
+      "connection": {
+        "username": "root",
+        "database": "admin",
+        "password_env": "MONGO_PASSWORD"
+      },
+      "k8s": {
+        "image_env": "MONGO_VERSION",
+        "data_path": "/data/db",
+        "port": 27017
+      },
+      "resources": {
+        "min_mb": 512,
+        "share": 0.2,
+        "max_mb": 8192,
+        "overhead_mb": 320,
+        "panel_mb": 256,
+        "exporter_mb": 64,
+        "tuning": [
+          {
+            "env": "MONGO_MEM_LIMIT",
+            "kind": "limit",
+            "fmt": "M"
+          },
+          {
+            "env": "MONGO_WIREDTIGER_CACHE_GB",
+            "kind": "fraction",
+            "factor": 0.5,
+            "min_mb": 256,
+            "fmt": "G_half"
+          }
+        ]
+      },
+      "plain": {
+        "title": "Sabit şeması olmayan kayıtlar için",
+        "detail": "Her kaydın alanları farklı olabilir. Ürün katalogları, form yanıtları, IoT kayıtları gibi değişken veriler.",
+        "badge": null
+      },
+      "failover": {
+        "supported": true,
+        "mode": "native",
+        "promote_script": null,
+        "note": "MongoDB kendi seçimini yapar. Çoğunluk gerektiği için 3. üye olarak bir arbiter eklenir — 2 üyeyle biri düşünce çoğunluk kaybolur ve seçim yapılamaz."
+      },
+      "route": [
+        {
+          "listen": 27017,
+          "upstream_port": 27017
+        }
+      ]
+    },
+    {
+      "id": "redis",
+      "name": "Redis",
+      "icon": "🔴",
+      "category": "keyvalue",
+      "summary": "In-memory key-value store. Cache, kuyruk, oturum.",
+      "profile": "redis",
+      "primary_service": "redis",
+      "services": [
+        "redis",
+        "redis-insight",
+        "redis-exporter"
+      ],
+      "client_ports": [
+        {
+          "port": 6379,
+          "proto": "tcp",
+          "label": "RESP protokolü"
+        }
+      ],
+      "panel": {
+        "name": "RedisInsight",
+        "port": 8084,
+        "services": [
+          "redis-insight"
+        ]
+      },
+      "exporter": {
+        "service": "redis-exporter",
+        "metrics_path": "/metrics/redis"
+      },
+      "replication": {
+        "mode": "primary-replica",
+        "profile": "redis-replica",
+        "replica_service": "redis-replica",
+        "replica_port": 6380,
+        "note": "replicaof ile anlık. Kesinti yok, replika read-only."
+      },
+      "backup": {
+        "supported": true,
+        "kind": "snapshot",
+        "ext": "rdb.gz"
+      },
+      "connection": {
+        "username": "default",
+        "database": "0",
+        "password_env": "REDIS_PASSWORD"
+      },
+      "k8s": {
+        "image_env": "REDIS_VERSION",
+        "data_path": "/data",
+        "port": 6379
+      },
+      "resources": {
+        "min_mb": 128,
+        "share": 0.1,
+        "max_mb": 4096,
+        "overhead_mb": 320,
+        "panel_mb": 256,
+        "exporter_mb": 64,
+        "tuning": [
+          {
+            "env": "REDIS_MEM_LIMIT",
+            "kind": "limit",
+            "fmt": "M"
+          },
+          {
+            "env": "REDIS_MAXMEMORY",
+            "kind": "fraction",
+            "factor": 0.65,
+            "min_mb": 64,
+            "fmt": "mb"
+          }
+        ]
+      },
+      "plain": {
+        "title": "Hız için geçici bellek deposu",
+        "detail": "Kalıcı veri deposu değildir. Oturum bilgisi, önbellek ve iş kuyruğu için kullanılır; uygulamayı belirgin hızlandırır.",
+        "badge": "Genelde başka bir DB ile birlikte"
+      },
+      "failover": {
+        "supported": true,
+        "mode": "supervised",
+        "promote_script": "redis",
+        "note": "REPLICAOF NO ONE ile replika primary olur. Redis Sentinel'e gerek kalmaz; aynı işi controller yapar."
+      },
+      "route": [
+        {
+          "listen": 6379,
+          "upstream_port": 6379
+        }
+      ]
+    },
+    {
+      "id": "mssql",
+      "name": "SQL Server",
+      "icon": "🟥",
+      "category": "relational",
+      "summary": "Microsoft SQL Server 2022 Developer. T-SQL iş yükleri.",
+      "profile": "mssql",
+      "primary_service": "mssql",
+      "services": [
+        "mssql"
+      ],
+      "client_ports": [
+        {
+          "port": 1433,
+          "proto": "tcp",
+          "label": "TDS protokolü"
+        }
+      ],
+      "panel": {
+        "name": "Adminer",
+        "port": 8085,
+        "path": "/?mssql=mssql&username=sa&db=master",
+        "shared": true
+      },
+      "exporter": null,
+      "replication": {
+        "mode": "unsupported",
+        "note": "Always On AG tek container'da kurulamaz; ayrı node'lar + Enterprise/Developer cluster gerekir."
+      },
+      "backup": {
+        "supported": true,
+        "kind": "native",
+        "ext": "tar.gz"
+      },
+      "connection": {
+        "username": "sa",
+        "database": "master",
+        "password_env": "MSSQL_PASSWORD"
+      },
+      "k8s": {
+        "image_env": "MSSQL_VERSION",
+        "data_path": "/var/opt/mssql",
+        "port": 1433
+      },
+      "resources": {
+        "min_mb": 2048,
+        "share": 0.3,
+        "max_mb": 16384,
+        "overhead_mb": 0,
+        "panel_mb": 0,
+        "exporter_mb": 0,
+        "tuning": [
+          {
+            "env": "MSSQL_MEM_LIMIT",
+            "kind": "limit",
+            "fmt": "M"
+          },
+          {
+            "env": "MSSQL_MEMORY_LIMIT_MB",
+            "kind": "fraction",
+            "factor": 0.8,
+            "min_mb": 1024,
+            "fmt": "int_mb"
+          }
+        ]
+      },
+      "plain": {
+        "title": "Microsoft dünyası uygulamaları için",
+        "detail": ".NET / Windows tabanlı kurumsal uygulamalar genelde bunu ister. Diğerlerinden daha çok RAM tüketir.",
+        "badge": null
+      },
+      "failover": {
+        "supported": false,
+        "mode": "none",
+        "promote_script": null,
+        "note": "Always On AG ayrı node'lar ve Windows/Linux cluster ister; tek makinede kurulamaz."
+      },
+      "route": [
+        {
+          "listen": 1433,
+          "upstream_port": 1433
+        }
+      ]
+    },
+    {
+      "id": "cassandra",
+      "name": "Cassandra",
+      "icon": "🌀",
+      "category": "widecolumn",
+      "summary": "Dağıtık wide-column store. Yüksek yazma hacmi, lineer ölçek.",
+      "profile": "cassandra",
+      "primary_service": "cassandra",
+      "services": [
+        "cassandra",
+        "cassandra-exporter"
+      ],
+      "client_ports": [
+        {
+          "port": 9042,
+          "proto": "tcp",
+          "label": "CQL native"
+        }
+      ],
+      "panel": null,
+      "exporter": {
+        "service": "cassandra-exporter",
+        "metrics_path": "/metrics/cassandra"
+      },
+      "replication": {
+        "mode": "native-cluster",
+        "note": "Cassandra'da primary/replica yoktur; keyspace başına replication_factor ile node ekleyerek ölçeklenir."
+      },
+      "backup": {
+        "supported": true,
+        "kind": "snapshot",
+        "ext": "tar.gz"
+      },
+      "connection": {
+        "username": "cassandra",
+        "database": "system",
+        "password_env": "CASSANDRA_PASSWORD"
+      },
+      "k8s": {
+        "image_env": "CASSANDRA_VERSION",
+        "data_path": "/var/lib/cassandra",
+        "port": 9042
+      },
+      "resources": {
+        "min_mb": 1024,
+        "share": 0.2,
+        "max_mb": 8192,
+        "overhead_mb": 128,
+        "panel_mb": 0,
+        "exporter_mb": 128,
+        "tuning": [
+          {
+            "env": "CASSANDRA_MEM_LIMIT",
+            "kind": "limit",
+            "fmt": "M"
+          },
+          {
+            "env": "CASSANDRA_HEAP",
+            "kind": "fraction",
+            "factor": 0.5,
+            "min_mb": 256,
+            "max_mb": 8192,
+            "fmt": "M"
+          },
+          {
+            "env": "CASSANDRA_HEAP_NEW",
+            "kind": "fraction",
+            "factor": 0.12,
+            "min_mb": 100,
+            "max_mb": 2048,
+            "fmt": "M"
+          }
+        ]
+      },
+      "plain": {
+        "title": "Çok yüksek yazma hacmi için",
+        "detail": "Saniyede on binlerce kayıt yazan sistemler (sensör, tıklama, log). Küçük projeler için gereğinden ağırdır.",
+        "badge": null
+      },
+      "failover": {
+        "supported": false,
+        "mode": "none",
+        "promote_script": null,
+        "note": "Cassandra'da primary yoktur; her node eşittir. Dayanıklılık replication_factor ile sağlanır."
+      },
+      "route": [
+        {
+          "listen": 9042,
+          "upstream_port": 9042
+        }
+      ]
+    },
+    {
+      "id": "elasticsearch",
+      "name": "Elasticsearch",
+      "icon": "🔎",
+      "category": "search",
+      "summary": "Arama ve log analitiği motoru. Kibana ile birlikte gelir.",
+      "profile": "elasticsearch",
+      "primary_service": "elasticsearch",
+      "services": [
+        "elasticsearch",
+        "elasticsearch-init",
+        "kibana",
+        "elasticsearch-exporter"
+      ],
+      "client_ports": [
+        {
+          "port": 9200,
+          "proto": "tcp",
+          "label": "REST API"
+        }
+      ],
+      "panel": {
+        "name": "Kibana",
+        "port": 8086,
+        "services": [
+          "kibana",
+          "elasticsearch-init"
+        ]
+      },
+      "exporter": {
+        "service": "elasticsearch-exporter",
+        "metrics_path": "/metrics/elasticsearch"
+      },
+      "replication": {
+        "mode": "native-cluster",
+        "note": "Index başına number_of_replicas ile. Tek node'da replika ataması yapılamaz (yellow health normaldir)."
+      },
+      "backup": {
+        "supported": true,
+        "kind": "snapshot",
+        "ext": "tar.gz"
+      },
+      "connection": {
+        "username": "elastic",
+        "database": "-",
+        "password_env": "ELASTIC_PASSWORD"
+      },
+      "k8s": {
+        "image_env": "ELASTIC_VERSION",
+        "data_path": "/usr/share/elasticsearch/data",
+        "port": 9200
+      },
+      "resources": {
+        "min_mb": 1024,
+        "share": 0.25,
+        "max_mb": 16384,
+        "overhead_mb": 1088,
+        "panel_mb": 1024,
+        "exporter_mb": 64,
+        "tuning": [
+          {
+            "env": "ELASTIC_MEM_LIMIT",
+            "kind": "limit",
+            "fmt": "M"
+          },
+          {
+            "env": "ELASTIC_JAVA_OPTS",
+            "kind": "fraction",
+            "factor": 0.5,
+            "min_mb": 512,
+            "max_mb": 31744,
+            "fmt": "java"
+          }
+        ]
+      },
+      "plain": {
+        "title": "Arama ve log incelemesi için",
+        "detail": "Site içi arama kutusu, ya da uygulama loglarını toplayıp Kibana'da grafikle inceleme. Yanında Kibana arayüzü gelir.",
+        "badge": null
+      },
+      "failover": {
+        "supported": false,
+        "mode": "none",
+        "promote_script": null,
+        "note": "Shard'ların primary/replica ataması küme içinde otomatiktir; tek node'da yapacak bir şey yoktur."
+      },
+      "route": [
+        {
+          "listen": 9200,
+          "upstream_port": 9200
+        }
+      ]
+    },
+    {
+      "id": "kafka",
+      "name": "Apache Kafka",
+      "icon": "📨",
+      "category": "streaming",
+      "summary": "Dağıtık event streaming platformu (KRaft, Zookeeper'sız).",
+      "profile": "kafka",
+      "primary_service": "kafka",
+      "services": [
+        "kafka",
+        "kafka-ui",
+        "kafka-exporter"
+      ],
+      "client_ports": [
+        {
+          "port": 9092,
+          "proto": "tcp",
+          "label": "Kafka protokolü"
+        }
+      ],
+      "panel": {
+        "name": "Kafka UI",
+        "port": 8087,
+        "services": [
+          "kafka-ui"
+        ]
+      },
+      "exporter": {
+        "service": "kafka-exporter",
+        "metrics_path": "/metrics/kafka"
+      },
+      "replication": {
+        "mode": "native-cluster",
+        "note": "Topic başına replication.factor ile. Tek broker'da RF=1 sınırı vardır."
+      },
+      "backup": {
+        "supported": false,
+        "note": "Kafka bir log'dur, veritabanı değil — yedek yerine RF ve retention politikası kullanılır."
+      },
+      "connection": {
+        "username": "-",
+        "database": "-",
+        "password_env": null
+      },
+      "k8s": {
+        "image_env": "KAFKA_VERSION",
+        "data_path": "/var/lib/kafka/data",
+        "port": 9092
+      },
+      "resources": {
+        "min_mb": 768,
+        "share": 0.15,
+        "max_mb": 4096,
+        "overhead_mb": 576,
+        "panel_mb": 512,
+        "exporter_mb": 64,
+        "tuning": [
+          {
+            "env": "KAFKA_MEM_LIMIT",
+            "kind": "limit",
+            "fmt": "M"
+          },
+          {
+            "env": "KAFKA_HEAP_OPTS",
+            "kind": "fraction",
+            "factor": 0.5,
+            "min_mb": 256,
+            "max_mb": 4096,
+            "fmt": "java"
+          }
+        ]
+      },
+      "plain": {
+        "title": "Servisler arası olay akışı için",
+        "detail": "Bir sistemin ürettiği olayları başka sistemlerin sırayla tüketmesi. Mikroservis mimarilerinde yaygındır.",
+        "badge": null
+      },
+      "failover": {
+        "supported": false,
+        "mode": "none",
+        "promote_script": null,
+        "note": "Partition lider seçimi KRaft controller'ın işidir; tek broker'da devreye girmez."
+      },
+      "route": [
+        {
+          "listen": 9092,
+          "upstream_port": 29092
+        }
+      ]
+    },
+    {
+      "id": "rabbitmq",
+      "name": "RabbitMQ",
+      "icon": "🐰",
+      "category": "streaming",
+      "summary": "AMQP mesaj kuyruğu. Klasik iş kuyruğu senaryoları.",
+      "profile": "rabbitmq",
+      "primary_service": "rabbitmq",
+      "services": [
+        "rabbitmq"
+      ],
+      "client_ports": [
+        {
+          "port": 5672,
+          "proto": "tcp",
+          "label": "AMQP 0-9-1"
+        }
+      ],
+      "panel": {
+        "name": "RabbitMQ Management",
+        "port": 8088
+      },
+      "exporter": {
+        "service": "rabbitmq",
+        "metrics_path": "/metrics/rabbitmq",
+        "builtin": true
+      },
+      "replication": {
+        "mode": "native-cluster",
+        "note": "Quorum queue + cluster ile. Tek node'da HA yoktur."
+      },
+      "backup": {
+        "supported": true,
+        "kind": "definitions",
+        "ext": "json.gz"
+      },
+      "connection": {
+        "username": "admin",
+        "database": "/",
+        "password_env": "RABBITMQ_PASSWORD"
+      },
+      "k8s": {
+        "image_env": "RABBITMQ_VERSION",
+        "data_path": "/var/lib/rabbitmq",
+        "port": 5672
+      },
+      "resources": {
+        "min_mb": 384,
+        "share": 0.1,
+        "max_mb": 2048,
+        "overhead_mb": 0,
+        "panel_mb": 0,
+        "exporter_mb": 0,
+        "tuning": [
+          {
+            "env": "RABBITMQ_MEM_LIMIT",
+            "kind": "limit",
+            "fmt": "M"
+          }
+        ]
+      },
+      "plain": {
+        "title": "Basit iş kuyruğu için",
+        "detail": "\"Bu e-postayı arka planda gönder\" tarzı işler. Kafka'dan çok daha basit; çoğu proje için yeterlidir.",
+        "badge": "Kafka'ya göre daha kolay"
+      },
+      "failover": {
+        "supported": false,
+        "mode": "none",
+        "promote_script": null,
+        "note": "Quorum queue ve cluster gerektirir."
+      },
+      "route": [
+        {
+          "listen": 5672,
+          "upstream_port": 5672
+        }
+      ]
+    },
+    {
+      "id": "clickhouse",
+      "name": "ClickHouse",
+      "icon": "📊",
+      "category": "analytics",
+      "summary": "Kolon tabanlı OLAP veritabanı. Milyar satırda saniyealtı sorgu.",
+      "profile": "clickhouse",
+      "primary_service": "clickhouse",
+      "services": [
+        "clickhouse"
+      ],
+      "client_ports": [
+        {
+          "port": 8123,
+          "proto": "tcp",
+          "label": "HTTP arayüzü"
+        },
+        {
+          "port": 9000,
+          "proto": "tcp",
+          "label": "Native protokol"
+        }
+      ],
+      "panel": {
+        "name": "ClickHouse Play",
+        "port": 8091
+      },
+      "exporter": {
+        "service": "clickhouse",
+        "metrics_path": "/metrics/clickhouse",
+        "builtin": true
+      },
+      "replication": {
+        "mode": "native-cluster",
+        "note": "ReplicatedMergeTree + ClickHouse Keeper gerektirir; tek node'da kapalıdır."
+      },
+      "backup": {
+        "supported": true,
+        "kind": "logical",
+        "ext": "sql.gz"
+      },
+      "connection": {
+        "username": "default",
+        "database": "default",
+        "password_env": "CLICKHOUSE_PASSWORD"
+      },
+      "k8s": {
+        "image_env": "CLICKHOUSE_VERSION",
+        "data_path": "/var/lib/clickhouse",
+        "port": 9000
+      },
+      "resources": {
+        "min_mb": 512,
+        "share": 0.25,
+        "max_mb": 16384,
+        "overhead_mb": 0,
+        "panel_mb": 0,
+        "exporter_mb": 0,
+        "tuning": [
+          {
+            "env": "CLICKHOUSE_MEM_LIMIT",
+            "kind": "limit",
+            "fmt": "M"
+          },
+          {
+            "env": "CLICKHOUSE_MAX_MEMORY",
+            "kind": "fraction",
+            "factor": 0.8,
+            "min_mb": 256,
+            "fmt": "bytes"
+          }
+        ]
+      },
+      "plain": {
+        "title": "Rapor ve analiz sorguları için",
+        "detail": "Milyonlarca satır üzerinde toplam/ortalama alan raporlar. Günlük uygulama verisi için değil, analiz için.",
+        "badge": null
+      },
+      "failover": {
+        "supported": false,
+        "mode": "none",
+        "promote_script": null,
+        "note": "ReplicatedMergeTree + ClickHouse Keeper gerektirir."
+      },
+      "route": [
+        {
+          "listen": 8123,
+          "upstream_port": 8123
+        },
+        {
+          "listen": 9000,
+          "upstream_port": 9000
+        }
+      ]
+    },
+    {
+      "id": "neo4j",
+      "name": "Neo4j",
+      "icon": "🕸️",
+      "category": "graph",
+      "summary": "Graph veritabanı. İlişki ağırlıklı sorgular (Cypher).",
+      "profile": "neo4j",
+      "primary_service": "neo4j",
+      "services": [
+        "neo4j"
+      ],
+      "client_ports": [
+        {
+          "port": 7687,
+          "proto": "tcp",
+          "label": "Bolt protokolü"
+        }
+      ],
+      "panel": {
+        "name": "Neo4j Browser",
+        "port": 8090
+      },
+      "exporter": null,
+      "replication": {
+        "mode": "unsupported",
+        "note": "Causal cluster yalnızca Neo4j Enterprise'da vardır; Community tek node çalışır."
+      },
+      "backup": {
+        "supported": true,
+        "kind": "dump",
+        "ext": "dump.gz"
+      },
+      "connection": {
+        "username": "neo4j",
+        "database": "neo4j",
+        "password_env": "NEO4J_PASSWORD"
+      },
+      "k8s": {
+        "image_env": "NEO4J_VERSION",
+        "data_path": "/data",
+        "port": 7687
+      },
+      "resources": {
+        "min_mb": 768,
+        "share": 0.2,
+        "max_mb": 8192,
+        "overhead_mb": 0,
+        "panel_mb": 0,
+        "exporter_mb": 0,
+        "tuning": [
+          {
+            "env": "NEO4J_MEM_LIMIT",
+            "kind": "limit",
+            "fmt": "M"
+          },
+          {
+            "env": "NEO4J_HEAP",
+            "kind": "fraction",
+            "factor": 0.4,
+            "min_mb": 256,
+            "fmt": "m"
+          },
+          {
+            "env": "NEO4J_PAGECACHE",
+            "kind": "fraction",
+            "factor": 0.35,
+            "min_mb": 128,
+            "fmt": "m"
+          }
+        ]
+      },
+      "plain": {
+        "title": "İlişki ağırlıklı veri için",
+        "detail": "\"Kimin arkadaşının arkadaşı\", öneri motorları, dolandırıcılık tespiti gibi bağlantı sorguları.",
+        "badge": null
+      },
+      "failover": {
+        "supported": false,
+        "mode": "none",
+        "promote_script": null,
+        "note": "Causal cluster yalnız Enterprise'da vardır."
+      },
+      "route": [
+        {
+          "listen": 7687,
+          "upstream_port": 7687
+        }
+      ]
+    },
+    {
+      "id": "minio",
+      "name": "MinIO",
+      "icon": "🪣",
+      "category": "object",
+      "summary": "S3 uyumlu nesne depolama. Dosya/medya/yedek deposu.",
+      "profile": "minio",
+      "primary_service": "minio",
+      "services": [
+        "minio"
+      ],
+      "client_ports": [
+        {
+          "port": 9002,
+          "proto": "tcp",
+          "label": "S3 API"
+        }
+      ],
+      "panel": {
+        "name": "MinIO Console",
+        "port": 8089
+      },
+      "exporter": {
+        "service": "minio",
+        "metrics_path": "/metrics/minio",
+        "builtin": true
+      },
+      "replication": {
+        "mode": "native-cluster",
+        "note": "Distributed mode en az 4 disk/node ister; tek node erasure-code'suz çalışır."
+      },
+      "backup": {
+        "supported": true,
+        "kind": "mirror",
+        "ext": "tar.gz"
+      },
+      "connection": {
+        "username": "minioadmin",
+        "database": "-",
+        "password_env": "MINIO_ROOT_PASSWORD"
+      },
+      "k8s": {
+        "image_env": "MINIO_VERSION",
+        "data_path": "/data",
+        "port": 9000
+      },
+      "resources": {
+        "min_mb": 256,
+        "share": 0.05,
+        "max_mb": 2048,
+        "overhead_mb": 0,
+        "panel_mb": 0,
+        "exporter_mb": 0,
+        "tuning": [
+          {
+            "env": "MINIO_MEM_LIMIT",
+            "kind": "limit",
+            "fmt": "M"
+          }
+        ]
+      },
+      "plain": {
+        "title": "Dosya ve görsel depolama",
+        "detail": "Amazon S3'ün kendi sunucunuzdaki karşılığı. Yüklenen dosyaları veritabanı yerine burada tutun.",
+        "badge": null
+      },
+      "failover": {
+        "supported": false,
+        "mode": "none",
+        "promote_script": null,
+        "note": "Distributed mode en az 4 disk ister; tek node'da erasure coding yoktur."
+      },
+      "route": [
+        {
+          "listen": 9002,
+          "upstream_port": 9000
+        }
+      ]
+    }
+  ],
+  "_sizing_note": "resources.* alanlarını controller/app.py okur. Aktivasyonda: bütçe = toplam RAM - OS payı - çekirdek servisler - zaten açık motorların taahhüdü. min_mb + overhead_mb bütçeye sığmıyorsa aktivasyon REDDEDİLİR. Sığıyorsa limit = clamp(toplam*share, min_mb, max_mb, bütçe) ve tuning kuralları bu limitten türetilip state/tuning.env'e yazılır.",
+  "_failover_note": "Otomatik failover tek makinede SÜREÇ/CONTAINER arızasına karşı korur; host'un tamamı düşerse iki kopya da düşer (aynı arıza alanı). Gerçek host arızası koruması için replikayı ikinci bir makinede çalıştırın — docs/FAILOVER.md."
+}

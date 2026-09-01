@@ -1,0 +1,64 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongodb
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: mongodb, app.kubernetes.io/part-of: databases-stack}
+spec:
+  # replicas: 0 → motor KAPALI. Dashboard'daki "Aktif Et" bunu 1 yapar.
+  replicas: 0
+  serviceName: mongodb
+  selector:
+    matchLabels: {app.kubernetes.io/name: mongodb}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: mongodb}
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: mongodb
+        image: mongo:7.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: client
+          containerPort: 27017
+        env:
+        - name: MONGO_INITDB_ROOT_USERNAME
+          value: "root"
+        - name: MONGO_INITDB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: MONGO_PASSWORD
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+        volumeMounts:
+        - name: data
+          mountPath: /data/db
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: mongodb}
+spec:
+  selector: {app.kubernetes.io/name: mongodb}
+  ports:
+  - name: mongodb
+    port: 27017
+    targetPort: 27017

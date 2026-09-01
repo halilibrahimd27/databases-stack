@@ -1,0 +1,17 @@
+<clickhouse>
+    <!-- ClickHouse'un yerel BACKUP komutu için hedef disk. Bu olmadan
+         `BACKUP DATABASE x TO Disk('backups', ...)` çalışmaz; ClickHouse'ta
+         mantıksal dump (mysqldump benzeri) yoktur, doğru yol budur. -->
+    <storage_configuration>
+        <disks>
+            <backups>
+                <type>local</type>
+                <path>/var/lib/clickhouse/backups/</path>
+            </backups>
+        </disks>
+    </storage_configuration>
+    <backups>
+        <allowed_disk>backups</allowed_disk>
+        <allowed_path>/var/lib/clickhouse/backups/</allowed_path>
+    </backups>
+</clickhouse>

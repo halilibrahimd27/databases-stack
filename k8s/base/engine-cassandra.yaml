@@ -1,0 +1,67 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: cassandra
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: cassandra, app.kubernetes.io/part-of: databases-stack}
+spec:
+  # replicas: 0 → motor KAPALI. Dashboard'daki "Aktif Et" bunu 1 yapar.
+  replicas: 0
+  serviceName: cassandra
+  selector:
+    matchLabels: {app.kubernetes.io/name: cassandra}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: cassandra}
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: cassandra
+        image: cassandra:5.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: client
+          containerPort: 9042
+        env:
+        - name: CASSANDRA_CLUSTER_NAME
+          value: "databases-stack"
+        - name: CASSANDRA_AUTHENTICATOR
+          value: "PasswordAuthenticator"
+        - name: CASSANDRA_AUTHORIZER
+          value: "CassandraAuthorizer"
+        - name: MAX_HEAP_SIZE
+          value: "1G"
+        - name: HEAP_NEWSIZE
+          value: "256M"
+        resources:
+          requests:
+            memory: "1024Mi"
+            cpu: "100m"
+          limits:
+            memory: "1024Mi"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/cassandra
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 30Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cassandra
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: cassandra}
+spec:
+  selector: {app.kubernetes.io/name: cassandra}
+  ports:
+  - name: cql
+    port: 9042
+    targetPort: 9042

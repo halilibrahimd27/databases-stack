@@ -1,0 +1,39 @@
+# =============================================================================
+# databases-stack — zamanlanmış görevler
+# =============================================================================
+# Bu bir ŞABLONDUR. install.sh gerçek yolları yerleştirip state/crontab olarak
+# üretir; yüklemek için:   crontab state/crontab
+#
+# NEDEN GÜNDE BİR TAM YEDEK (15 dakikada bir DEĞİL):
+# Yedekler veritabanı container'ının İÇİNDE alınır ve dump'ın bellek tüketimi
+# o container'ın kendi cgroup'una yazılır. 15 dakikada bir tam yedek MariaDB'yi
+# tekrar tekrar CONSTRAINT_MEMCG OOM ile öldürdü (container 172 kez yeniden
+# başladı). Daha sık kurtarma noktası gerekiyorsa dump yerine binlog/PITR
+# kullanın — MariaDB'de binlog artık açık (config/mariadb/my.cnf).
+# =============================================================================
+
+# Ortam: cron'un PATH'i dardır; docker genelde /usr/bin'dedir ama garanti olsun.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+SHELL=/bin/bash
+
+# 02:00 — aktif motorların tam yedeği (kapalı motorlar atlanır)
+0 2 * * * __STACK_DIR__/scripts/backup.sh all >> __STACK_DIR__/logs/cron_backup.log 2>&1
+
+# 02:30 — uzak depoya gönder (yedek bittikten sonra; .env'de açıksa)
+30 2 * * * __STACK_DIR__/scripts/sync-remote.sh >> __STACK_DIR__/logs/cron_sync.log 2>&1
+
+# 03:00 — RETENTION_DAYS'ten eski yerel yedekleri sil
+0 3 * * * __STACK_DIR__/scripts/backup.sh clean >> __STACK_DIR__/logs/cron_clean.log 2>&1
+
+# 08:00 — günlük istatistik raporu
+0 8 * * * __STACK_DIR__/scripts/backup.sh stats >> __STACK_DIR__/logs/cron_stats.log 2>&1
+
+# Pazar 03:30 — 14 günden eski logları temizle
+30 3 * * 0 find __STACK_DIR__/logs -name "*.log" -mtime +14 -delete 2>/dev/null
+
+# Pazar 04:00 — TLS sertifikası 30 günden az kaldıysa yenile (CA aynı kalır,
+# istemcilere yeniden kurdurmaz)
+0 4 * * 0 openssl x509 -checkend 2592000 -noout -in __STACK_DIR__/certs/server.crt || (__STACK_DIR__/scripts/gen-certs.sh && docker restart gateway) >> __STACK_DIR__/logs/cron_certs.log 2>&1
+
+# İsteğe bağlı — disk uyarısı (e-posta kurulu ise yorumu kaldırın)
+# 0 */6 * * * df -Ph __STACK_DIR__ | awk 'NR==2 && int($5) > 85 {print "DISK UYARI: "$5}' | mail -s "databases-stack disk" admin@example.com

@@ -1,0 +1,69 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clickhouse
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: clickhouse, app.kubernetes.io/part-of: databases-stack}
+spec:
+  # replicas: 0 → motor KAPALI. Dashboard'daki "Aktif Et" bunu 1 yapar.
+  replicas: 0
+  serviceName: clickhouse
+  selector:
+    matchLabels: {app.kubernetes.io/name: clickhouse}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: clickhouse}
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: clickhouse
+        image: clickhouse/clickhouse-server:24.8
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: client
+          containerPort: 9000
+        env:
+        - name: CLICKHOUSE_USER
+          value: "default"
+        - name: CLICKHOUSE_DB
+          value: "defaultdb"
+        - name: CLICKHOUSE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: CLICKHOUSE_PASSWORD
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/clickhouse
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 30Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clickhouse
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: clickhouse}
+spec:
+  selector: {app.kubernetes.io/name: clickhouse}
+  ports:
+  - name: http
+    port: 8123
+    targetPort: 8123
+  - name: native
+    port: 9000
+    targetPort: 9000

@@ -1,0 +1,64 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mariadb
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: mariadb, app.kubernetes.io/part-of: databases-stack}
+spec:
+  # replicas: 0 → motor KAPALI. Dashboard'daki "Aktif Et" bunu 1 yapar.
+  replicas: 0
+  serviceName: mariadb
+  selector:
+    matchLabels: {app.kubernetes.io/name: mariadb}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: mariadb}
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: mariadb
+        image: mariadb:11.4
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: client
+          containerPort: 3306
+        env:
+        - name: MARIADB_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: MARIADB_PASSWORD
+        - name: MARIADB_DATABASE
+          value: "defaultdb"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mariadb
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: mariadb}
+spec:
+  selector: {app.kubernetes.io/name: mariadb}
+  ports:
+  - name: mysql
+    port: 3306
+    targetPort: 3306

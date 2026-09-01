@@ -1,0 +1,69 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minio
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: minio, app.kubernetes.io/part-of: databases-stack}
+spec:
+  # replicas: 0 → motor KAPALI. Dashboard'daki "Aktif Et" bunu 1 yapar.
+  replicas: 0
+  serviceName: minio
+  selector:
+    matchLabels: {app.kubernetes.io/name: minio}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: minio}
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: minio
+        image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: client
+          containerPort: 9000
+        args:
+        - "server"
+        - "/data"
+        - "--console-address"
+        - ":9001"
+        env:
+        - name: MINIO_ROOT_USER
+          value: "minioadmin"
+        - name: MINIO_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: MINIO_ROOT_PASSWORD
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 50Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: minio}
+spec:
+  selector: {app.kubernetes.io/name: minio}
+  ports:
+  - name: s3
+    port: 9002
+    targetPort: 9002

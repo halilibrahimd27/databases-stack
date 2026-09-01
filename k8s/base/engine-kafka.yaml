@@ -1,0 +1,79 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: kafka, app.kubernetes.io/part-of: databases-stack}
+spec:
+  # replicas: 0 → motor KAPALI. Dashboard'daki "Aktif Et" bunu 1 yapar.
+  replicas: 0
+  serviceName: kafka
+  selector:
+    matchLabels: {app.kubernetes.io/name: kafka}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: kafka}
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: kafka
+        image: apache/kafka:3.9.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: client
+          containerPort: 9092
+        env:
+        - name: KAFKA_NODE_ID
+          value: "1"
+        - name: KAFKA_PROCESS_ROLES
+          value: "broker,controller"
+        - name: KAFKA_LISTENERS
+          value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+        - name: KAFKA_ADVERTISED_LISTENERS
+          value: "PLAINTEXT://kafka:9092"
+        - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+          value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+        - name: KAFKA_CONTROLLER_LISTENER_NAMES
+          value: "CONTROLLER"
+        - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+          value: "1@kafka:9093"
+        - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+          value: "1"
+        - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+          value: "1"
+        - name: KAFKA_LOG_DIRS
+          value: "/var/lib/kafka/data"
+        - name: CLUSTER_ID
+          value: "5L6g3nShT-eMCtK--X86sw"
+        resources:
+          requests:
+            memory: "768Mi"
+            cpu: "100m"
+          limits:
+            memory: "768Mi"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/kafka/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: kafka}
+spec:
+  selector: {app.kubernetes.io/name: kafka}
+  ports:
+  - name: kafka
+    port: 9092
+    targetPort: 9092

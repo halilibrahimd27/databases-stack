@@ -2,419 +2,315 @@
 
 # 🗄️ databases-stack
 
-### *Tek `docker compose up` ile MariaDB · PostgreSQL · MongoDB · Redis · MSSQL*
+### *Tek sunucuda 12 veritabanı — istediğini aç, istemediğini kapat*
 
-**Admin panelleri** + **Prometheus exporters** + **günlük otomatik backup** + **Google Drive sync** + **least-privilege user setup**
+**Panelden düğmeye bas, veritabanın açılsın.** Sistem sunucunun belleğini ölçer,
+o veritabanına ne kadar ayıracağını ve iç ayarlarını kendisi hesaplar.
+Sen hiçbir teknik değer girmezsin.
+
+**Ana kopya çökerse yedeğe kendisi geçer** — uygulamanın bağlantı adresi değişmeden.
 
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ed?style=flat-square&logo=docker&logoColor=white)](https://docs.docker.com/compose/)
-[![MariaDB](https://img.shields.io/badge/MariaDB-11.4-003545?style=flat-square&logo=mariadb&logoColor=white)](#)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?style=flat-square&logo=postgresql&logoColor=white)](#)
-[![MongoDB](https://img.shields.io/badge/MongoDB-4.4-47A248?style=flat-square&logo=mongodb&logoColor=white)](#)
-[![Redis](https://img.shields.io/badge/Redis-8-DC382D?style=flat-square&logo=redis&logoColor=white)](#)
-[![SQL Server](https://img.shields.io/badge/SQL_Server-2022-CC2927?style=flat-square&logo=microsoftsqlserver&logoColor=white)](#)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-hazır-326ce5?style=flat-square&logo=kubernetes&logoColor=white)](docs/KUBERNETES.md)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
-
-> **⭐ Beğendiyseniz yıldız bırakın** — bu tip self-hosted stack'ler nadir.
 
 </div>
 
 ---
 
-## 🎯 Niye var?
+## Kurulum
 
-Geliştiriciler için "bir tek-makine veritabanı sunucusu" kurmanın zor tarafı 5 farklı container, admin panelleri, backup ve user-permission mantığını uyumlu kurmak. Bu repo:
+```bash
+git clone https://github.com/halilibrahimd27/databases-stack.git /opt/databases
+cd /opt/databases
+sudo ./install.sh
+```
 
-- 5 popüler DB'yi (MariaDB · PostgreSQL · MongoDB · Redis · MSSQL) tek `docker compose up` ile çalıştırır
-- Her birine **web UI** (phpMyAdmin / pgAdmin / Mongo Express / RedisInsight + Adminer; MSSQL Adminer'dan yönetilir)
-- 4 SQL/NoSQL DB'nin **Prometheus exporter**'ı kurulu, scrape edilmeye hazır (MSSQL exporter'ı yok)
-- **Günde bir tam backup** (5 DB) + 7 gün retention
-- **Google Drive'a** rclone ile sync (offsite backup)
-- **Least-privilege app user** (DROP DATABASE yasak, DELETE serbest)
-- Tek **nginx dashboard** ile her şey tek pencerede
+Bu kadar. Soru sormaz. Parolaları, TLS sertifikalarını ve sunucu adresini kendisi
+üretir/algılar, sonuçları ekrana ve `credentials.txt`e yazar.
 
-> ⚠️ **Bu bir "production database cluster" değil.** Single-machine, single-replica, dev/staging veya küçük production için. HA/multi-region için Patroni, CloudNativePG, Aurora vb. kullanın.
+Sonra tarayıcıdan `https://<sunucu-ip>/` adresine gidin ve ihtiyacınız olan
+veritabanının kartındaki **Aktif Et** düğmesine basın.
+
+> **Tarayıcı "güvenli değil" diyorsa:** `http://<sunucu-ip>/ca.crt` adresinden
+> sertifikayı indirip bilgisayarınıza kurun, uyarı kalkar. Bu iç ağa özel bir
+> sertifika otoritesidir — alan adı (domain) gerektirmez, internete çıkmaz.
 
 ---
 
-## 📦 Servisler
+## Nasıl çalışıyor?
 
-| Servis | Port | Image | Açıklama |
-|---|---|---|---|
-| **mariadb** | 3306 | `mariadb:11.4` | slow query log açık, 3G buffer pool, 1000 max_connections (ayarlar `mariadb/config/my.cnf`) |
-| **postgresql** | 5432 | `postgres:15` | tuned (`shared_buffers=256M`, `max_connections=200`) |
-| **mongodb** | 27017 | `mongo:4.4` | auth açık, 1GB WiredTiger cache |
-| **redis** | 6379 | `redis:8-alpine` | requirepass, AOF, allkeys-lru, `maxmemory=384mb` |
-| **mssql** | 1433 | `mcr.microsoft.com/mssql/server:2022` | SQL Server 2022 Developer; admin kullanıcı `sa` (root değil), yönetim Adminer'dan |
-| **phpmyadmin** | 8081 | `phpmyadmin:latest` | MariaDB UI |
-| **pgadmin** | 8082 | `dpage/pgadmin4:latest` | PostgreSQL UI |
-| **mongo-express** | 8083 | `mongo-express:latest` | MongoDB UI |
-| **redis-insight** | 8084 | `redis/redisinsight:latest` | Redis UI |
-| **adminer** | 8085 | `adminer:latest` | Universal DB UI (MSSQL dahil — `pdo_dblib`) |
-| **nginx-dashboard** | 80 | `nginx:alpine` | Tüm panellere link landing page |
-| **mysql-exporter** | 9104 | `prom/mysqld-exporter:latest` | Prometheus metric'i |
-| **postgres-exporter** | 9187 | `prometheuscommunity/postgres-exporter` | Prometheus metric'i |
-| **mongodb-exporter** | 9216 | `percona/mongodb_exporter:0.40` | Prometheus metric'i |
-| **redis-exporter** | 9121 | `oliver006/redis_exporter:latest` | Prometheus metric'i |
+Kurulumdan sonra **hiçbir veritabanı çalışmıyor.** Sadece üç küçük servis ayakta:
+giriş kapısı (nginx), kontrol servisi ve Adminer. Toplam ~450 MB.
 
-> 🪄 Cassandra opsiyonel olarak [`cassandra/`](cassandra/) altında ayrı compose'da. Ana 5 DB'ye dahil değil.
+Panelde bir veritabanını açtığınızda arka planda şunlar olur:
 
----
-
-## 🚀 Hızlı Başlangıç
-
-### 1. Klonla
-```bash
-git clone https://github.com/halilibrahimd27/databases-stack.git
-cd databases-stack
+```
+"Aktif Et"  →  Kontrol servisi sunucuyu ölçer
+                 ├─ Toplam RAM, boş RAM, boş disk, CPU
+                 ├─ Zaten açık veritabanlarının taahhüdü
+                 └─ İşletim sistemi ve çekirdek servisler için ayrılan pay
+                             ↓
+               Bütçe yetiyor mu?
+                 ├─ HAYIR → açmaz, sebebini sade dille söyler
+                 └─ EVET  → limiti ve motorun iç ayarlarını hesaplar
+                             (buffer pool, JVM heap, WiredTiger cache,
+                              max_connections, work_mem …)
+                             ↓
+               docker compose --profile <motor> up -d
 ```
 
-### 2. Env dosyasını hazırla
-```bash
-cp .env.example .env
+**Kapalı bir veritabanı hiç container yaratmaz** — sıfır RAM, sıfır CPU tüketir.
+Kapatmak verileri silmez; diskte kalır, tekrar açtığınızda her şey yerindedir.
 
-# Güçlü bir parola üret
-echo "DB_PASSWORD=$(openssl rand -base64 32 | tr -d '+/=')" >> .env
+### Bunun neden önemli olduğu
 
-# .env'i editörde aç ve kalan zorunlu alanları doldur
-```
+Aynı hesabın somut karşılığı:
 
-### 3. Stack'i ayağa kaldır
-```bash
-docker compose up -d
-docker compose ps
-```
-
-### 4. Doğrulama
-```bash
-curl http://localhost/health             # nginx dashboard
-docker compose logs --tail=30 mariadb
-```
-
-### 5. (Opsiyonel) App user oluştur
-```bash
-DB_ROOT_PASSWORD="$(grep DB_PASSWORD .env | cut -d= -f2)" \
-APP_PASSWORD="$(openssl rand -base64 24)" \
-  ./setup_db_users.sh all
-```
-
-### 6. (Opsiyonel) Günlük backup cron
-```bash
-chmod +x backup.sh
-crontab crontab     # crontab dosyasını cron'a yükle (günlük 02:00 tam yedek)
-```
-
-### 7. (Opsiyonel) Google Drive sync
-```bash
-# rclone'u kur ve gdrive remote'unu yapılandır
-curl https://rclone.org/install.sh | sudo bash
-rclone config
-# → New remote → name: gdrive → Storage: drive → ...
-
-# Test
-./sync_remote.sh test
-./sync_remote.sh         # ilk sync
-```
-
----
-
-## 🔌 Erişim
-
-| URL | Servis | Auth |
+| Sunucu | MariaDB açılırsa | Elasticsearch açılırsa |
 |---|---|---|
-| `http://<HOST>` | Nginx Dashboard (landing) | nginx basic auth (`root` / `${DB_PASSWORD}`) |
-| `http://<HOST>:8081` | phpMyAdmin | MariaDB user (`root` / `${DB_PASSWORD}`) |
-| `http://<HOST>:8082` | pgAdmin | `admin@admin.com` / `${DB_PASSWORD}` |
-| `http://<HOST>:8083` | Mongo Express | `root` / `${DB_PASSWORD}` |
-| `http://<HOST>:8084` | RedisInsight | UI'da connection ekle |
-| `http://<HOST>:8085` | Adminer | DB tipi seç + creds |
-| `http://<HOST>:8085/?mssql=mssql&username=sa` | MSSQL (Adminer üzerinden) | `sa` / `${DB_PASSWORD}` |
+| 512 MB | **açılmaz** — "en az 512 MB gerekiyor, bütçe 0 MB" | açılmaz |
+| 2 GB | 512 MB limit, panelsiz (Adminer'ı kullanın) | açılmaz |
+| 4 GB | 1.2 GB limit, buffer pool 736 MB | 1 GB limit, JVM heap 512 MB |
+| 16 GB | 4.8 GB limit, buffer pool 2.9 GB | 4 GB limit, JVM heap 2 GB |
+| 128 GB | 16 GB limit (tek motor sunucuyu yutmasın) | 16 GB limit, heap 8 GB |
 
-> MSSQL'in ayrı web paneli yoktur — Adminer'dan (`pdo_dblib`) veya harici bir
-> istemciden (SSMS / Azure Data Studio) `<HOST>:1433`, kullanıcı `sa` ile bağlanın.
-> MSSQL'in yerleşik admin'i `sa`'dır (diğerlerindeki `root`'un karşılığı; yeniden
-> adlandırılamaz).
+4 GB'lık makinede 16 GB'lık veritabanı açılmaya çalışılmaz; 128 GB'lık makinede
+de varsayılan değerlerde kalınmaz. Bütçe dolduğunda kart pasifleşir ve
+"MongoDB en az 512 MB ister, kullanılabilir bütçe 380 MB — başka bir motoru
+durdurun" der.
 
-> ⚠️ **Production'da hiçbiri public açmayın.** Reverse proxy + VPN/IP whitelist arkasına alın.
+Hesabı görmek için: `./stack.sh plan mongodb`
 
 ---
 
-## 💾 Backup Sistemi
+## İçindeki veritabanları
 
-`backup.sh` 1000+ satırlık production-grade script. Özellikler:
+Hepsi kapalı gelir; yalnız kullandıklarınız açılır.
 
-- ✅ **Lock mekanizması** — concurrent run engeller
-- ✅ **Tüm DB'ler** (sadece `defaultdb` değil)
-- ✅ **Per-DB single backup** opsiyonu
-- ✅ **Backup integrity verification** (gzip/tar test)
-- ✅ **Disk space check** (5GB altında abort)
-- ✅ **Container health check**
-- ✅ **Retention** (default 7 gün)
-- ✅ **Restore komutları** her DB için
-- ✅ **Detaylı log + colored output**
+| | Veritabanı | Ne için | Panel |
+|---|---|---|---|
+| 🐬 | **MariaDB** | Klasik tablolu veri — kullanıcılar, siparişler, ürünler | phpMyAdmin |
+| 🐘 | **PostgreSQL** | Aynı iş + JSON, konum verisi, karmaşık sorgular | pgAdmin |
+| 🍃 | **MongoDB** | Sabit şeması olmayan kayıtlar | Mongo Express |
+| 🔴 | **Redis** | Önbellek, oturum, kuyruk (kalıcı depo değil) | RedisInsight |
+| 🟥 | **SQL Server** | .NET / Windows tabanlı kurumsal uygulamalar | Adminer |
+| 🌀 | **Cassandra** | Çok yüksek yazma hacmi, lineer ölçek | cqlsh |
+| 🔎 | **Elasticsearch** | Site içi arama, log analizi | Kibana |
+| 📨 | **Kafka** | Servisler arası olay akışı | Kafka UI |
+| 🐰 | **RabbitMQ** | Basit iş kuyruğu (Kafka'dan çok daha kolay) | Management UI |
+| 📊 | **ClickHouse** | Rapor ve analiz sorguları (OLAP) | Play UI |
+| 🕸️ | **Neo4j** | İlişki ağırlıklı veri, öneri motorları | Neo4j Browser |
+| 🪣 | **MinIO** | Dosya/görsel depolama (S3 uyumlu) | MinIO Console |
 
-### Kullanım
-
-```bash
-./backup.sh all                  # 5 DB'yi yedekle (MariaDB/PG/Mongo/Redis/MSSQL)
-./backup.sh mariadb              # sadece MariaDB
-./backup.sh mssql                # sadece MSSQL (tüm user DB'leri, native .bak)
-./backup.sh mariadb-single mydb  # tek bir MariaDB DB'si
-./backup.sh stats                # istatistik raporu
-./backup.sh list                 # son yedekleri listele
-./backup.sh clean 7              # 7 günden eski yedekleri sil
-./backup.sh restore-postgresql /path/to/backup.sql.gz
-./backup.sh restore-mssql /path/to/mssql_full_...tar.gz
-```
-
-### Cron (günlük tam yedek, önerilen)
-
-> ⚠️ **Neden 15 dakikada bir değil?** Yedekler DB container'ının **içinde**
-> `docker exec` (mariadb-dump / mongodump) ile alınır; dump'ın bellek tüketimi
-> **DB container'ının kendi cgroup'una** yazılır. 15 dakikada bir tam yedek
-> almak MariaDB'yi tekrar tekrar `CONSTRAINT_MEMCG` OOM ile öldürdü (container
-> 172 kez restart etti). Günde bir tam yedek + offsite sync bu baskıyı ortadan
-> kaldırır. Sık, tutarlı anlık kopya gerekiyorsa dump yerine binlog/PITR ya da
-> volume snapshot gibi container dışı bir yöntem tercih edin.
-
-`crontab` dosyasını yükle:
-
-```bash
-crontab crontab
-```
-
-Bu ekler:
-- Her gün **02:00** → full backup (tüm DB'ler)
-- Her gün **02:30** → Google Drive sync (yedek bittikten sonra)
-- Her gün **03:00** → `backup.sh clean` ile 7 günden eski local yedekleri sil
-- Her gün **08:00** → istatistik raporu
+> Ne seçeceğinizi bilmiyorsanız: **PostgreSQL** (verileriniz için) +
+> **Redis** (hız için) çoğu proje için doğru başlangıçtır.
 
 ---
 
-## ☁️ Google Drive Sync
+## Erişim
 
-`sync_remote.sh` — rclone ile Google Drive'a otomatik yedek.
+Tek giriş kapısı var; **hiçbir panelin portu doğrudan dışarı açılmaz.**
+Hepsi TLS + parola arkasından geçer.
 
-```bash
-./sync_remote.sh test     # bağlantı testi
-./sync_remote.sh          # şimdi sync
-./sync_remote.sh status   # local + remote stats
-./sync_remote.sh cleanup  # eski uzak yedekleri sil
-```
-
-**Önkoşul:** [`GOOGLE_DRIVE_SETUP.md`](GOOGLE_DRIVE_SETUP.md) okuyun (rclone kurulum, Google Drive auth).
-
----
-
-## 🔒 Least-Privilege App User
-
-`setup_db_users.sh` — uygulamanın bağlanacağı kısıtlı kullanıcı oluşturur
-(MariaDB · PostgreSQL · MongoDB · Redis). **MSSQL kapsam dışı** — gerekiyorsa
-kısıtlı bir SQL login'ini elle oluşturun (`GRANT`/`db_datareader`/`db_datawriter`).
-
-| ✅ İzin verilen | ❌ Yasak |
+| Adres | Ne |
 |---|---|
-| SELECT, INSERT, UPDATE, DELETE | DROP DATABASE |
-| CREATE TABLE, CREATE INDEX | DROP TABLE |
-| ALTER TABLE | TRUNCATE |
-| Stored procedures, functions | SUPERUSER, GRANT |
-| `DEL` (Redis) | `FLUSHALL`, `FLUSHDB` |
+| `https://<sunucu>/` | Yönetim paneli |
+| `https://<sunucu>:8081…8091` | Veritabanı panelleri (kapalıysa "pasif" sayfası) |
+| `https://<sunucu>:9443/metrics/<motor>` | Prometheus metrikleri |
+| `<sunucu>:3306, 5432, 27017 …` | Uygulamanızın bağlanacağı veritabanı portları |
+
+Veritabanı portları da gateway üzerinden geçer. Bu iki şey sağlar: devirde
+bağlantı adresiniz değişmez, ve container'lar host'a doğrudan port açmaz.
+
+Bağlantı bilgisini panelden **Bağlantı bilgisi** düğmesiyle ya da
+`./stack.sh conn postgresql` ile kopyalayabilirsiniz.
+
+---
+
+## Terminalden
+
+Panelin yaptığı her şeyi yapar; aynı otomatik boyutlandırma çalışır.
 
 ```bash
-APP_PASSWORD='$(openssl rand -base64 24)' ./setup_db_users.sh all
-
-# Sadece tek DB
-./setup_db_users.sh mariadb
-./setup_db_users.sh remove   # kullanıcıyı kaldır
+./stack.sh list                  # motorlar, durumları, tahmini bellek
+./stack.sh enable postgresql     # aç
+./stack.sh plan elasticsearch    # açılsa ne kadar ayrılırdı?
+./stack.sh disable redis         # kapat (veri silinmez)
+./stack.sh conn mariadb          # bağlantı bilgisi
+./stack.sh replica on postgresql # yedek kopya kur
+./stack.sh backup                # aktif motorların hepsini yedekle
+./stack.sh app-user              # uygulama için kısıtlı kullanıcı
+./stack.sh doctor                # kurulum sağlık kontrolü
 ```
 
 ---
 
-## 📊 Monitoring (Prometheus + Grafana)
+## Yedekleme
 
-Exporter'lar zaten kurulu — Prometheus'u stack'in dışında bir yere kurup şu target'ları scrape edin:
-
-```yaml
-# prometheus.yml
-scrape_configs:
-  - job_name: 'mariadb'
-    static_configs:
-      - targets: ['<HOST>:9104']
-  - job_name: 'postgresql'
-    static_configs:
-      - targets: ['<HOST>:9187']
-  - job_name: 'mongodb'
-    static_configs:
-      - targets: ['<HOST>:9216']
-  - job_name: 'redis'
-    static_configs:
-      - targets: ['<HOST>:9121']
-```
-
-Grafana dashboard ID önerileri:
-- **MariaDB:** [7362](https://grafana.com/grafana/dashboards/7362)
-- **PostgreSQL:** [9628](https://grafana.com/grafana/dashboards/9628)
-- **MongoDB:** [2583](https://grafana.com/grafana/dashboards/2583)
-- **Redis:** [763](https://grafana.com/grafana/dashboards/763)
-
----
-
-## 🛡️ Güvenlik Notları
-
-- ✅ Tüm secret'lar `.env` üzerinden, `${VAR}` interpolasyonu (hardcoded yok)
-- ✅ Container'lar resource limit'li (memory hard cap)
-- ✅ Health check'li (auto-restart kötü state'te)
-- ✅ App user least-privilege
-- ⚠️ DB portları (3306/5432/27017/6379) **default'ta host'a expose**. Production'da:
-  ```yaml
-  # docker-compose.yml override
-  mariadb:
-    ports: []        # sadece compose network içinden
-  ```
-- ⚠️ Admin panel'leri auth'lu ama **VPN/whitelist** olmadan public açmayın
-- ⚠️ Nginx dashboard basic-auth kullanır — production'da OAuth proxy/SSO
-
-### Önerilen production hardening
 ```bash
-# 1. Strong password
-openssl rand -base64 32 > /tmp/dbpass
-sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=$(cat /tmp/dbpass)/" .env
-shred -u /tmp/dbpass
-
-# 2. DB portlarını host'a açma (override.yml ile)
-cat > docker-compose.override.yml <<'EOF'
-services:
-  mariadb: { ports: [] }
-  postgresql: { ports: [] }
-  mongodb: { ports: [] }
-  redis: { ports: [] }
-EOF
-
-# 3. Reverse proxy + TLS
-# Caddy / nginx + Let's Encrypt arkasından dashboard'a açın
+./stack.sh backup                # aktif motorlar (kapalı olanlar atlanır)
+./stack.sh backup mariadb        # tek motor
+./scripts/backup.sh list         # yedekleri listele
+./stack.sh restore mariadb backups/mariadb/full/mariadb_full_20260901.sql.gz
 ```
+
+`install.sh` `state/crontab` dosyasını hazır üretir — yüklemek için
+`crontab state/crontab`. Günde bir tam yedek (02:00), uzak depoya gönderim
+(02:30), eski yedeklerin temizliği (03:00).
+
+Ayrıntı ve motor başına yöntemler: [docs/BACKUP.md](docs/BACKUP.md).
+Uzak depo (Google Drive / S3 / SFTP): [docs/GOOGLE-DRIVE.md](docs/GOOGLE-DRIVE.md).
 
 ---
 
-## 🧮 Kaynak Gereksinimleri
+## Yedek kopya (master-slave)
 
-Container'ların **hard memory limit** toplamı (varsayılan `.env` değerleriyle):
+Panelde ilgili kartın altındaki **Replika kur** düğmesi, ya da:
 
-| Servis | Limit |
+```bash
+./stack.sh replica on postgresql
+```
+
+| Motor | Yöntem | Kesinti |
+|---|---|---|
+| PostgreSQL | streaming replication (`pg_basebackup`) | yok |
+| MariaDB | GTID tabanlı asenkron replikasyon | yok |
+| Redis | `replicaof` | yok |
+| MongoDB | replica set (rs0) | **var** — primary yeniden başlar |
+| Cassandra / Kafka / Elasticsearch | motorun kendi kümeleme mantığı | — |
+
+Ayrıntı: [docs/REPLICATION.md](docs/REPLICATION.md)
+
+---
+
+## Otomatik devir (failover)
+
+Yedek kopyayı kurduktan sonra tek bir düğme daha:
+
+```bash
+./stack.sh failover on postgresql
+```
+
+Sistem ana kopyayı 10 saniyede bir yoklar. Üst üste 3 kez yanıt alamazsa:
+
+1. **Eski ana kopyayı durdurur** — iki kopyanın aynı anda yazı kabul edip
+   verilerin ayrışmasını (split-brain) önlemek için zorunlu adım
+2. **Yedeği ana kopya yapar** (yazmaya açar)
+3. **Yönlendirmeyi günceller** — uygulamanız aynı adrese bağlanmaya devam eder
+4. **Olayı kaydeder** ve tanımlıysa webhook bildirimi gönderir
+
+Bunun çalışabilmesi için tüm veritabanı portları gateway üzerinden geçer:
+
+```
+uygulama → gateway:5432 → (o an ana kopya olan neyse)
+```
+
+Uygulamanız doğrudan container'a bağlansaydı, devirden sonra ölü sunucuya
+bağlanmaya devam ederdi — yani devir otomatik olmazdı.
+
+```bash
+./stack.sh failover status        # durum ve devir geçmişi
+./stack.sh failover now <motor>   # elle devir (bakım/test)
+./stack.sh failover rebuild <m>   # eski kopyayı yedek olarak geri al
+./stack.sh events                 # olay akışı
+```
+
+| Motor | Devir yöntemi |
 |---|---|
-| MariaDB | 8G |
-| PostgreSQL | 1G |
-| MongoDB | 2G |
-| Redis | 600M |
-| MSSQL | 4G |
-| Admin panelleri (5) + nginx | ~1.5G |
-| Prometheus exporter'ları (4) | ~256M |
-| **Toplam (tavan)** | **~17.5 GB** |
+| PostgreSQL | `pg_ctl promote` |
+| MariaDB | relay log boşaltılır → `RESET SLAVE ALL` → yazmaya açılır |
+| Redis | `REPLICAOF NO ONE` |
+| MongoDB | replica set kendi seçimini yapar (arbiter ile 3 oy) |
 
-Bunlar container başına *tavan* değerlerdir; sürekli (steady-state) RSS tüketimi
-genelde daha düşüktür. Asıl büyük tüketiciler MariaDB'nin 3G `innodb_buffer_pool`'u,
-MSSQL (min ~2G ister) ve MongoDB'nin 1G WiredTiger cache'idir. Tüm limitler `.env`
-üzerinden ayarlanabilir (MSSQL kullanmıyorsanız servisi kaldırıp ~4G geri kazanın).
-
-> 💽 **Dönen disk (RAID/HDD) notu:** Linux boştaki RAM'i **page cache** olarak
-> kullanır ve DB dosyaları buradan okunur. Dönen disk üzerinde çalıştırıyorsanız
-> limit toplamının **üstüne** page cache için bol boşluk bırakın — pratikte kutunun
-> limitler + page cache + OS ile birlikte **~22-24 GB** civarında oturmasını
-> planlayın (rahat bir taban için **32 GB RAM**'li host önerilir). Yedekler
-> zaten `nice -n 19 ionice -c3` ile düşük I/O önceliğinde çalışır (bkz.
-> [`backup.sh`](backup.sh)); böylece yedek dizisi doyduğunda canlı DB trafiği
-> öncelikli kalır.
+Ayrıntı, test yöntemi ve sınırlar: [docs/FAILOVER.md](docs/FAILOVER.md)
 
 ---
 
-## 📁 Repo Yapısı
+## Kubernetes
+
+Aynı ürün, aynı mantık: **"aktif et" = StatefulSet'i 0'dan 1 replikaya
+ölçeklemek.** Manifestler katalogdan üretilir, elle yazılmaz.
+
+```bash
+python3 scripts/gen-k8s.py --with-secrets
+kubectl apply -k k8s/base
+```
+
+Kontrol servisinin K8s'teki tek yetkisi StatefulSet'leri okumak ve
+ölçeklemek/boyutlandırmaktır — Docker kurulumundaki docker soketi erişiminden
+(host'ta tam yetki) belirgin şekilde dardır.
+
+Ayrıntı: [docs/KUBERNETES.md](docs/KUBERNETES.md)
+
+---
+
+## Yapı
 
 ```
 databases-stack/
-├── docker-compose.yml         # Ana stack (MariaDB+PG+Mongo+Redis+MSSQL+UIs+exporters)
-├── backup.sh                  # Backup script (5 DB backup + restore)
-├── sync_remote.sh             # Google Drive sync (rclone)
-├── setup_db_users.sh          # Least-privilege app user setup (MariaDB/PG/Mongo/Redis)
-├── sc.sh                      # İlk kurulum yardımcısı (opsiyonel)
-├── crontab                    # Cron jobs (günlük backup + sync)
-├── .env.example               # Ortam değişkenleri şablonu
-├── .gitattributes             # LF satır sonu zorlaması (CRLF shebang bozmasın)
-├── .gitignore
-├── GOOGLE_DRIVE_SETUP.md      # Rclone setup detayı
-├── mariadb/config/my.cnf      # Custom MariaDB config
-├── nginx/
-│   ├── nginx.conf             # Reverse proxy + auth
-│   └── html/index.html        # Dashboard landing
-└── cassandra/                 # Opsiyonel: Cassandra alt-stack
-    ├── docker-compose.yml
-    ├── backup.sh
-    ├── setup_users.sh
-    └── ...
+├── install.sh              Tek komutluk kurulum
+├── stack.sh                Günlük kullanım CLI'ı
+├── catalog.json            ⭐ Motor kataloğu — TEK YETKİ KAYNAĞI
+├── docker-compose.yml      Tüm motorlar, profil tabanlı
+├── controller/             Kontrol düzlemi (aktivasyon + boyutlandırma)
+├── gateway/                nginx: TLS, auth, reverse proxy, dashboard
+├── config/                 Motor konfigürasyonları (my.cnf vb.)
+├── scripts/                backup, sync, kullanıcı, sertifika, replikasyon, devir
+├── overrides/              Duruma göre yüklenen compose parçaları
+├── k8s/                    Üretilmiş Kubernetes manifestleri
+└── docs/                   Ayrıntılı belgeler
 ```
+
+**Yeni bir veritabanı eklemek** = `catalog.json`a bir kayıt + `docker-compose.yml`e
+aynı profile sahip servisler. `./scripts/check-catalog.sh` ikisinin ayrışmadığını
+doğrular; `./stack.sh doctor` bunu otomatik çağırır.
 
 ---
 
-## 🆘 Sorun Giderme
+## Güvenlik
 
-### Container ayağa kalkıyor ama bağlanamıyorum
-```bash
-docker compose ps
-docker compose logs <SERVICE> --tail=50
-docker exec <CONTAINER> printenv | grep -i pass
-```
+- Panel portları host'a açılmaz; tek giriş kapısı TLS + basic auth arkasındadır
+- Her motorun **ayrı** parolası vardır (tek sızıntı 12 motoru açmaz)
+- Kontrol servisinin portu yoktur; yalnız gateway'den, paylaşılan token ile erişilir
+- Parolalar hiçbir betikte komut satırına yazılmaz (`ps` çıktısında görünmez)
+- `./stack.sh app-user` ile uygulamanız için `DROP` yetkisi olmayan kullanıcı
 
-### "DB_PASSWORD not set" hatası
-`.env` dosyasında `DB_PASSWORD=` doldurulmamış. Düzelt + `docker compose down && up -d`.
+> ⚠️ Bu ürün **iç ağ / VPN arkası** kullanım için tasarlandı. Veritabanı
+> portlarını internete açmayın.
 
-### Backup script hemen çıkıyor ("Another backup is already running")
-Kilit artık **flock** ile yönetiliyor: kilit yalnızca çalışan sürece bağlıdır ve
-süreç ölünce çekirdek tarafından otomatik bırakılır — bayat kilit diye bir şey
-kalmadı. Bu mesajı görüyorsanız gerçekten başka bir çalışma vardır:
-```bash
-pgrep -af 'backup.sh|sync_remote.sh'   # gerçekten çalışan var mı?
-```
-Lock dosyasını (`/tmp/db_backup.lock`) **elle silmeyin** — flock ile ne gerekli
-ne de güvenlidir (boş dosya bile canlı bir kilidi temsil edebilir).
-
-### Google Drive sync auth fail
-```bash
-rclone config reconnect gdrive:
-./sync_remote.sh test
-```
-
-### MongoDB Express login loop
-Mongo Express bazen ilk start'ta sorun çıkarır:
-```bash
-docker compose restart mongodb
-sleep 30
-docker compose restart mongo-express
-```
-
-### pgAdmin "could not connect to server"
-pgAdmin container'ını ilk açtığında PostgreSQL henüz hazır olmayabilir. Server config'i UI'da elle ekleyin:
-- Host: `postgresql`
-- Port: `5432`
-- Username: `root`
-- Password: `${DB_PASSWORD}`
+Ayrıntı ve sertleştirme adımları: [docs/SECURITY.md](docs/SECURITY.md)
 
 ---
 
-## 📜 Lisans
+## Kapsam — dürüstçe
 
-MIT — `LICENSE` dosyasına bakın.
+Otomatik devir **süreç düzeyindeki** arızaları karşılar: veritabanının çökmesi,
+kilitlenmesi, OOM ile öldürülmesi, veri dosyasının bozulması. Bunlar pratikte
+en sık yaşanan arızalardır ve sistem bunları ~30 saniyede kendisi kapatır.
+
+Aynı ürün, ikinci bir makine eklendiğinde **host arızasını** da karşılar:
+yedek kopyayı uzak bir Docker host'unda ya da Kubernetes'te node
+anti-affinity ile çalıştırın (bkz. [docs/FAILOVER.md](docs/FAILOVER.md)).
+Tek makinede çalıştırdığınız sürece, makinenin tamamı düşerse iki kopya da
+düşer — bu bir eksiklik değil, tek makine olmanın tanımıdır.
+
+Bilmeniz gerekenler:
+
+- **Replikasyon asenkrondur.** Devirde, ana kopyanın göndermeye yetişemediği
+  son işlemler kaybolabilir (tipik olarak milisaniyeler). Sıfır kayıp için
+  senkron replikasyon nasıl açılır: [docs/FAILOVER.md](docs/FAILOVER.md)
+- **Devir yedeğin yerini tutmaz.** Yanlışlıkla silinen veri replikaya da
+  anında yansır. Düzenli yedek şart → [docs/BACKUP.md](docs/BACKUP.md)
+- Veritabanı portları gateway üzerinden geçtiği için motorlar istemcinin
+  gerçek IP'sini değil gateway'in IP'sini görür — host tabanlı yetkilendirme
+  (`user@'192.168.1.5'`) kullanıyorsanız buna göre ayarlayın.
+- Neo4j Community'de çevrimiçi yedek yoktur — yedek almak veritabanını durdurur.
+- Kafka yedeklenmez (log'dur, veritabanı değil); `replication.factor` kullanın.
+- MongoDB replica set açmak ana kopyayı yeniden başlatır (kısa kesinti).
 
 ---
 
-<div align="center">
+## Lisans
 
-## 🌟 Destek olmak istersen
-
-| Süre | Yardım |
-|---|---|
-| 5 sn | **⭐ Star** |
-| 30 sn | Twitter/LinkedIn'de paylaş |
-| 5 dk | Issue aç (eksik bulduğun şey) |
-| 2 saat | Yeni DB ekle (Cassandra benzeri alt-stack) |
-
-[![Star History Chart](https://api.star-history.com/svg?repos=halilibrahimd27/databases-stack&type=Date)](https://star-history.com/#halilibrahimd27/databases-stack&Date)
-
-</div>
+MIT — [LICENSE](LICENSE)

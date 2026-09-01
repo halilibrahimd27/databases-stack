@@ -1,0 +1,16 @@
+<clickhouse>
+    <!-- Prometheus metrik ucu. Gateway 9443/metrics/clickhouse'tan buraya proxy'ler. -->
+    <prometheus>
+        <endpoint>/metrics</endpoint>
+        <port>9363</port>
+        <metrics>true</metrics>
+        <events>true</events>
+        <asynchronous_metrics>true</asynchronous_metrics>
+    </prometheus>
+
+    <!-- Bellek tavanı. Değeri controller hesaplar ve CLICKHOUSE_MAX_MEMORY
+         ortam değişkeni olarak geçer (from_env). Container limitinin altında
+         tutulur; aksi halde ClickHouse limiti aşıp cgroup OOM-killer'a yakalanır
+         ve sorgu iptal etmek yerine süreç öldürülür. -->
+    <max_server_memory_usage from_env="CLICKHOUSE_MAX_MEMORY"/>
+</clickhouse>

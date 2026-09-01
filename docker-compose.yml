@@ -1,58 +1,222 @@
 # =============================================================================
-# NIHAI DATABASE SERVER DOCKER COMPOSE
-# Tüm sunucular için tek compose dosyası
-# Son güncelleme: 2026-02-05
+# databases-stack — TEK COMPOSE, PROFİL TABANLI AKTİVASYON
+# =============================================================================
+# `docker compose up -d`            → sadece çekirdek (gateway + controller +
+#                                      adminer). Hiçbir veritabanı çalışmaz.
+# `docker compose --profile mariadb up -d`  → MariaDB + phpMyAdmin + exporter
+#
+# Normalde profilleri elle yönetmezsiniz: dashboard'daki "Aktif Et" düğmesi
+# controller üzerinden tam bu komutu çalıştırır (bkz. controller/app.py).
+#
+# ÖNEMLİ — BIND MOUNT YOLLARI: hepsi ${STACK_DIR} ile MUTLAK verilir. Controller
+# compose'u kendi container'ının içinden çağırır; göreli yollar orada host'a göre
+# değil container'a göre çözülüp bozulurdu. STACK_DIR'i install.sh .env'e yazar.
 # =============================================================================
 
-x-logging: &default-logging
+# Proje adı volume adlarının ön ekidir (<proje>_mariadb_data). Var olan bir
+# kurulumdan geçiyorsanız install.sh eski adı algılayıp STACK_PROJECT'e yazar,
+# böylece mevcut verileriniz aynı yerde kalır.
+name: ${STACK_PROJECT:-databases-stack}
+
+x-logging: &logging
   driver: json-file
   options:
     max-size: "10m"
     max-file: "3"
 
-x-restart: &default-restart
+x-svc: &svc
   restart: unless-stopped
+  networks: [dbnet]
+  logging: *logging
 
 networks:
-  database_network:
+  dbnet:
+    name: databases-stack_net
     driver: bridge
-    name: database_network
 
 volumes:
-  redisinsight_data:
-  pgadmin_data:
   mariadb_data:
+  mariadb_replica_data:
   postgresql_data:
+  postgresql_replica_data:
   mongodb_data:
+  mongodb_replica_data:
+  mongodb_arbiter_data:
   redis_data:
+  redis_replica_data:
   mssql_data:
+  cassandra_data:
+  elasticsearch_data:
+  elasticsearch_snapshots:
+  kafka_data:
+  rabbitmq_data:
+  clickhouse_data:
+  neo4j_data:
+  minio_data:
+  pgadmin_data:
+  redisinsight_data:
 
 services:
+
   # ===========================================================================
-  # DATABASES
+  # ÇEKİRDEK — profili yok, her zaman çalışır
   # ===========================================================================
 
-  mariadb:
-    image: mariadb:11.4
-    container_name: mariadb
-    <<: *default-restart
+  # Tek giriş kapısı: TLS sonlandırma + basic auth + reverse proxy.
+  # Panellerin kendi portları host'a AÇILMAZ; hepsi buradan geçer.
+  gateway:
+    <<: *svc
+    image: nginx:1.27-alpine
+    container_name: gateway
     ports:
-      - "3306:3306"
+      - "${GATEWAY_HTTP_PORT:-80}:80"       # yalnız 443'e yönlendirir + /ca.crt
+      - "${GATEWAY_HTTPS_PORT:-443}:443"    # dashboard + /api
+      - "8081:8081"   # phpMyAdmin
+      - "8082:8082"   # pgAdmin
+      - "8083:8083"   # Mongo Express
+      - "8084:8084"   # RedisInsight
+      - "8085:8085"   # Adminer
+      - "8086:8086"   # Kibana
+      - "8087:8087"   # Kafka UI
+      - "8088:8088"   # RabbitMQ Management
+      - "8089:8089"   # MinIO Console
+      - "8090:8090"   # Neo4j Browser
+      - "8091:8091"   # ClickHouse Play
+      - "9443:9443"   # Prometheus scrape (tüm exporter'lar tek portta)
+      # --- Veritabanı portları ---
+      # Doğrudan container'a değil gateway'e bağlanılır: failover'da
+      # arkadaki primary değişse bile uygulamanın adresi aynı kalır.
+      - "${MARIADB_PORT:-3306}:3306"   # mariadb
+      - "${POSTGRES_PORT:-5432}:5432"   # postgresql
+      - "${MONGO_PORT:-27017}:27017"   # mongodb
+      - "${REDIS_PORT:-6379}:6379"   # redis
+      - "${MSSQL_PORT:-1433}:1433"   # mssql
+      - "${CASSANDRA_PORT:-9042}:9042"   # cassandra
+      - "${ELASTIC_PORT:-9200}:9200"   # elasticsearch
+      - "${KAFKA_PORT:-9092}:9092"   # kafka
+      - "${RABBITMQ_PORT:-5672}:5672"   # rabbitmq
+      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"   # clickhouse
+      - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"   # clickhouse
+      - "${NEO4J_BOLT_PORT:-7687}:7687"   # neo4j
+      - "${MINIO_API_PORT:-9002}:9002"   # minio
+      - "3307:3307"   # mariadb replikası
+      - "5433:5433"   # postgresql replikası
+      - "6380:6380"   # redis replikası
+      - "27018:27018"   # mongodb replikası
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
-      MYSQL_DATABASE: defaultdb
-      MYSQL_USER: dbuser
-      MYSQL_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
+      # nginx resmi imajı /etc/nginx/templates/*.template dosyalarında envsubst
+      # çalıştırır. FILTER olmadan $host / $uri gibi nginx değişkenleri de
+      # ezilebilirdi; sadece STACK_ öneklileri değiştiriliyor.
+      NGINX_ENVSUBST_FILTER: "^STACK_"
+      STACK_CONTROLLER_TOKEN: ${CONTROLLER_TOKEN:?CONTROLLER_TOKEN gerekli — ./install.sh çalıştırın}
+      STACK_RESOLVER: ${STACK_RESOLVER:-127.0.0.11}
+    volumes:
+      - ${STACK_DIR:-.}/gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      # Yönlendirme tablosu — controller üretir, failover'da yeniden yazar.
+      - ${STACK_DIR:-.}/state/routes.conf:/etc/nginx/stream.d/routes.conf:ro
+      - ${STACK_DIR:-.}/gateway/templates:/etc/nginx/templates:ro
+      - ${STACK_DIR:-.}/gateway/snippets:/etc/nginx/snippets:ro
+      - ${STACK_DIR:-.}/gateway/html:/usr/share/nginx/html:ro
+      - ${STACK_DIR:-.}/gateway/empty.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${STACK_DIR:-.}/certs:/etc/nginx/certs:ro
+      - ${STACK_DIR:-.}/gateway/.htpasswd:/etc/nginx/.htpasswd:ro
+      - ${STACK_DIR:-.}/catalog.json:/usr/share/nginx/html/catalog.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # Kontrol düzlemi. Dashboard'un "Aktif Et / Durdur" düğmeleri buraya gider;
+  # o da docker soketi üzerinden `docker compose --profile X up -d` çalıştırır.
+  # Host'a PORT AÇMAZ — yalnızca gateway üzerinden, token ile erişilir.
+  controller:
+    <<: *svc
+    build:
+      context: ./controller
+    image: databases-stack/controller:1.0
+    container_name: controller
+    environment:
+      BACKEND: ${CONTROLLER_BACKEND:-docker}
+      COMPOSE_PROJECT: ${STACK_PROJECT:-databases-stack}
+      STACK_DIR: ${STACK_DIR:-}
+      CONTROLLER_TOKEN: ${CONTROLLER_TOKEN:?CONTROLLER_TOKEN gerekli}
+      CATALOG_PATH: /project/catalog.json
+      STATE_PATH: /project/state/active-profiles
+      LOG_LEVEL: ${CONTROLLER_LOG_LEVEL:-info}
+      # Otomatik devir denetleyicisi
+      FAILOVER_INTERVAL: ${FAILOVER_INTERVAL:-10}
+      FAILOVER_STRIKES: ${FAILOVER_STRIKES:-3}
+      FAILOVER_COOLDOWN: ${FAILOVER_COOLDOWN:-300}
+      NOTIFY_WEBHOOK: ${NOTIFY_WEBHOOK:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Stack dizininin TAMAMI /project'e bağlanır. Tek tek dosya bağlamak
+      # yerine böyle: compose dosyayı yüklerken `build: ./controller` gibi
+      # göreli yolları da çözebilmeli, yoksa "build context not found" der.
+      # State dizini üstüne rw olarak tekrar bağlanır (iç içe mount).
+      - ${STACK_DIR:-.}:/project:ro
+      - ${STACK_DIR:-.}/state:/project/state
+      - ${STACK_DIR:-.}/overrides:/project/overrides:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8000/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+
+  # Evrensel DB istemcisi — MySQL/PostgreSQL/MSSQL/SQLite/ClickHouse hepsi.
+  # 128M olduğu için profile bağlanmadı; MSSQL'in tek paneli de bu.
+  adminer:
+    <<: *svc
+    image: adminer:4.8.1
+    container_name: adminer
+    environment:
+      ADMINER_DEFAULT_SERVER: mariadb
+      ADMINER_DESIGN: dracula
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # ===========================================================================
+  # MARIADB   —   profile: mariadb
+  # ===========================================================================
+  mariadb:
+    <<: *svc
+    profiles: [mariadb]
+    image: mariadb:${MARIADB_VERSION:-11.4}
+    container_name: mariadb
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_PASSWORD:-${DB_PASSWORD}}
+      MARIADB_DATABASE: ${DEFAULT_DATABASE:-defaultdb}
       MARIADB_AUTO_UPGRADE: "1"
     volumes:
       - mariadb_data:/var/lib/mysql
-      - ./mariadb/config/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
-    networks:
-      - database_network
-    # NOT: Tüm MariaDB ayarları mariadb/config/my.cnf içindedir (tek yetki
-    # kaynağı). Eskiden buradaki `command:` bloğu mount edilen my.cnf'i eziyor,
-    # buffer pool'u 256M'ye düşürüyordu. `command:` kaldırıldı; ayarları
-    # değiştirmek için my.cnf'i düzenleyin (bkz. README → "MariaDB tuning").
+      # STATİK ayarlar my.cnf'te. Bellekle ÖLÇEKLENEN üç ayar aşağıda command
+      # ile geçilir; controller bunları host RAM'ine göre hesaplayıp
+      # state/tuning.env'e yazar. (Eski compose'daki `command:` bloğu my.cnf'in
+      # tamamını eziyordu — burada yalnız bu üç anahtar override edilir.)
+      - ${STACK_DIR:-.}/config/mariadb/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+    command:
+      - "--innodb-buffer-pool-size=${MARIADB_BUFFER_POOL:-1G}"
+      - "--innodb-log-file-size=${MARIADB_LOG_FILE_SIZE:-256M}"
+      - "--max-connections=${MARIADB_MAX_CONNECTIONS:-200}"
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 30s
@@ -63,58 +227,240 @@ services:
       resources:
         limits:
           memory: ${MARIADB_MEM_LIMIT:-8G}
-    logging: *default-logging
 
-  postgresql:
-    image: postgres:15
-    container_name: postgresql
-    <<: *default-restart
-    ports:
-      - "5432:5432"
+  phpmyadmin:
+    <<: *svc
+    profiles: [mariadb]
+    image: phpmyadmin:5.2
+    container_name: phpmyadmin
     environment:
-      POSTGRES_DB: defaultdb
-      POSTGRES_USER: root
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
+      PMA_HOST: mariadb
+      PMA_PORT: 3306
+      PMA_ABSOLUTE_URI: https://${STACK_HOST:-localhost}:8081/
+      UPLOAD_LIMIT: 128M
+      MAX_EXECUTION_TIME: 600
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:80/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  mariadb-exporter:
+    <<: *svc
+    profiles: [mariadb]
+    image: prom/mysqld-exporter:v0.15.1
+    container_name: mariadb-exporter
+    environment:
+      # Yeni mysqld-exporter parolayı DATA_SOURCE_NAME'den DEĞİL bu env'den okur;
+      # yoksa "using password: NO" → Access denied → mysql_up=0.
+      MYSQLD_EXPORTER_PASSWORD: ${MARIADB_PASSWORD:-${DB_PASSWORD}}
+    command:
+      - "--mysqld.address=mariadb:3306"
+      - "--mysqld.username=root"
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  # --- MariaDB replikası (profile: mariadb-replica) --------------------------
+  # Ayağa kalkar ama kendiliğinden bağlanmaz; primary'e bağlama işini
+  # scripts/replication/mariadb.sh yapar (controller bunu çağırır).
+  mariadb-replica:
+    <<: *svc
+    profiles: [mariadb-replica]
+    image: mariadb:${MARIADB_VERSION:-11.4}
+    container_name: mariadb-replica
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_PASSWORD:-${DB_PASSWORD}}
+      MARIADB_AUTO_UPGRADE: "1"
+    command: >
+      --server-id=2
+      --read-only=ON
+      --relay-log=relay-bin
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --gtid-strict-mode=ON
+    volumes:
+      - mariadb_replica_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: ${MARIADB_REPLICA_MEM_LIMIT:-2G}
+
+  # ===========================================================================
+  # POSTGRESQL   —   profile: postgresql
+  # ===========================================================================
+  postgresql:
+    <<: *svc
+    profiles: [postgresql]
+    image: postgres:${POSTGRES_VERSION:-16}
+    container_name: postgresql
+    environment:
+      POSTGRES_DB: ${DEFAULT_DATABASE:-defaultdb}
+      POSTGRES_USER: ${POSTGRES_USER:-root}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-${DB_PASSWORD}}
       PGDATA: /var/lib/postgresql/data/pgdata
+      # Replikasyon açılınca kullanılır; primary'de her zaman hazır dursun.
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     volumes:
       - postgresql_data:/var/lib/postgresql/data
-    networks:
-      - database_network
     command: >
       postgres
-      -c shared_buffers=256MB
-      -c effective_cache_size=512MB
-      -c max_connections=200
+      -c shared_buffers=${POSTGRES_SHARED_BUFFERS:-512MB}
+      -c effective_cache_size=${POSTGRES_EFFECTIVE_CACHE:-1536MB}
+      -c max_connections=${POSTGRES_MAX_CONNECTIONS:-200}
+      -c work_mem=${POSTGRES_WORK_MEM:-4MB}
       -c log_min_duration_statement=2000
+      -c wal_level=replica
+      -c max_wal_senders=10
+      -c max_replication_slots=10
+      -c hot_standby=on
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U root -d defaultdb"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-root} -d ${DEFAULT_DATABASE:-defaultdb}"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
     deploy:
       resources:
+        # 200 bağlantı × work_mem, 1G'ye sığmıyordu — 2G tabana çekildi.
         limits:
-          memory: ${POSTGRES_MEM_LIMIT:-1G}
-    logging: *default-logging
+          memory: ${POSTGRES_MEM_LIMIT:-2G}
 
-  mongodb:
-    image: mongo:4.4
-    container_name: mongodb
-    <<: *default-restart
-    ports:
-      - "27017:27017"
+  pgadmin:
+    <<: *svc
+    profiles: [postgresql]
+    image: dpage/pgadmin4:8.12
+    container_name: pgadmin
     environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
-      MONGO_INITDB_DATABASE: defaultdb
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-${DB_PASSWORD}}
+      # Server mode = login zorunlu. "False" olsaydı panel şifresiz açılırdı.
+      PGADMIN_CONFIG_SERVER_MODE: "True"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      PGADMIN_CONFIG_PROXY_X_HOST_COUNT: "1"
+      PGADMIN_CONFIG_PROXY_X_PREFIX_COUNT: "1"
+      PGADMIN_LISTEN_PORT: 80
+    volumes:
+      # Named volume — bind mount host'ta root'a ait olup pgadmin (uid 5050)
+      # yazamıyor, worker crash-loop'a giriyordu.
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:80/misc/ping || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  postgres-exporter:
+    <<: *svc
+    profiles: [postgresql]
+    image: prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: postgres-exporter
+    environment:
+      # Parola URI'ye gömülmüyor: özel karakter (@ : / ?) içeren parolalar
+      # DATA_SOURCE_NAME'i sessizce bozuyordu.
+      DATA_SOURCE_URI: "postgresql:5432/${DEFAULT_DATABASE:-defaultdb}?sslmode=disable"
+      DATA_SOURCE_USER: ${POSTGRES_USER:-root}
+      DATA_SOURCE_PASS: ${POSTGRES_PASSWORD:-${DB_PASSWORD}}
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  # --- PostgreSQL replikası (profile: postgresql-replica) --------------------
+  postgresql-replica:
+    <<: *svc
+    profiles: [postgresql-replica]
+    image: postgres:${POSTGRES_VERSION:-16}
+    container_name: postgresql-replica
+    user: postgres
+    environment:
+      PGPASSWORD: ${POSTGRES_REPLICATION_PASSWORD:-${POSTGRES_PASSWORD:-${DB_PASSWORD}}}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgresql_replica_data:/var/lib/postgresql/data
+    # Veri dizini boşsa primary'den pg_basebackup ile klonla, sonra standby aç.
+    # Dizin doluysa doğrudan başlat (yeniden başlatmalarda tekrar klonlamaz).
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -e
+        if [ ! -s "$$PGDATA/PG_VERSION" ]; then
+          echo "[replica] primary bekleniyor..."
+          until pg_isready -h postgresql -U ${POSTGRES_REPLICATION_USER:-replicator} -q; do sleep 2; done
+          echo "[replica] pg_basebackup başlıyor"
+          rm -rf "$$PGDATA"; mkdir -p "$$PGDATA"; chmod 700 "$$PGDATA"
+          pg_basebackup -h postgresql -U ${POSTGRES_REPLICATION_USER:-replicator} \
+            -D "$$PGDATA" -Fp -Xs -P -R -S ${POSTGRES_REPLICATION_SLOT:-replica_1} -C
+          echo "[replica] klon tamam"
+        fi
+        exec docker-entrypoint.sh postgres -c hot_standby=on
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: ${POSTGRES_REPLICA_MEM_LIMIT:-1G}
+
+  # ===========================================================================
+  # MONGODB   —   profile: mongodb
+  # ===========================================================================
+  mongodb:
+    <<: *svc
+    profiles: [mongodb]
+    image: mongo:${MONGO_VERSION:-7.0}
+    container_name: mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-${DB_PASSWORD}}
+      MONGO_INITDB_DATABASE: ${DEFAULT_DATABASE:-defaultdb}
     volumes:
       - mongodb_data:/data/db
-    networks:
-      - database_network
-    command: ["mongod", "--auth", "--bind_ip_all", "--wiredTigerCacheSizeGB", "${MONGO_WIREDTIGER_CACHE_GB:-1}"]
+    command:
+      - mongod
+      - --auth
+      - --bind_ip_all
+      - --wiredTigerCacheSizeGB
+      - "${MONGO_WIREDTIGER_CACHE_GB:-1}"
     healthcheck:
-      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')", "-u", "root", "-p", "${DB_PASSWORD:-change-me-in-production}", "--authenticationDatabase", "admin", "--quiet"]
+      # mongosh 5.0+ ile geldi; 4.4 kullanıyorsanız MONGO_SHELL=mongo yapın.
+      test: ["CMD-SHELL", "${MONGO_SHELL:-mongosh} --quiet --eval 'db.adminCommand({ping:1}).ok' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -123,28 +469,203 @@ services:
       resources:
         limits:
           memory: ${MONGO_MEM_LIMIT:-2G}
-    logging: *default-logging
 
+  mongo-express:
+    <<: *svc
+    profiles: [mongodb]
+    image: mongo-express:1.0.2
+    container_name: mongo-express
+    environment:
+      ME_CONFIG_MONGODB_URL: "mongodb://${MONGO_USER:-root}:${MONGO_PASSWORD:-${DB_PASSWORD}}@mongodb:27017/?authSource=admin"
+      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
+      # KRİTİK: eskiden "false" idi → 8083'e ulaşan herkes MongoDB'de root'tu.
+      ME_CONFIG_BASICAUTH: "true"
+      ME_CONFIG_BASICAUTH_USERNAME: ${PANEL_USER:-admin}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${PANEL_PASSWORD:-${DB_PASSWORD}}
+      ME_CONFIG_OPTIONS_EDITORTHEME: "ambiance"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      # Eski hali `|| exit 0` ile biterdi → healthcheck DAİMA "healthy" derdi.
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8081/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  mongodb-exporter:
+    <<: *svc
+    profiles: [mongodb]
+    image: percona/mongodb_exporter:0.40
+    container_name: mongodb-exporter
+    environment:
+      MONGODB_URI: "mongodb://${MONGO_USER:-root}:${MONGO_PASSWORD:-${DB_PASSWORD}}@mongodb:27017/?authSource=admin"
+    command:
+      - "--collect-all"
+      - "--web.listen-address=:9216"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  # --- MongoDB replica set üyesi (profile: mongodb-replica) ------------------
+  mongodb-replica-1:
+    <<: *svc
+    profiles: [mongodb-replica]
+    image: mongo:${MONGO_VERSION:-7.0}
+    container_name: mongodb-replica-1
+    volumes:
+      - mongodb_replica_data:/data/db
+      - ${STACK_DIR:-.}/state/mongo-keyfile:/etc/mongo-keyfile:ro
+    command:
+      - mongod
+      - --replSet
+      - ${MONGO_REPLICA_SET:-rs0}
+      - --bind_ip_all
+      - --keyFile
+      - /etc/mongo-keyfile
+    healthcheck:
+      test: ["CMD-SHELL", "${MONGO_SHELL:-mongosh} --quiet --eval 'db.adminCommand({ping:1}).ok' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: ${MONGO_REPLICA_MEM_LIMIT:-1G}
+
+  # MongoDB'de otomatik failover ÇOĞUNLUK ister. İki üyeyle biri düşünce
+  # çoğunluk (2/2 → 1/2) kaybolur ve seçim yapılamaz; kalan üye SECONDARY'de
+  # kilitlenir. Arbiter üçüncü OY olarak katılır (veri tutmaz, ~64 MB yeter).
+  # NOT: P-S-A topolojisinde secondary düşerse w:"majority" yazmalar bekler —
+  # varsayılan w:1 kullanan uygulamalar etkilenmez (bkz. docs/FAILOVER.md).
+  mongodb-arbiter:
+    <<: *svc
+    profiles: [mongodb-replica]
+    image: mongo:${MONGO_VERSION:-7.0}
+    container_name: mongodb-arbiter
+    volumes:
+      - mongodb_arbiter_data:/data/db
+      - ${STACK_DIR:-.}/state/mongo-keyfile:/etc/mongo-keyfile:ro
+    command:
+      - mongod
+      - --replSet
+      - ${MONGO_REPLICA_SET:-rs0}
+      - --bind_ip_all
+      - --keyFile
+      - /etc/mongo-keyfile
+    healthcheck:
+      test: ["CMD-SHELL", "${MONGO_SHELL:-mongosh} --quiet --eval 'db.adminCommand({ping:1}).ok' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # ===========================================================================
+  # REDIS   —   profile: redis
+  # ===========================================================================
   redis:
-    image: redis:8-alpine
+    <<: *svc
+    profiles: [redis]
+    image: redis:${REDIS_VERSION:-8-alpine}
     container_name: redis
-    <<: *default-restart
-    ports:
-      - "6379:6379"
     command: >
       redis-server
-      --requirepass ${DB_PASSWORD:-change-me-in-production}
-      --appendonly yes
+      --requirepass ${REDIS_PASSWORD:-${DB_PASSWORD}}
+      --masterauth ${REDIS_PASSWORD:-${DB_PASSWORD}}
+      --appendonly ${REDIS_APPENDONLY:-yes}
       --protected-mode yes
       --maxmemory ${REDIS_MAXMEMORY:-384mb}
-      --maxmemory-policy allkeys-lru
+      --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
       --tcp-keepalive 60
     volumes:
       - redis_data:/data
-    networks:
-      - database_network
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${DB_PASSWORD:-change-me-in-production}", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDISCLI_AUTH\" --no-auth-warning ping | grep -q PONG"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    environment:
+      # redis-cli parolayı bu env'den okur → `ps` çıktısında görünmez.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-${DB_PASSWORD}}
+    deploy:
+      resources:
+        limits:
+          memory: ${REDIS_MEM_LIMIT:-600M}
+
+  redis-insight:
+    <<: *svc
+    profiles: [redis]
+    image: redis/redisinsight:2.58
+    container_name: redis-insight
+    volumes:
+      - redisinsight_data:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:5540/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  redis-exporter:
+    <<: *svc
+    profiles: [redis]
+    image: oliver006/redis_exporter:v1.62.0
+    container_name: redis-exporter
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-${DB_PASSWORD}}
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  # --- Redis replikası (profile: redis-replica) ------------------------------
+  redis-replica:
+    <<: *svc
+    profiles: [redis-replica]
+    image: redis:${REDIS_VERSION:-8-alpine}
+    container_name: redis-replica
+    command: >
+      redis-server
+      --replicaof redis 6379
+      --requirepass ${REDIS_PASSWORD:-${DB_PASSWORD}}
+      --masterauth ${REDIS_PASSWORD:-${DB_PASSWORD}}
+      --appendonly ${REDIS_APPENDONLY:-yes}
+      --replica-read-only yes
+    volumes:
+      - redis_replica_data:/data
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-${DB_PASSWORD}}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDISCLI_AUTH\" --no-auth-warning ping | grep -q PONG"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -152,26 +673,27 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${REDIS_MEM_LIMIT:-600M}
-    logging: *default-logging
+          memory: ${REDIS_REPLICA_MEM_LIMIT:-400M}
 
-  # Microsoft SQL Server. Admin kullanıcısı MSSQL'de sabittir: 'sa' (root olamaz).
-  # SA parolası ${DB_PASSWORD} — MSSQL politikası gereği güçlü olmalı (büyük+küçük+
-  # rakam+özel'den en az 3'ü, 8+ karakter). Developer sürümü ücretsiz (dev/test).
+  # ===========================================================================
+  # MSSQL   —   profile: mssql
+  # ===========================================================================
+  # Admin kullanıcısı MSSQL'de sabittir: 'sa' (root olamaz). Parola MSSQL
+  # politikası gereği güçlü olmalı: 8+ karakter, büyük/küçük/rakam/özel'den 3'ü.
   mssql:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    <<: *svc
+    profiles: [mssql]
+    image: mcr.microsoft.com/mssql/server:${MSSQL_VERSION:-2022-latest}
     container_name: mssql
-    <<: *default-restart
-    ports:
-      - "1433:1433"
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
-      MSSQL_PID: "Developer"
+      MSSQL_SA_PASSWORD: ${MSSQL_PASSWORD:-${DB_PASSWORD}}
+      MSSQL_PID: ${MSSQL_PID:-Developer}
+      # SQL Server'ın kendi bellek tavanı — container limitinin altında tutulur,
+      # yoksa motor limiti aşıp cgroup OOM-killer'a yakalanır.
+      MSSQL_MEMORY_LIMIT_MB: ${MSSQL_MEMORY_LIMIT_MB:-2048}
     volumes:
       - mssql_data:/var/opt/mssql
-    networks:
-      - database_network
     healthcheck:
       test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
       interval: 30s
@@ -182,105 +704,261 @@ services:
       resources:
         limits:
           memory: ${MSSQL_MEM_LIMIT:-4G}
-    logging: *default-logging
 
   # ===========================================================================
-  # ADMIN PANELS
+  # CASSANDRA   —   profile: cassandra   (eski cassandra/ alt-stack'i buraya taşındı)
   # ===========================================================================
-
-  phpmyadmin:
-    image: phpmyadmin:latest
-    container_name: phpmyadmin
-    <<: *default-restart
-    ports:
-      - "8081:80"
+  cassandra:
+    <<: *svc
+    profiles: [cassandra]
+    image: cassandra:${CASSANDRA_VERSION:-5.0}
+    container_name: cassandra
     environment:
-      PMA_HOST: mariadb
-      PMA_PORT: 3306
-      PMA_ARBITRARY: 1
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
-      UPLOAD_LIMIT: 128M
-      MAX_EXECUTION_TIME: 600
-    depends_on:
-      mariadb:
-        condition: service_healthy
-    networks:
-      - database_network
+      CASSANDRA_CLUSTER_NAME: ${CASSANDRA_CLUSTER_NAME:-databases-stack}
+      CASSANDRA_DC: datacenter1
+      CASSANDRA_RACK: rack1
+      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
+      CASSANDRA_AUTHENTICATOR: PasswordAuthenticator
+      CASSANDRA_AUTHORIZER: CassandraAuthorizer
+      CASSANDRA_NUM_TOKENS: "16"
+      HEAP_NEWSIZE: ${CASSANDRA_HEAP_NEW:-256M}
+      MAX_HEAP_SIZE: ${CASSANDRA_HEAP:-1G}
+      # Thrift (9160 / start_rpc) Cassandra 4.0'da kaldırıldı — ölü ayar temizlendi.
+      JVM_EXTRA_OPTS: "-Djava.net.preferIPv4Stack=true"
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    ulimits:
+      memlock: -1
+      nproc: 32768
+      nofile: { soft: 100000, hard: 100000 }
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:80/"]
+      test: ["CMD-SHELL", "nodetool status 2>/dev/null | grep -q '^UN' || exit 1"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
+      timeout: 15s
+      retries: 6
+      start_period: 180s
     deploy:
       resources:
         limits:
-          memory: 256M
-    logging: *default-logging
+          memory: ${CASSANDRA_MEM_LIMIT:-2G}
 
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: pgadmin
-    <<: *default-restart
-    ports:
-      - "8082:80"
+  cassandra-exporter:
+    <<: *svc
+    profiles: [cassandra]
+    image: criteord/cassandra_exporter:latest
+    container_name: cassandra-exporter
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
-      # Server mode = login zorunlu (yukarıdaki e-posta + parola ile). Güvenli:
-      # panel şifresiz açılmaz. "False" yapılırsa desktop mode (login yok, iç
-      # kullanıcı pgadmin4@pgadmin.org olur, DEFAULT_EMAIL atıl kalır).
-      PGADMIN_CONFIG_SERVER_MODE: "True"
-      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
-      PGADMIN_LISTEN_PORT: 80
-    volumes:
-      # Named volume — bind mount (./pgadmin) host'ta root'a ait olup pgadmin
-      # (uid 5050) yazamıyordu: "Failed to create /var/lib/pgadmin/sessions:
-      # Permission denied" → worker crash-loop → panel açılmıyordu. Named volume
-      # image'ın 5050 sahipliğini devralır, izin sorunu olmaz.
-      - pgadmin_data:/var/lib/pgadmin
+      CASSANDRA_EXPORTER_CONFIG_host: "cassandra:7199"
+      CASSANDRA_EXPORTER_CONFIG_listenPort: "9500"
     depends_on:
-      postgresql:
+      cassandra:
         condition: service_healthy
-    networks:
-      - database_network
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # ===========================================================================
+  # ELASTICSEARCH + KIBANA   —   profile: elasticsearch
+  # ===========================================================================
+  elasticsearch:
+    <<: *svc
+    profiles: [elasticsearch]
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.15.3}
+    container_name: elasticsearch
+    environment:
+      discovery.type: single-node
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-${DB_PASSWORD}}
+      xpack.security.enabled: "true"
+      # HTTP TLS kapalı: dış dünyaya zaten gateway'in TLS'i üzerinden çıkıyor,
+      # 9200 yalnız iç ağda. Basic auth AÇIK kalıyor.
+      xpack.security.http.ssl.enabled: "false"
+      xpack.license.self_generated.type: basic
+      ES_JAVA_OPTS: ${ELASTIC_JAVA_OPTS:--Xms1g -Xmx1g}
+      bootstrap.memory_lock: "true"
+      # Snapshot deposu — scripts/backup.sh bunun içine snapshot alıp tar'lar.
+      path.repo: /snapshots
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+      - elasticsearch_snapshots:/snapshots
     healthcheck:
-      test: ["CMD", "wget", "-O", "-", "http://127.0.0.1:80/misc/ping"]
+      test: ["CMD-SHELL", "curl -sf -u elastic:$$ELASTIC_PASSWORD http://127.0.0.1:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 10
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          memory: ${ELASTIC_MEM_LIMIT:-2G}
+
+  # Tek seferlik: Kibana'nın kullandığı kibana_system kullanıcısının parolasını
+  # ayarlar. Kibana `elastic` superuser'ı ile bağlanmayı REDDEDER, bu yüzden şart.
+  elasticsearch-init:
+    profiles: [elasticsearch]
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.15.3}
+    container_name: elasticsearch-init
+    restart: "no"
+    networks: [dbnet]
+    logging: *logging
+    environment:
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-${DB_PASSWORD}}
+      KIBANA_SYSTEM_PASSWORD: ${KIBANA_SYSTEM_PASSWORD:-${ELASTIC_PASSWORD:-${DB_PASSWORD}}}
+    entrypoint:
+      - bash
+      - -c
+      - |
+        until curl -sf -u "elastic:$$ELASTIC_PASSWORD" http://elasticsearch:9200/_cluster/health >/dev/null; do
+          echo "[es-init] elasticsearch bekleniyor..."; sleep 5
+        done
+        curl -sf -u "elastic:$$ELASTIC_PASSWORD" -X POST \
+          http://elasticsearch:9200/_security/user/kibana_system/_password \
+          -H 'Content-Type: application/json' \
+          -d "{\"password\":\"$$KIBANA_SYSTEM_PASSWORD\"}" >/dev/null \
+          && echo "[es-init] kibana_system parolası ayarlandı" \
+          || { echo "[es-init] BAŞARISIZ"; exit 1; }
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  kibana:
+    <<: *svc
+    profiles: [elasticsearch]
+    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-8.15.3}
+    container_name: kibana
+    environment:
+      ELASTICSEARCH_HOSTS: "http://elasticsearch:9200"
+      ELASTICSEARCH_USERNAME: kibana_system
+      ELASTICSEARCH_PASSWORD: ${KIBANA_SYSTEM_PASSWORD:-${ELASTIC_PASSWORD:-${DB_PASSWORD}}}
+      SERVER_PUBLICBASEURL: https://${STACK_HOST:-localhost}:8086
+      XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY: ${KIBANA_ENCRYPTION_KEY:?KIBANA_ENCRYPTION_KEY gerekli — ./install.sh üretir}
+    depends_on:
+      elasticsearch-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:5601/api/status | grep -q '\"level\":\"available\"' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: ${KIBANA_MEM_LIMIT:-1G}
+
+  elasticsearch-exporter:
+    <<: *svc
+    profiles: [elasticsearch]
+    image: quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0
+    container_name: elasticsearch-exporter
+    command:
+      - "--es.uri=http://elastic:${ELASTIC_PASSWORD:-${DB_PASSWORD}}@elasticsearch:9200"
+      - "--es.all"
+      - "--es.indices"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  # ===========================================================================
+  # KAFKA (KRaft — Zookeeper yok)   —   profile: kafka
+  # ===========================================================================
+  kafka:
+    <<: *svc
+    profiles: [kafka]
+    image: apache/kafka:${KAFKA_VERSION:-3.9.0}
+    container_name: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: "INTERNAL://:9092,EXTERNAL://:29092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka:9092,EXTERNAL://${STACK_HOST:-localhost}:${KAFKA_PORT:-9092}"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_LOG_RETENTION_HOURS: ${KAFKA_RETENTION_HOURS:-168}
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:-5L6g3nShT-eMCtK--X86sw}
+      KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS:--Xms512m -Xmx512m}
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 20s
+      retries: 6
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: ${KAFKA_MEM_LIMIT:-1536M}
+
+  kafka-ui:
+    <<: *svc
+    profiles: [kafka]
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: kafka-ui
+    environment:
+      KAFKA_CLUSTERS_0_NAME: databases-stack
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "true"
+      SERVER_PORT: 8080
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8080/actuator/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
       start_period: 60s
     deploy:
       resources:
         limits:
           memory: 512M
-    logging: *default-logging
 
-  # Mongo Express - FIXED: Doğru env variables + healthcheck
-  mongo-express:
-    image: mongo-express:latest
-    container_name: mongo-express
-    <<: *default-restart
-    ports:
-      - "8083:8081"
-    environment:
-      ME_CONFIG_MONGODB_ADMINUSERNAME: root
-      ME_CONFIG_MONGODB_ADMINPASSWORD: ${DB_PASSWORD:-change-me-in-production}
-      ME_CONFIG_MONGODB_URL: "mongodb://root:${DB_PASSWORD:-change-me-in-production}@mongodb:27017/?authSource=admin"
-      ME_CONFIG_MONGODB_SERVER: mongodb
-      ME_CONFIG_MONGODB_PORT: "27017"
-      ME_CONFIG_BASICAUTH: "false"
-      ME_CONFIG_MONGODB_ENABLE_ADMIN: "true"
-      ME_CONFIG_OPTIONS_EDITORTHEME: "ambiance"
+  kafka-exporter:
+    <<: *svc
+    profiles: [kafka]
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: kafka-exporter
+    command: ["--kafka.server=kafka:9092", "--web.listen-address=:9308"]
     depends_on:
-      mongodb:
+      kafka:
         condition: service_healthy
-    networks:
-      - database_network
-    # KRITIK: Mongo Express healthcheck'i genelde sorunlu
-    # wget ile 8081'e istek atıyoruz, 401/200 farketmez, bağlantı varsa OK
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  # ===========================================================================
+  # RABBITMQ   —   profile: rabbitmq
+  # ===========================================================================
+  rabbitmq:
+    <<: *svc
+    profiles: [rabbitmq]
+    image: rabbitmq:${RABBITMQ_VERSION:-3.13-management-alpine}
+    container_name: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-${DB_PASSWORD}}
+      # Prometheus eklentisi management imajında yerleşik (:15692/metrics)
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit disk_free_limit 2147483648"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:8081/ || wget --quiet --tries=1 --spider http://127.0.0.1:8081/status || exit 0"]
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping || exit 1"]
       interval: 30s
       timeout: 15s
       retries: 5
@@ -288,25 +966,31 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
-    logging: *default-logging
+          memory: ${RABBITMQ_MEM_LIMIT:-1G}
 
-  # RedisInsight - FIXED: Doğru volume permissions + healthcheck
-  redis-insight:
-    image: redis/redisinsight:latest
-    container_name: redis-insight
-    <<: *default-restart
-    ports:
-      - "8084:5540"
+  # ===========================================================================
+  # CLICKHOUSE   —   profile: clickhouse
+  # ===========================================================================
+  clickhouse:
+    <<: *svc
+    profiles: [clickhouse]
+    image: clickhouse/clickhouse-server:${CLICKHOUSE_VERSION:-24.8}
+    container_name: clickhouse
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-${DB_PASSWORD}}
+      CLICKHOUSE_DB: ${DEFAULT_DATABASE:-defaultdb}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      # config.d/prometheus.xml bunu `from_env` ile okur (bkz. o dosya).
+      CLICKHOUSE_MAX_MEMORY: ${CLICKHOUSE_MAX_MEMORY:-1610612736}
     volumes:
-      - redisinsight_data:/data
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - database_network
+      - clickhouse_data:/var/lib/clickhouse
+      - ${STACK_DIR:-.}/config/clickhouse/prometheus.xml:/etc/clickhouse-server/config.d/prometheus.xml:ro
+      - ${STACK_DIR:-.}/config/clickhouse/backups.xml:/etc/clickhouse-server/config.d/backups.xml:ro
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:5540/api/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8123/ping | grep -q Ok || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -314,147 +998,61 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
-    logging: *default-logging
+          memory: ${CLICKHOUSE_MEM_LIMIT:-2G}
 
-  adminer:
-    image: adminer:latest
-    container_name: adminer
-    <<: *default-restart
-    ports:
-      - "8085:8080"
+  # ===========================================================================
+  # NEO4J   —   profile: neo4j
+  # ===========================================================================
+  neo4j:
+    <<: *svc
+    profiles: [neo4j]
+    image: neo4j:${NEO4J_VERSION:-5-community}
+    container_name: neo4j
     environment:
-      ADMINER_DEFAULT_SERVER: mariadb
-      ADMINER_DESIGN: dracula
-    networks:
-      - database_network
-    healthcheck:
-      test: ["CMD", "php", "-r", "echo 'OK';"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-    logging: *default-logging
-
-  # ===========================================================================
-  # NGINX DASHBOARD - FIXED: /health endpoint auth'suz
-  # ===========================================================================
-
-  nginx-dashboard:
-    image: nginx:alpine
-    container_name: nginx-dashboard
-    <<: *default-restart
-    ports:
-      - "80:80"
+      # Neo4j parolası en az 8 karakter olmalı.
+      NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-${DB_PASSWORD}}"
+      NEO4J_server_memory_heap_initial__size: ${NEO4J_HEAP:-512m}
+      NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP:-512m}
+      NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE:-512m}
+      NEO4J_server_default__listen__address: "0.0.0.0"
+      # Browser'ın JS'i tarayıcıdan doğrudan bolt'a bağlanır → host adresi şart.
+      NEO4J_server_bolt_advertised__address: "${STACK_HOST:-localhost}:${NEO4J_BOLT_PORT:-7687}"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/.htpasswd:/etc/nginx/.htpasswd:ro
-      - ./nginx/html:/usr/share/nginx/html:ro
-    networks:
-      - database_network
-    # KRITIK FIX: /health endpoint auth gerektirmiyor
+      - neo4j_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1/health || exit 1"]
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:7474/ || exit 1"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 60s
     deploy:
       resources:
         limits:
-          memory: 64M
-    logging: *default-logging
+          memory: ${NEO4J_MEM_LIMIT:-1536M}
 
   # ===========================================================================
-  # PROMETHEUS EXPORTERS
+  # MINIO (S3 uyumlu nesne depolama)   —   profile: minio
   # ===========================================================================
-
-  mysql-exporter:
-    image: prom/mysqld-exporter:latest
-    container_name: mysql-exporter
-    <<: *default-restart
-    ports:
-      - "9104:9104"
+  minio:
+    <<: *svc
+    profiles: [minio]
+    image: minio/minio:${MINIO_VERSION:-RELEASE.2024-10-13T13-34-11Z}
+    container_name: minio
     environment:
-      DATA_SOURCE_NAME: "root:${DB_PASSWORD:-change-me-in-production}@tcp(mariadb:3306)/"
-      # Yeni mysqld-exporter (--mysqld.address ile) parolayı DATA_SOURCE_NAME'den
-      # DEĞİL bu env'den okur; yoksa "using password: NO" → Access denied → mysql_up=0.
-      MYSQLD_EXPORTER_PASSWORD: ${DB_PASSWORD:-change-me-in-production}
-    command:
-      - "--mysqld.address=mariadb:3306"
-      - "--mysqld.username=root"
-    depends_on:
-      mariadb:
-        condition: service_healthy
-    networks:
-      - database_network
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-${DB_PASSWORD}}
+      MINIO_BROWSER_REDIRECT_URL: https://${STACK_HOST:-localhost}:8089
+      MINIO_PROMETHEUS_AUTH_TYPE: public
+    command: ["server", "/data", "--console-address", ":9001"]
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     deploy:
       resources:
         limits:
-          memory: 64M
-    logging: *default-logging
-
-  postgres-exporter:
-    image: prometheuscommunity/postgres-exporter:latest
-    container_name: postgres-exporter
-    <<: *default-restart
-    ports:
-      - "9187:9187"
-    environment:
-      DATA_SOURCE_NAME: "postgresql://root:${DB_PASSWORD:-change-me-in-production}@postgresql:5432/defaultdb?sslmode=disable"
-    depends_on:
-      postgresql:
-        condition: service_healthy
-    networks:
-      - database_network
-    deploy:
-      resources:
-        limits:
-          memory: 64M
-    logging: *default-logging
-
-  mongodb-exporter:
-    image: percona/mongodb_exporter:0.40
-    container_name: mongodb-exporter
-    <<: *default-restart
-    ports:
-      - "9216:9216"
-    command:
-      - "--mongodb.uri=mongodb://root:${DB_PASSWORD:-change-me-in-production}@mongodb:27017/?authSource=admin"
-      - "--mongodb.collstats-colls="
-      - "--mongodb.indexstats-colls="
-      - "--web.listen-address=:9216"
-    depends_on:
-      mongodb:
-        condition: service_healthy
-    networks:
-      - database_network
-    deploy:
-      resources:
-        limits:
-          memory: 64M
-    logging: *default-logging
-
-  redis-exporter:
-    image: oliver006/redis_exporter:latest
-    container_name: redis-exporter
-    <<: *default-restart
-    ports:
-      - "9121:9121"
-    environment:
-      REDIS_ADDR: "redis://redis:6379"
-      REDIS_PASSWORD: "${DB_PASSWORD:-change-me-in-production}"
-    depends_on:
-      redis:
-        condition: service_healthy
-    networks:
-      - database_network
-    deploy:
-      resources:
-        limits:
-          memory: 64M
-    logging: *default-logging
+          memory: ${MINIO_MEM_LIMIT:-512M}

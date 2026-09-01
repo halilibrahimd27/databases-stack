@@ -1,0 +1,352 @@
+# =============================================================================
+# databases-stack gateway — tek giriş kapısı
+# =============================================================================
+# Bu dosya nginx imajının envsubst adımından geçer (/etc/nginx/templates/*.template
+# → /etc/nginx/conf.d/*.conf). NGINX_ENVSUBST_FILTER="^STACK_" olduğu için
+# YALNIZCA ${STACK_...} değişkenleri değiştirilir; $host, $uri gibi nginx
+# değişkenleri olduğu gibi kalır.
+#
+# ⚙️ EN KRİTİK NOKTA — DEĞİŞKENLİ proxy_pass:
+# Her upstream `set $up_x ...;` ile bir DEĞİŞKENE atanır. nginx, proxy_pass'te
+# değişken görürse DNS çözümünü açılış anında değil İSTEK anında yapar.
+# Sabit yazsaydık, kapalı bir motorun container'ı olmadığı için nginx
+# "host not found in upstream" ile hiç açılmaz ve tüm dashboard çökerdi —
+# yani aktif et/pasif et modeli imkânsız olurdu. Böyle olunca kapalı motor
+# sadece 502 döner, biz de onu "pasif" sayfasına çeviriyoruz.
+# =============================================================================
+
+# DNS sunucusu. Docker'da gömülü resolver (127.0.0.11), Kubernetes'te kube-dns
+# (10.96.0.10) olur — bu yüzden değişkenle geliyor, aynı yapılandırma iki
+# ortamda da çalışsın diye. valid=10s → motor aktif edilince en geç 10 sn'de görülür.
+resolver ${STACK_RESOLVER} valid=10s ipv6=off;
+resolver_timeout 5s;
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+ssl_session_cache   shared:SSL:10m;
+ssl_session_timeout 1d;
+ssl_session_tickets off;
+
+# Güvenlik başlıkları — always ile hata sayfalarında da gönderilir.
+add_header X-Frame-Options        "SAMEORIGIN"        always;
+add_header X-Content-Type-Options "nosniff"           always;
+add_header Referrer-Policy        "same-origin"       always;
+
+client_max_body_size 512m;
+server_tokens off;
+
+# =============================================================================
+# PORT 80 — yalnızca yönlendirme + CA sertifikası indirme
+# =============================================================================
+server {
+    listen 80 default_server;
+    server_name _;
+
+    # Sağlık ucu: auth YOK (healthcheck ve monitoring buradan bakar).
+    location = /health {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "healthy\n";
+    }
+
+    # İç CA sertifikası. TLS uyarısını kaldırmak için istemciye kurulur —
+    # bu yüzden HTTPS'ten ÖNCE, auth'suz ve düz HTTP üzerinden erişilebilir
+    # olmalı (yoksa "sertifikaya güvenmek için sertifikaya güvenmen gerekir"
+    # kısır döngüsü olur). Kamuya açık bir şey değildir: içinde yalnızca
+    # ortak anahtar vardır, özel anahtar certs/ca.key'de kalır.
+    location = /ca.crt {
+        access_log off;
+        alias /etc/nginx/certs/ca.crt;
+        add_header Content-Type application/x-x509-ca-cert;
+        add_header Content-Disposition 'attachment; filename="databases-stack-ca.crt"';
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# =============================================================================
+# PORT 443 — dashboard + kontrol API'si
+# =============================================================================
+server {
+    listen 443 ssl default_server;
+    http2 on;
+    server_name _;
+    include /etc/nginx/snippets/ssl.conf;
+
+    auth_basic           "databases-stack";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    location = /health {
+        auth_basic off;
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "healthy\n";
+    }
+
+    location = /ca.crt {
+        auth_basic off;
+        alias /etc/nginx/certs/ca.crt;
+        add_header Content-Type application/x-x509-ca-cert;
+        add_header Content-Disposition 'attachment; filename="databases-stack-ca.crt"';
+    }
+
+    # Kontrol düzlemi. Token'ı BURADA ekliyoruz: controller host'a port açmaz,
+    # yani ona ancak bu satırdan geçilerek ulaşılabilir. Aynı docker ağındaki
+    # başka bir container (ör. ele geçirilmiş bir panel) doğrudan denerse
+    # token olmadığı için 401 alır.
+    location /api/ {
+        set $up_controller controller;
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_set_header X-Api-Token "${STACK_CONTROLLER_TOKEN}";
+        # Motor aktivasyonu imaj çekmeyi gerektirebilir; dakikalar sürebilir.
+        proxy_read_timeout 1800s;
+        proxy_pass http://$up_controller:8000;
+    }
+
+    location / {
+        root  /usr/share/nginx/html;
+        index index.html;
+        try_files $uri $uri/ =404;
+    }
+
+    include /etc/nginx/snippets/inactive.conf;
+}
+
+# =============================================================================
+# PANELLER — her biri kendi HTTPS portunda
+# =============================================================================
+# Alt yol (/pma/ gibi) yerine ayrı port kullanıldı: phpMyAdmin, pgAdmin, Kibana,
+# Neo4j Browser gibi araçların alt-yolda çalışması ayrı ayrı base-path ayarı
+# ister ve kırılgandır. Ayrı portta her uygulama kendi kökünde çalışır.
+# Panellerin KENDİ portları host'a açılmaz; tek yol buradan geçer.
+
+# --- 8081 phpMyAdmin (MariaDB) ----------------------------------------------
+server {
+    listen 8081 ssl; http2 on; server_name _;
+    include /etc/nginx/snippets/ssl.conf;
+    auth_basic "phpMyAdmin"; auth_basic_user_file /etc/nginx/.htpasswd;
+    location / {
+        set $up phpmyadmin;
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://$up:80;
+    }
+    include /etc/nginx/snippets/inactive.conf;
+}
+
+# --- 8082 pgAdmin (PostgreSQL) ----------------------------------------------
+server {
+    listen 8082 ssl; http2 on; server_name _;
+    include /etc/nginx/snippets/ssl.conf;
+    auth_basic "pgAdmin"; auth_basic_user_file /etc/nginx/.htpasswd;
+    location / {
+        set $up pgadmin;
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://$up:80;
+    }
+    include /etc/nginx/snippets/inactive.conf;
+}
+
+# --- 8083 Mongo Express (MongoDB) -------------------------------------------
+server {
+    listen 8083 ssl; http2 on; server_name _;
+    include /etc/nginx/snippets/ssl.conf;
+    auth_basic "Mongo Express"; auth_basic_user_file /etc/nginx/.htpasswd;
+    location / {
+        set $up mongo-express;
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://$up:8081;
+    }
+    include /etc/nginx/snippets/inactive.conf;
+}
+
+# --- 8084 RedisInsight (Redis) ----------------------------------------------
+server {
+    listen 8084 ssl; http2 on; server_name _;
+    include /etc/nginx/snippets/ssl.conf;
+    auth_basic "RedisInsight"; auth_basic_user_file /etc/nginx/.htpasswd;
+    location / {
+        set $up redis-insight;
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://$up:5540;
+    }
+    include /etc/nginx/snippets/inactive.conf;
+}
+
+# --- 8085 Adminer (evrensel — MSSQL, ClickHouse, MySQL, PostgreSQL) ---------
+server {
+    listen 8085 ssl; http2 on; server_name _;
+    include /etc/nginx/snippets/ssl.conf;
+    auth_basic "Adminer"; auth_basic_user_file /etc/nginx/.htpasswd;
+    location / {
+        set $up adminer;
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://$up:8080;
+    }
+    include /etc/nginx/snippets/inactive.conf;
+}
+
+# --- 8086 Kibana (Elasticsearch) --------------------------------------------
+server {
+    listen 8086 ssl; http2 on; server_name _;
+    include /etc/nginx/snippets/ssl.conf;
+    auth_basic "Kibana"; auth_basic_user_file /etc/nginx/.htpasswd;
+    location / {
+        set $up kibana;
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_read_timeout 600s;   # Kibana uzun süren aramalar açar
+        proxy_pass http://$up:5601;
+    }
+    include /etc/nginx/snippets/inactive.conf;
+}
+
+# --- 8087 Kafka UI ----------------------------------------------------------
+server {
+    listen 8087 ssl; http2 on; server_name _;
+    include /etc/nginx/snippets/ssl.conf;
+    auth_basic "Kafka UI"; auth_basic_user_file /etc/nginx/.htpasswd;
+    location / {
+        set $up kafka-ui;
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://$up:8080;
+    }
+    include /etc/nginx/snippets/inactive.conf;
+}
+
+# --- 8088 RabbitMQ Management ----------------------------------------------
+server {
+    listen 8088 ssl; http2 on; server_name _;
+    include /etc/nginx/snippets/ssl.conf;
+    auth_basic "RabbitMQ"; auth_basic_user_file /etc/nginx/.htpasswd;
+    location / {
+        set $up rabbitmq;
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://$up:15672;
+    }
+    include /etc/nginx/snippets/inactive.conf;
+}
+
+# --- 8089 MinIO Console -----------------------------------------------------
+server {
+    listen 8089 ssl; http2 on; server_name _;
+    include /etc/nginx/snippets/ssl.conf;
+    auth_basic "MinIO"; auth_basic_user_file /etc/nginx/.htpasswd;
+    location / {
+        set $up minio;
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://$up:9001;
+    }
+    include /etc/nginx/snippets/inactive.conf;
+}
+
+# --- 8090 Neo4j Browser -----------------------------------------------------
+server {
+    listen 8090 ssl; http2 on; server_name _;
+    include /etc/nginx/snippets/ssl.conf;
+    auth_basic "Neo4j"; auth_basic_user_file /etc/nginx/.htpasswd;
+    location / {
+        set $up neo4j;
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://$up:7474;
+    }
+    include /etc/nginx/snippets/inactive.conf;
+}
+
+# --- 8091 ClickHouse Play ---------------------------------------------------
+server {
+    listen 8091 ssl; http2 on; server_name _;
+    include /etc/nginx/snippets/ssl.conf;
+    auth_basic "ClickHouse"; auth_basic_user_file /etc/nginx/.htpasswd;
+    location = / { return 302 /play; }
+    location / {
+        set $up clickhouse;
+        include /etc/nginx/snippets/proxy.conf;
+        proxy_pass http://$up:8123;
+    }
+    include /etc/nginx/snippets/inactive.conf;
+}
+
+# =============================================================================
+# PORT 9443 — Prometheus scrape ucu
+# =============================================================================
+# Exporter portları host'a AÇILMAZ; hepsi tek TLS+auth'lu porttan sunulur.
+# Prometheus tarafı:
+#   scheme: https
+#   basic_auth: { username: admin, password: ... }
+#   tls_config: { ca_file: /etc/prometheus/databases-stack-ca.crt }
+#   metrics_path: /metrics/<motor>
+# Kapalı motorun ucu 503 döner; Prometheus onu "down" olarak işaretler — doğrudur.
+server {
+    listen 9443 ssl; http2 on; server_name _;
+    include /etc/nginx/snippets/ssl.conf;
+    auth_basic "metrics"; auth_basic_user_file /etc/nginx/.htpasswd;
+    access_log off;
+
+    location = /metrics/mariadb {
+        set $up mariadb-exporter;
+        include /etc/nginx/snippets/proxy.conf;
+        rewrite ^ /metrics break;
+        proxy_pass http://$up:9104;
+    }
+    location = /metrics/postgresql {
+        set $up postgres-exporter;
+        include /etc/nginx/snippets/proxy.conf;
+        rewrite ^ /metrics break;
+        proxy_pass http://$up:9187;
+    }
+    location = /metrics/mongodb {
+        set $up mongodb-exporter;
+        include /etc/nginx/snippets/proxy.conf;
+        rewrite ^ /metrics break;
+        proxy_pass http://$up:9216;
+    }
+    location = /metrics/redis {
+        set $up redis-exporter;
+        include /etc/nginx/snippets/proxy.conf;
+        rewrite ^ /metrics break;
+        proxy_pass http://$up:9121;
+    }
+    location = /metrics/cassandra {
+        set $up cassandra-exporter;
+        include /etc/nginx/snippets/proxy.conf;
+        rewrite ^ /metrics break;
+        proxy_pass http://$up:9500;
+    }
+    location = /metrics/elasticsearch {
+        set $up elasticsearch-exporter;
+        include /etc/nginx/snippets/proxy.conf;
+        rewrite ^ /metrics break;
+        proxy_pass http://$up:9114;
+    }
+    location = /metrics/kafka {
+        set $up kafka-exporter;
+        include /etc/nginx/snippets/proxy.conf;
+        rewrite ^ /metrics break;
+        proxy_pass http://$up:9308;
+    }
+    # Aşağıdakilerin exporter'ı yok — metrikleri motorun kendisi sunar.
+    location = /metrics/rabbitmq {
+        set $up rabbitmq;
+        include /etc/nginx/snippets/proxy.conf;
+        rewrite ^ /metrics break;
+        proxy_pass http://$up:15692;
+    }
+    location = /metrics/clickhouse {
+        set $up clickhouse;
+        include /etc/nginx/snippets/proxy.conf;
+        rewrite ^ /metrics break;
+        proxy_pass http://$up:9363;
+    }
+    location = /metrics/minio {
+        set $up minio;
+        include /etc/nginx/snippets/proxy.conf;
+        rewrite ^ /minio/v2/metrics/cluster break;
+        proxy_pass http://$up:9000;
+    }
+
+    include /etc/nginx/snippets/inactive.conf;
+}

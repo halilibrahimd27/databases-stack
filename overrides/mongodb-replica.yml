@@ -1,0 +1,18 @@
+# MongoDB replica set — controller "replika kur" denince devreye alınır.
+# Ana compose'a ek olarak yüklenir (docker compose -f base.yml -f bu.yml).
+services:
+  mongodb:
+    command:
+      - mongod
+      - --replSet
+      - ${MONGO_REPLICA_SET:-rs0}
+      - --bind_ip_all
+      - --keyFile
+      - /etc/mongo-keyfile
+      - --wiredTigerCacheSizeGB
+      - "${MONGO_WIREDTIGER_CACHE_GB:-1}"
+    volumes:
+      - mongodb_data:/data/db
+      # Replica set üyeleri birbirini bu paylaşılan anahtarla doğrular.
+      # install.sh üretir; mod 400 ve uid 999 (mongod) sahipliğinde olmalı.
+      - ${STACK_DIR:-.}/state/mongo-keyfile:/etc/mongo-keyfile:ro

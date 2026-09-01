@@ -1,39 +1,37 @@
-# ───── Secrets ─────
+# ───── Sırlar ─────
 .env
 .env.*
 !.env.example
+credentials.txt
+certs/
+k8s/secrets/
+gateway/.htpasswd
 *.pem
 *.key
 *.crt
+*.srl
 
-# ───── Logs ─────
+# ───── Çalışma zamanı durumu ─────
+# Controller'ın host'a göre hesapladığı ayarlar ve aktif profil listesi.
+# Makineye özeldir — commit edilmez.
+state/
 logs/
 *.log
 
-# ───── Backups (volume contents) ─────
+# ───── Yedekler ─────
 backups/
 *.sql
 *.sql.gz
 *.tar
 *.tar.gz
 *.dump
+*.dump.gz
 *.rdb
 *.rdb.gz
+*.archive.gz
+*.json.gz
 
-# ───── Volume data (persistent) ─────
-mariadb/data/
-postgresql/data/
-mongodb/data/
-redis/data/
-pgadmin/sessions/
-pgadmin/storage/
-pgadmin/*.db
-redisinsight-data/
-
-# ───── nginx auth ─────
-nginx/.htpasswd
-
-# ───── Lock files ─────
+# ───── Kilit dosyaları ─────
 *.lock
 
 # ───── Editör / OS ─────
@@ -42,3 +40,5 @@ nginx/.htpasswd
 *.swp
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc

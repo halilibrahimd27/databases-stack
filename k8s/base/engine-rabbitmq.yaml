@@ -1,0 +1,64 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rabbitmq
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: rabbitmq, app.kubernetes.io/part-of: databases-stack}
+spec:
+  # replicas: 0 → motor KAPALI. Dashboard'daki "Aktif Et" bunu 1 yapar.
+  replicas: 0
+  serviceName: rabbitmq
+  selector:
+    matchLabels: {app.kubernetes.io/name: rabbitmq}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: rabbitmq}
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: rabbitmq
+        image: rabbitmq:3.13-management-alpine
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: client
+          containerPort: 5672
+        env:
+        - name: RABBITMQ_DEFAULT_USER
+          value: "admin"
+        - name: RABBITMQ_DEFAULT_PASS
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: RABBITMQ_PASSWORD
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/rabbitmq
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: rabbitmq}
+spec:
+  selector: {app.kubernetes.io/name: rabbitmq}
+  ports:
+  - name: amqp
+    port: 5672
+    targetPort: 5672

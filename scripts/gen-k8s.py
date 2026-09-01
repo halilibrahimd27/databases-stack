@@ -1,0 +1,300 @@
+#!/usr/bin/env python3
+"""
+Kubernetes manifest üreticisi — catalog.json'dan üretir.
+
+Neden üretiyoruz, elle yazmıyoruz: katalog tek yetki kaynağı. Yeni bir motor
+eklendiğinde compose ve K8s'in ayrışmaması için ikisi de aynı kaynaktan gelir.
+
+    python3 scripts/gen-k8s.py               → k8s/base/ altına yaz
+    python3 scripts/gen-k8s.py --with-secrets → .env'deki parolaları da göm
+                                                (k8s/secrets/ — .gitignore'da)
+
+K8s'te "aktif et" = StatefulSet'i 0'dan 1 replikaya ölçeklemek. Bu yüzden tüm
+veritabanları replicas: 0 ile üretilir — Docker'daki "container hiç yaratılmaz"
+davranışının doğrudan karşılığı.
+"""
+import base64
+import json
+import os
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NS = "databases-stack"
+
+# Motora özgü ortam değişkenleri. Parolalar Secret'tan referansla gelir;
+# manifestlere düz yazılmaz.
+ENV = {
+    "mariadb": [("MARIADB_ROOT_PASSWORD", "secret:MARIADB_PASSWORD"),
+                ("MARIADB_DATABASE", "defaultdb")],
+    "postgresql": [("POSTGRES_USER", "root"), ("POSTGRES_DB", "defaultdb"),
+                   ("POSTGRES_PASSWORD", "secret:POSTGRES_PASSWORD"),
+                   ("PGDATA", "/var/lib/postgresql/data/pgdata")],
+    "mongodb": [("MONGO_INITDB_ROOT_USERNAME", "root"),
+                ("MONGO_INITDB_ROOT_PASSWORD", "secret:MONGO_PASSWORD")],
+    "redis": [("REDISCLI_AUTH", "secret:REDIS_PASSWORD")],
+    "mssql": [("ACCEPT_EULA", "Y"), ("MSSQL_PID", "Developer"),
+              ("MSSQL_SA_PASSWORD", "secret:MSSQL_PASSWORD")],
+    "cassandra": [("CASSANDRA_CLUSTER_NAME", "databases-stack"),
+                  ("CASSANDRA_AUTHENTICATOR", "PasswordAuthenticator"),
+                  ("CASSANDRA_AUTHORIZER", "CassandraAuthorizer"),
+                  ("MAX_HEAP_SIZE", "1G"), ("HEAP_NEWSIZE", "256M")],
+    "elasticsearch": [("discovery.type", "single-node"),
+                      ("xpack.security.enabled", "true"),
+                      ("xpack.security.http.ssl.enabled", "false"),
+                      ("ES_JAVA_OPTS", "-Xms1g -Xmx1g"),
+                      ("ELASTIC_PASSWORD", "secret:ELASTIC_PASSWORD")],
+    "kafka": [("KAFKA_NODE_ID", "1"), ("KAFKA_PROCESS_ROLES", "broker,controller"),
+              ("KAFKA_LISTENERS", "PLAINTEXT://:9092,CONTROLLER://:9093"),
+              ("KAFKA_ADVERTISED_LISTENERS", "PLAINTEXT://kafka:9092"),
+              ("KAFKA_LISTENER_SECURITY_PROTOCOL_MAP", "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"),
+              ("KAFKA_CONTROLLER_LISTENER_NAMES", "CONTROLLER"),
+              ("KAFKA_CONTROLLER_QUORUM_VOTERS", "1@kafka:9093"),
+              ("KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR", "1"),
+              ("KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR", "1"),
+              ("KAFKA_LOG_DIRS", "/var/lib/kafka/data"),
+              ("CLUSTER_ID", "5L6g3nShT-eMCtK--X86sw")],
+    "rabbitmq": [("RABBITMQ_DEFAULT_USER", "admin"),
+                 ("RABBITMQ_DEFAULT_PASS", "secret:RABBITMQ_PASSWORD")],
+    "clickhouse": [("CLICKHOUSE_USER", "default"), ("CLICKHOUSE_DB", "defaultdb"),
+                   ("CLICKHOUSE_PASSWORD", "secret:CLICKHOUSE_PASSWORD")],
+    "neo4j": [("NEO4J_AUTH", "secret:NEO4J_AUTH")],
+    "minio": [("MINIO_ROOT_USER", "minioadmin"),
+              ("MINIO_ROOT_PASSWORD", "secret:MINIO_ROOT_PASSWORD")],
+}
+IMAGES = {
+    "mariadb": "mariadb:11.4", "postgresql": "postgres:16", "mongodb": "mongo:7.0",
+    "redis": "redis:8-alpine", "mssql": "mcr.microsoft.com/mssql/server:2022-latest",
+    "cassandra": "cassandra:5.0",
+    "elasticsearch": "docker.elastic.co/elasticsearch/elasticsearch:8.15.3",
+    "kafka": "apache/kafka:3.9.0", "rabbitmq": "rabbitmq:3.13-management-alpine",
+    "clickhouse": "clickhouse/clickhouse-server:24.8", "neo4j": "neo4j:5-community",
+    "minio": "minio/minio:RELEASE.2024-10-13T13-34-11Z",
+}
+ARGS = {"redis": ["redis-server", "--requirepass", "$(REDISCLI_AUTH)", "--appendonly", "yes"],
+        "minio": ["server", "/data", "--console-address", ":9001"]}
+STORAGE = {"mariadb": "20Gi", "postgresql": "20Gi", "mongodb": "20Gi", "redis": "5Gi",
+           "mssql": "30Gi", "cassandra": "30Gi", "elasticsearch": "30Gi", "kafka": "20Gi",
+           "rabbitmq": "5Gi", "clickhouse": "30Gi", "neo4j": "10Gi", "minio": "50Gi"}
+
+
+def env_block(eid, indent):
+    pad = " " * indent
+    out = []
+    for k, v in ENV.get(eid, []):
+        if isinstance(v, str) and v.startswith("secret:"):
+            out.append("%s- name: %s\n%s  valueFrom:\n%s    secretKeyRef:\n"
+                       "%s      name: db-secrets\n%s      key: %s"
+                       % (pad, k, pad, pad, pad, pad, v.split(":", 1)[1]))
+        else:
+            out.append('%s- name: %s\n%s  value: "%s"' % (pad, k, pad, v))
+    return "\n".join(out) or (pad + "[]")
+
+
+def statefulset(e):
+    eid = e["id"]
+    k8s = e["k8s"]
+    res = e["resources"]
+    # Başlangıç limiti muhafazakâr: gerçek değeri controller aktivasyon anında
+    # `kubectl set resources` ile host/node kapasitesine göre günceller.
+    mem = max(res["min_mb"], 512)
+    args = ARGS.get(eid)
+    args_yaml = ""
+    if args:
+        args_yaml = "        args:\n" + "\n".join('        - "%s"' % a for a in args) + "\n"
+    return f"""---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {eid}
+  namespace: {NS}
+  labels: {{app.kubernetes.io/name: {eid}, app.kubernetes.io/part-of: databases-stack}}
+spec:
+  # replicas: 0 → motor KAPALI. Dashboard'daki "Aktif Et" bunu 1 yapar.
+  replicas: 0
+  serviceName: {eid}
+  selector:
+    matchLabels: {{app.kubernetes.io/name: {eid}}}
+  template:
+    metadata:
+      labels: {{app.kubernetes.io/name: {eid}}}
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: {eid}
+        image: {IMAGES[eid]}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: client
+          containerPort: {k8s["port"]}
+{args_yaml}        env:
+{env_block(eid, 8)}
+        resources:
+          requests:
+            memory: "{mem}Mi"
+            cpu: "100m"
+          limits:
+            memory: "{mem}Mi"
+        volumeMounts:
+        - name: data
+          mountPath: {k8s["data_path"]}
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: {STORAGE[eid]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {eid}
+  namespace: {NS}
+  labels: {{app.kubernetes.io/name: {eid}}}
+spec:
+  selector: {{app.kubernetes.io/name: {eid}}}
+  ports:
+""" + "\n".join("  - name: %s\n    port: %d\n    targetPort: %d"
+                % (p.get("label", "client").split()[0].lower().replace("/", "-"),
+                   p["port"], p["port"])
+                for p in e["client_ports"]) + "\n"
+
+
+CONTROLLER = f"""---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {{name: controller, namespace: {NS}}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {{name: controller, namespace: {NS}}}
+rules:
+# Controller'ın TEK yetkisi StatefulSet'leri okumak ve ölçeklemek/boyutlandırmak.
+# Docker kurulumundaki docker.sock erişiminin (host'ta tam yetki) aksine bu
+# yetki dar kapsamlıdır — K8s dağıtımı bu açıdan daha güvenlidir.
+- apiGroups: ["apps"]
+  resources: ["statefulsets", "statefulsets/scale"]
+  verbs: ["get", "list", "watch", "patch", "update"]
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {{name: controller, namespace: {NS}}}
+roleRef: {{apiGroup: rbac.authorization.k8s.io, kind: Role, name: controller}}
+subjects: [{{kind: ServiceAccount, name: controller, namespace: {NS}}}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {{name: controller, namespace: {NS}}}
+spec:
+  replicas: 1
+  selector: {{matchLabels: {{app.kubernetes.io/name: controller}}}}
+  template:
+    metadata: {{labels: {{app.kubernetes.io/name: controller}}}}
+    spec:
+      serviceAccountName: controller
+      containers:
+      - name: controller
+        image: databases-stack/controller:1.0
+        env:
+        - {{name: BACKEND, value: "kubernetes"}}
+        - {{name: K8S_NAMESPACE, value: "{NS}"}}
+        - name: CONTROLLER_TOKEN
+          valueFrom: {{secretKeyRef: {{name: db-secrets, key: CONTROLLER_TOKEN}}}}
+        ports: [{{containerPort: 8000}}]
+        readinessProbe:
+          httpGet: {{path: /healthz, port: 8000}}
+        resources:
+          requests: {{memory: "128Mi", cpu: "50m"}}
+          limits:   {{memory: "192Mi"}}
+        volumeMounts:
+        - {{name: catalog, mountPath: /project}}
+      volumes:
+      - name: catalog
+        configMap: {{name: catalog}}
+---
+apiVersion: v1
+kind: Service
+metadata: {{name: controller, namespace: {NS}}}
+spec:
+  selector: {{app.kubernetes.io/name: controller}}
+  ports: [{{port: 8000, targetPort: 8000}}]
+"""
+
+
+def main():
+    with_secrets = "--with-secrets" in sys.argv
+    cat = json.load(open(os.path.join(ROOT, "catalog.json"), encoding="utf-8"))
+
+    base = os.path.join(ROOT, "k8s", "base")
+    os.makedirs(base, exist_ok=True)
+
+    files = []
+    open(os.path.join(base, "namespace.yaml"), "w", encoding="utf-8").write(
+        "---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: %s\n" % NS)
+    files.append("namespace.yaml")
+
+    for e in cat["engines"]:
+        name = "engine-%s.yaml" % e["id"]
+        open(os.path.join(base, name), "w", encoding="utf-8").write(statefulset(e))
+        files.append(name)
+
+    open(os.path.join(base, "controller.yaml"), "w", encoding="utf-8").write(CONTROLLER)
+    files.append("controller.yaml")
+
+    # Katalog ConfigMap — controller motor listesini ve kaynak profillerini buradan okur
+    cat_json = json.dumps(cat, ensure_ascii=False, indent=2)
+    cm = ("---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n"
+          "  name: catalog\n  namespace: %s\ndata:\n  catalog.json: |\n" % NS)
+    cm += "\n".join("    " + ln for ln in cat_json.splitlines()) + "\n"
+    open(os.path.join(base, "catalog-configmap.yaml"), "w", encoding="utf-8").write(cm)
+    files.append("catalog-configmap.yaml")
+
+    open(os.path.join(base, "kustomization.yaml"), "w", encoding="utf-8").write(
+        "---\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n"
+        "namespace: %s\nresources:\n%s\n" % (NS, "\n".join("- " + f for f in files)))
+
+    # --- Secret ---------------------------------------------------------------
+    keys = ["DB_PASSWORD", "CONTROLLER_TOKEN", "MARIADB_PASSWORD", "POSTGRES_PASSWORD",
+            "MONGO_PASSWORD", "REDIS_PASSWORD", "MSSQL_PASSWORD", "CASSANDRA_PASSWORD",
+            "ELASTIC_PASSWORD", "RABBITMQ_PASSWORD", "CLICKHOUSE_PASSWORD",
+            "NEO4J_PASSWORD", "MINIO_ROOT_PASSWORD"]
+    vals = {k: "DEĞİŞTİRİN" for k in keys}
+    outdir, fname = base, "secret.example.yaml"
+    if with_secrets:
+        envf = os.path.join(ROOT, ".env")
+        cur = {}
+        if os.path.exists(envf):
+            for line in open(envf, encoding="utf-8"):
+                line = line.strip().rstrip("\r")
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    cur[k.strip()] = v.strip().strip("\"'")
+        for k in keys:
+            vals[k] = cur.get(k) or cur.get("DB_PASSWORD", "")
+        outdir = os.path.join(ROOT, "k8s", "secrets")
+        os.makedirs(outdir, exist_ok=True)
+        fname = "secret.yaml"
+
+    # Neo4j parolayı "kullanıcı/parola" biçiminde ister
+    vals["NEO4J_AUTH"] = "neo4j/" + vals.get("NEO4J_PASSWORD", "DEĞİŞTİRİN")
+    sec = ("---\n# ⚠️ GERÇEK PAROLA İÇERİR — git'e commit ETMEYİN.\n"
+           "# Üretimde bunun yerine sealed-secrets / external-secrets / Vault kullanın.\n"
+           "apiVersion: v1\nkind: Secret\nmetadata:\n  name: db-secrets\n"
+           "  namespace: %s\ntype: Opaque\ndata:\n" % NS)
+    for k in sorted(vals):
+        sec += "  %s: %s\n" % (k, base64.b64encode(vals[k].encode()).decode())
+    open(os.path.join(outdir, fname), "w", encoding="utf-8").write(sec)
+
+    print("k8s/base/ üretildi: %d dosya" % (len(files) + 1))
+    print("secret: %s" % os.path.join(outdir, fname))
+    if not with_secrets:
+        print("  (parolalar için: python3 scripts/gen-k8s.py --with-secrets)")
+
+
+if __name__ == "__main__":
+    main()

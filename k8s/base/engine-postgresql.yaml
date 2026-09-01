@@ -1,0 +1,68 @@
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: postgresql, app.kubernetes.io/part-of: databases-stack}
+spec:
+  # replicas: 0 → motor KAPALI. Dashboard'daki "Aktif Et" bunu 1 yapar.
+  replicas: 0
+  serviceName: postgresql
+  selector:
+    matchLabels: {app.kubernetes.io/name: postgresql}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: postgresql}
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+      - name: postgresql
+        image: postgres:16
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: client
+          containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          value: "root"
+        - name: POSTGRES_DB
+          value: "defaultdb"
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secrets
+              key: POSTGRES_PASSWORD
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 20Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  namespace: databases-stack
+  labels: {app.kubernetes.io/name: postgresql}
+spec:
+  selector: {app.kubernetes.io/name: postgresql}
+  ports:
+  - name: postgresql
+    port: 5432
+    targetPort: 5432
