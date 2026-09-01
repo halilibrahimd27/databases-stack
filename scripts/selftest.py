@@ -251,6 +251,12 @@ for f in ("topology.json", "routes.conf", "events.jsonl"):
     if os.path.exists(q):
         os.remove(q)
 
+app.STATE_FILE = "/tmp/dbstack-selftest/state.json"
+# Devir testleri replikasyonun KURULU olduğu bir dünyayı varsayar; controller
+# artık kurulu olmayan replikaya devri reddediyor (yarım kurulmuş bir düğüm
+# primary'nin verisini değil kendi eski verisini taşır).
+app.save_state({"profiles": ["mariadb", "mariadb-replica"], "overrides": []})
+
 app.write_routes()
 routes = open(app.ROUTES_FILE, encoding="utf-8").read()
 ck("yönlendirme tablosu üretiliyor", "listen 3306;" in routes and "listen 5432;" in routes)
@@ -329,8 +335,7 @@ def _mock_run(rcs):
 
 
 def _reset_topo():
-    if os.path.exists(app.TOPOLOGY_FILE):
-        os.remove(app.TOPOLOGY_FILE)
+    app.save_topology({})
 
 
 # --- Replikasyon akmıyorsa devir YAPILMAMALI ---------------------------------
@@ -360,6 +365,21 @@ okk, reason = app.perform_failover("mariadb", "test: yükseltme başarısız")
 ck("yükseltme gerçekten başarısızsa devir başarısız sayılır", not okk)
 ck("başarısız yükseltmeden sonra eski ana kopya GERİ AÇILIR (tam kesinti olmaz)",
    any(c[:2] == ["docker", "start"] and c[-1] == "mariadb" for c in calls))
+
+# --- Replikasyon hiç kurulmamışsa devir reddedilir -------------------------
+# Container'ın ayakta olması yetmez: kurulumu yarıda kalmış bir düğüm,
+# primary'nin verisini değil KENDİ eski verisini taşır. Gerçek sunucuda
+# bağlama çöktü, replika ayakta kaldı, devir onu yükseltti ve veritabanı
+# önceki testten kalan satırlarla geri geldi.
+_reset_topo(); calls[:] = []
+app.save_state({"profiles": ["mariadb"], "overrides": []})
+app.run = _mock_run({})
+okk, reason = app.perform_failover("mariadb", "test: replikasyon kurulu degil")
+ck("replikasyon kurulu değilken devir REDDEDİLİR",
+   not okk and "replikasyon kurulu değil" in (reason or ""))
+ck("reddedilince ana kopya durdurulmaz",
+   not any(c[:2] == ["docker", "stop"] for c in calls))
+app.save_state({"profiles": ["mariadb", "mariadb-replica"], "overrides": []})
 
 # --- Devir betiklerinin statik denetimi --------------------------------------
 _fo_dir = os.path.join(ROOT, "scripts", "failover")

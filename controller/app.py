@@ -920,6 +920,14 @@ def perform_failover(eid, reason, jid=None):
     if not os.path.exists(script):
         return False, "Yükseltme betiği yok: " + script
 
+    # Replikasyon hiç BAŞARIYLA kurulmadıysa ortada yükseltilecek bir yedek de
+    # yoktur. Container'ın ayakta olması yetmez: kurulumu yarıda kalmış bir
+    # düğüm, primary'nin verisini değil kendi eski verisini taşır.
+    rep_profile = (engine.get("replication") or {}).get("profile")
+    if rep_profile and rep_profile not in load_state().get("profiles", []):
+        return False, ("%s için replikasyon kurulu değil — yükseltilecek geçerli "
+                       "bir yedek kopya yok. Devir yapılmadı." % engine["name"])
+
     # 0) ÖN KONTROL — yedek gerçekten yükseltilebilir durumda mı?
     #    Bu adım FENCE'TEN ÖNCE gelir ve iki ayrı felaketi engeller:
     #      • Senkron olmamış bir replikayı primary yapmak = sessiz veri kaybı.
@@ -998,6 +1006,19 @@ def perform_failover(eid, reason, jid=None):
     return True, None
 
 
+VOLUME_OF = {
+    "mariadb": "mariadb_data", "mariadb-replica": "mariadb_replica_data",
+    "postgresql": "postgresql_data", "postgresql-replica": "postgresql_replica_data",
+    "redis": "redis_data", "redis-replica": "redis_replica_data",
+}
+
+
+def volume_of(service):
+    """Servisin veri hacminin tam adı (proje öneki ile), yoksa None."""
+    v = VOLUME_OF.get(service)
+    return ("%s_%s" % (PROJECT, v)) if v else None
+
+
 def rebuild_standby(eid, jid=None):
     """Failover sonrası eski primary'yi yeni primary'nin REPLİKASI olarak geri alır.
 
@@ -1021,12 +1042,8 @@ def rebuild_standby(eid, jid=None):
 
     # Eski verinin silinmesi ZORUNLU — yoksa yeni primary ile ayrışmış geçmiş
     # birleşemez ve replikasyon tutarsız veriyle başlar.
-    vol_map = {"mariadb": "mariadb_data", "mariadb-replica": "mariadb_replica_data",
-               "postgresql": "postgresql_data", "postgresql-replica": "postgresql_replica_data",
-               "redis": "redis_data", "redis-replica": "redis_replica_data"}
-    vol = vol_map.get(old)
-    if vol:
-        full = "%s_%s" % (PROJECT, vol)
+    full = volume_of(old)
+    if full:
         jl("eski veri temizleniyor:", full)
         run(["docker", "volume", "rm", "-f", full], timeout=120)
 
@@ -1391,6 +1408,19 @@ def do_replication(jid, eid, enable):
                 if rc != 0:
                     return job_done(jid, False, "primary hazırlanamadı (çıkış %d)" % rc)
 
+            # Replika TEMİZ bir hacimle başlamalı. Tohumlama dökümü yalnız
+            # primary'de VAR OLAN veritabanlarını yazar; replikada kalmış eski
+            # bir veritabanı silinmez. Gerçek sunucuda tam olarak bu oldu:
+            # önceki testten kalan tablo replikada durdu, devirden sonra
+            # "hayalet" satırlar olarak ortaya çıktı. Replika tanımı gereği
+            # atılabilir bir kopyadır; ilk kurulumda sıfırdan başlatıyoruz.
+            if profile not in load_state().get("profiles", []):
+                vol = volume_of(svc)
+                if vol:
+                    run(["docker", "rm", "-f", svc], timeout=120)
+                    run(["docker", "volume", "rm", "-f", vol], timeout=120)
+                    job_log(jid, "replika sıfırdan kuruluyor (temiz hacim)")
+
             with ACTION_LOCK:
                 # MongoDB'de primary de --replSet ile yeniden başlamalı; override
                 # bunu yapar, bu yüzden primary servis de listeye giriyor.
@@ -1408,6 +1438,16 @@ def do_replication(jid, eid, enable):
                 rc, out, errout = run(["sh", script, "attach"], timeout=1800, env=script_env())
                 job_log(jid, (out + errout).strip()[-4000:])
                 if rc != 0:
+                    # YARIM YAPILANDIRILMIŞ REPLİKA BIRAKILMAZ. Ayakta kalırsa
+                    # otomatik devir onu sağlam bir yedek sanıp primary yapar ve
+                    # ESKİ verisini sunmaya başlar. Gerçek sunucuda yaşandı:
+                    # bağlama çöktü, replika ayakta kaldı, devir onu yükseltti ve
+                    # veritabanı önceki testten kalan satırlarla geri geldi.
+                    job_log(jid, "bağlama başarısız — yarım replika kaldırılıyor:", svc)
+                    run(["docker", "rm", "-f", svc], timeout=120)
+                    record_event("replication_failed", eid,
+                                 "Yedek kopya kurulamadı ve kaldırıldı; ana kopya "
+                                 "etkilenmedi.", level="warning")
                     return job_done(jid, False, "bağlama başarısız (çıkış %d)" % rc)
 
             st = load_state()
