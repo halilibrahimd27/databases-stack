@@ -8,6 +8,17 @@
 <meta name="description" content="Sunucudaki veritabanlarını açıp kapatmak için yönetim paneli.">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗄️</text></svg>">
 <link rel="stylesheet" href="style.css">
+<script>
+/* Tema, CSS'ten ÖNCE uygulanıyor. Sayfa çizildikten sonra yapılsaydı koyu
+   tema seçmiş bir kullanıcı her yenilemede bir an beyaz ekran görürdü.
+   localStorage bazı ortamlarda (gizli pencere, site verisi kapalı) erişimin
+   KENDİSİNDE hata verir; o yüzden try/catch — tema tercihi yüzünden sayfanın
+   hiç açılmaması saçma olurdu. */
+try {
+  var t = localStorage.getItem('dbstack-theme');
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+} catch (e) {}
+</script>
 </head>
 <body>
 
@@ -28,6 +39,12 @@
       <p class="sub">İhtiyacınız olanı açın, kullanmadığınızı kapatın.</p>
     </div>
   </div>
+
+  <button type="button" class="theme-btn" id="theme-toggle"
+          title="Görünüm: sistem / açık / koyu" aria-label="Görünümü değiştir">
+    <span class="theme-ico" id="theme-ico" aria-hidden="true">◐</span>
+    <span class="theme-txt" id="theme-txt">Sistem</span>
+  </button>
 
   <div class="sysbar" id="sysbar" role="group" aria-label="Sunucu durumu">
 

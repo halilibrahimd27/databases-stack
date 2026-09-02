@@ -98,8 +98,15 @@
   --card-max:   560px;
 }
 
+/* ---------------------------------------------------------------- TEMA ----
+   Üç durum var: sistem (varsayılan), açık, koyu.
+   • Kullanıcı bir şey seçmediyse işletim sisteminin tercihi geçerli.
+   • Seçtiyse <html data-theme="light|dark"> yazılır ve sistemi EZER.
+   Aşağıdaki iki blok AYNI değişkenleri tanımlamak zorunda; birbirinden
+   ayrışırlarsa yalnız bir temada bozulma olur ve fark edilmesi zordur.
+   selftest bu ikisini karşılaştırıyor (bkz. 'tema blokları aynı'). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
 
     --bg:            #121213;
@@ -132,6 +139,41 @@
     --shadow:    0 1px 2px rgba(0, 0, 0, .45);
     --shadow-lg: 0 16px 48px rgba(0, 0, 0, .62);
   }
+}
+
+/* Kullanıcı KOYU seçtiyse: işletim sistemi ne derse desin. */
+:root[data-theme="dark"] {
+    color-scheme: dark;
+
+    --bg:            #121213;
+    --surface:       #191a1c;
+    --surface-2:     #202124;
+    --surface-3:     #292a2e;
+    --border:        #2b2c30;
+    --border-strong: #3d3e44;
+
+    --text:   #e8e8e6;
+    --text-2: #c4c4c1;
+    --muted:  #9a9a94;
+
+    --accent:        #4b6fdd;
+    --accent-hover:  #5f81ee;
+    --accent-ink:    #ffffff;
+    --accent-text:   #9db4f5;
+    --accent-soft:   #171b28;
+    --accent-border: #2c3757;
+
+    --ok:   #74d6a5;  --ok-bg:   #10251b;  --ok-border:   #214936;  --ok-dot:   #23a873;
+    --warn: #e6b666;  --warn-bg: #251f13;  --warn-border: #44361d;  --warn-dot: #cd8c1c;
+    --err:  #f0a49d;  --err-bg:  #2a1614;  --err-border:  #522925;  --err-dot:  #d9564c;
+    --off:  #98988f;  --off-bg:  #202124;  --off-border:  #303136;  --off-dot:  #6a6a64;
+
+    --focus: #8aa8ff;
+    --overlay: rgba(0, 0, 0, .66);
+
+    --shadow-sm: none;
+    --shadow:    0 1px 2px rgba(0, 0, 0, .45);
+    --shadow-lg: 0 16px 48px rgba(0, 0, 0, .62);
 }
 
 /* ------------------------- 2. Temel sıfırlama ve tipografi --------------- */
@@ -1411,4 +1453,36 @@ main {
   font-size: var(--fs-xs);
   font-weight: 600;
   white-space: nowrap;
+}
+
+/* --------------------------------------------------- görünüm düğmesi ------ */
+/* Üst barın sağında, sistem/açık/koyu arasında dönen küçük düğme. Metin de
+   taşıyor: yalnız ikon olsaydı hangi durumda olduğunu anlamak için tıklayıp
+   denemek gerekirdi. */
+.theme-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  margin-right: 14px;
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.6;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.theme-btn:hover { border-color: var(--accent); color: var(--accent); }
+.theme-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.theme-ico { font-size: 13px; }
+
+@media (max-width: 720px) {
+  /* Dar ekranda metni gizle; ikon tek başına yer kaplamasın. */
+  .theme-txt { display: none; }
+  .theme-btn { margin-right: 8px; padding: 5px 9px; }
 }

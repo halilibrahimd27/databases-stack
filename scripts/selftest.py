@@ -1193,6 +1193,33 @@ _js_sorun = _js_dengesizlik(open("gateway/html/app.js", encoding="utf-8").read()
 ck("dashboard app.js dengeli (yarım commit yakalanır)", not _js_sorun, _js_sorun)
 
 
+# --- Tema: iki koyu blok AYNI değişkenleri tanımlamalı ----------------------
+# Koyu tema iki yerde tanımlı: işletim sistemi tercihi için @media bloğunda,
+# kullanıcının açık seçimi için :root[data-theme="dark"] bloğunda. CSS'te bu
+# ikisini tek yerden yazmanın yolu yok. Ayrışırlarsa YALNIZ BİR temada bozulma
+# olur — geliştirici hangi temayı kullanıyorsa onda düzgün görünür, diğerinde
+# renk kaybolur ve fark edilmesi zordur.
+_css = open("gateway/html/style.css", encoding="utf-8").read()
+
+
+def _tema_degiskenleri(bas):
+    i = _css.index(bas) + len(bas)
+    blok = _css[i:_css.index(chr(10) + "}", i)]
+    return set(re.findall(r"(--[a-z0-9-]+)\s*:", blok))
+
+
+_media_dark = _tema_degiskenleri('@media (prefers-color-scheme: dark) {')
+_attr_dark = _tema_degiskenleri(':root[data-theme="dark"] {')
+ck("koyu tema blokları aynı değişkenleri tanımlıyor",
+   bool(_media_dark) and _media_dark == _attr_dark,
+   "yalnız birinde: " + ", ".join(sorted(_media_dark ^ _attr_dark)))
+ck("açık tema seçimi işletim sistemini ezebiliyor",
+   ':root:not([data-theme="light"])' in _css)
+_idx = open("gateway/html/index.html", encoding="utf-8").read()
+ck("tema, sayfa çizilmeden ÖNCE uygulanıyor (yanıp sönme yok)",
+   "dbstack-theme" in _idx and _idx.index("dbstack-theme") < _idx.index("<body"))
+
+
 # --- install.sh'te `set -e` + başarısız komut ikamesi tuzağı ----------------
 # install.sh `set -euo pipefail` ile çalışıyor. Bu kabukta `VAR="$(cmd)"`
 # biçiminde cmd başarısız olursa ATAMA da başarısız olur ve betik ORACIKTA

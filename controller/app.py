@@ -706,7 +706,7 @@ def plan_engine(eid, requested_mb=None):
     if detail["disk_free_mb"] >= 0 and detail["disk_free_mb"] < MIN_FREE_DISK_MB:
         detail.update(ok=False, reason=(
             "Disk yetersiz: %d MB boş, en az %d MB gerekli."
-            % (detail["disk_free_mb"], MIN_FREE_DISK_MB)))
+            % (detail["disk_free_mb"], MIN_FREE_DISK_MB)), reason_kind="disk")
         return detail
 
     if engine_budget < min_mb:
@@ -716,7 +716,7 @@ def plan_engine(eid, requested_mb=None):
             "çekirdek servislere, %d MB'ı zaten açık motorlara ayrılmış durumda. "
             "Başka bir motoru durdurun ya da sunucuya RAM ekleyin."
             % (engine["name"], min_mb, overhead, max(engine_budget, 0),
-               total, os_reserve, CORE_RESERVE_MB, committed)))
+               total, os_reserve, CORE_RESERVE_MB, committed)), reason_kind="bellek")
         return detail
 
     if requested_mb:
@@ -724,7 +724,7 @@ def plan_engine(eid, requested_mb=None):
         if want > engine_budget:
             detail.update(ok=False, reason=(
                 "İstenen %d MB bütçeyi aşıyor (kullanılabilir: %d MB)."
-                % (want, engine_budget)))
+                % (want, engine_budget)), reason_kind="bellek")
             return detail
         limit = _clamp(want, min_mb, None)
         source = "kullanıcı"
@@ -735,7 +735,12 @@ def plan_engine(eid, requested_mb=None):
 
     pre = engine_preconditions(eid)
     if pre:
-        detail.update(ok=False, reason=pre)
+        # reason_kind: arayüz sebebi DOĞRU adlandırabilsin diye. Öncesinde
+        # kapalı motor satırında sebep ne olursa olsun "bellek yetmiyor"
+        # yazıyordu — AVX desteği olmayan bir CPU yüzünden açılamayan MongoDB
+        # de öyle görünüyordu. Kullanıcı boş belleğe bakıp "ama yer var"
+        # diyordu; haklıydı, mesele bellek değildi.
+        detail.update(ok=False, reason=pre, reason_kind="onkosul")
         return detail
 
     detail.update(ok=True, limit_mb=int(limit), source=source,

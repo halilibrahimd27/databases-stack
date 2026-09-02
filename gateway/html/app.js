@@ -391,7 +391,13 @@ function rowHtml(engine, plan) {
   const blocked = plan && !plan.ok;
   const ports   = (engine.client_ports || []).map((x) => x.port).join(', ');
 
-  const mem = blocked ? '<span class="row-mem row-mem-block">bellek yetmiyor</span>'
+  // Etiket SEBEBE göre. Öncesinde her ret "bellek yetmiyor" yazıyordu; AVX
+  // desteği olmayan bir CPU yüzünden açılamayan MongoDB de öyle görünüyordu
+  // ve kullanıcı haklı olarak "ama bolca boş bellek var" diyordu.
+  const retAd = { bellek: 'bellek yetmiyor', disk: 'disk yetmiyor',
+                  onkosul: 'bu sunucuda çalışmaz' };
+  const mem = blocked
+    ? `<span class="row-mem row-mem-block">${esc(retAd[plan.reason_kind] || 'açılamıyor')}</span>`
     : (plan && plan.ok ? `<span class="row-mem">~ ${mb(plan.limit_mb)}</span>` : '');
 
   const lic = engine.license || {};
@@ -670,6 +676,44 @@ async function refresh() {
     $('#banner').hidden = false;
   }
 }
+
+/* ------------------------------------------------------------------- tema */
+/* Üç durum, iki değil: sistem → açık → koyu → sistem. "Sistem" bir durum
+   olmak zorunda, çünkü kullanıcıların çoğu işletim sisteminde zaten bir
+   tercih yapmış ve panelin ona uymasını bekliyor; sadece açık/koyu ikilisi
+   sunmak o tercihi kalıcı olarak ezerdi. */
+const TEMA_SIRA = ['sistem', 'light', 'dark'];
+const TEMA_AD   = { sistem: 'Sistem', light: 'Açık', dark: 'Koyu' };
+const TEMA_IKON = { sistem: '◐', light: '☀', dark: '☾' };
+
+function temaOku() {
+  try {
+    const t = localStorage.getItem('dbstack-theme');
+    return (t === 'light' || t === 'dark') ? t : 'sistem';
+  } catch (e) { return 'sistem'; }
+}
+
+function temaUygula(t) {
+  if (t === 'sistem') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = t;
+  try {
+    if (t === 'sistem') localStorage.removeItem('dbstack-theme');
+    else localStorage.setItem('dbstack-theme', t);
+  } catch (e) {}      // gizli pencerede yazma hata verir; tema yine çalışsın
+  const ico = $('#theme-ico'), txt = $('#theme-txt');
+  if (ico) ico.textContent = TEMA_IKON[t];
+  if (txt) txt.textContent = TEMA_AD[t];
+}
+
+(function temaBaslat() {
+  temaUygula(temaOku());
+  const b = $('#theme-toggle');
+  if (!b) return;
+  b.addEventListener('click', () => {
+    const s = TEMA_SIRA[(TEMA_SIRA.indexOf(temaOku()) + 1) % TEMA_SIRA.length];
+    temaUygula(s);
+  });
+})();
 
 document.addEventListener('click', (ev) => {
   const b = ev.target.closest('[data-act]');

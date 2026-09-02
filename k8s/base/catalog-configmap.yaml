@@ -245,7 +245,7 @@ data:
           },
           "plain": {
             "title": "Tablolu veri + gelişmiş özellikler",
-            "detail": "MariaDB ile aynı işi yapar; JSON, harita/konum verisi ve karmaşık sorgularda daha güçlüdür.",
+            "detail": "Kullanıcılar, siparişler, ürünler gibi satır-sütun verisi için. JSON alanları, harita/konum verisi, tam metin arama ve karmaşık raporlama sorguları da doğrudan içinde çözülür — çoğu proje bunun dışına çıkmadan yıllarca gider.",
             "badge": "En sık kullanılan"
           },
           "failover": {
