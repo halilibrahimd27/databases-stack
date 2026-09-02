@@ -30,9 +30,14 @@ var mı. Altta **kapalı** olanlar tek satır — hiç kaynak harcamıyorlar, bi
 kartı hak etmiyorlar. Satıra tıklayınca ne işe yaradığı, tahmini belleği ve
 lisansı açılır.
 
-Üst bardaki sayı *ayrılan* belleği gösterir (motorlara söz verilen tavan),
-altında da sunucunun toplam RAM'i ve **gerçek** kullanımı. İkisi farklıdır ve
-fark önemlidir: tavanlar rezervasyon değil üst sınırdır.
+Üst bardaki birincil sayı **gerçek kullanımdır**, altındaki satırda ise iki
+ayrı büyüklük durur: *baştan ayrılan* (motorun açılışta gerçekten aldığı
+bellek) ve *üst sınır* (docker limiti). İkisini ayırmak şart, çünkü docker
+limiti bir **tavandır, rezervasyon değil** — tavanları toplayıp RAM ile
+kıyaslamak, yoldaki arabaların azami hızlarını toplayıp "yol kapasitesi aşıldı"
+demeye benzer. Ölçülen bir örnek: 16 GB'lık sunucuda tavan toplamı 14 GB
+görünürken gerçek kullanım 2 GB, çekirdeğin bellek baskısı ise sıfırdı.
+Ayrıntı: [Bellek otomatik hesaplanır](#bellek-otomatik-hesaplan%C4%B1r).
 
 <div align="center">
 <img src="ss/03-islemler.png" alt="Geri dönüşü zor işlemler kapalı bir bölümde" width="900">
@@ -42,6 +47,17 @@ Gündelik işler kartın yüzünde (paneli aç, bağlantı bilgisi). **Geri dön
 olanlar** — kapatmak, yedek kopyayı kaldırmak, otomatik devri kapatmak —
 kapalı bir bölümde ve her biri **ne olacağını tek cümleyle** söylüyor. Yan yana
 duran altı düğme arasından yanlışına basmak bu üründe mümkün değil.
+
+<div align="center">
+<img src="ss/06-yedekler.png" alt="Yedekler sayfası" width="900">
+</div>
+
+Yedekler kendi sayfasında (**Araçlar → Yedekler**): gecelik turun saati ve kaç
+gün saklanacağı, her motorun kaç yedeği olduğu, en yenisinin ne zaman alındığı
+ve her dosyanın **kaynağı** — `elle`, `zamanlı` ya da `dış` (komut satırı).
+Kurtarma da buradan: **Son yedeğe dön** ya da dosya listesinden belirli bir
+güne. Geri yükleme veriyi silip yerine koyduğu için onay penceresi motor adını
+yazdırır — tek tıkla olacak bir iş değil.
 
 <div align="center">
 <img src="ss/05-izleme.png" alt="Grafana panoları" width="900">
@@ -175,6 +191,8 @@ kapalı motorların hepsinde "bellek yetmiyor" diyordu — boş bir makinede.
 1. **Rezerve kapısı — sert.** `Σ rezerve + yeni motorun rezervesi ≤
    dağıtılabilir`. Asla esnetilmez: rezerve, motorun ayıracağı **gerçek**
    bellektir; sığmıyorsa açmak OOM'a davetiyedir.
+   Sığmayan istek önce küçültülür (daha küçük tavan → daha küçük rezerve);
+   asgari tavanda bile sığmıyorsa reddedilir.
 2. **Tavan kapısı — yumuşak.** `Σ tavan + yeni tavan ≤ dağıtılabilir × 1,5`.
    Tavanların hepsi aynı anda dolmaz. Katsayı kontrol servisinin
    `OVERCOMMIT_LIMIT` ortam değişkeniyle değişir; `1.0` yazmak aşırı taahhüdü

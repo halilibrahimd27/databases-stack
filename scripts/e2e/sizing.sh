@@ -1683,7 +1683,12 @@ else
                     t_ok "yeniden dengeleme sonrası tavan toplamı $son_toplam MB ≤ politika sınırı $son_sinir MB (dağıtılabilir $son_alloc × $son_pol)"
                 fi
             else
-                t_fail "$R_ISIM_POL" "tavan toplamı $son_toplam MB > politika sınırı $son_sinir MB — yeniden dengeleme aşırı taahhüdü gidermedi${son_okunamayan:+ (okunamayanlar hariç:$son_okunamayan)}"
+                # İş günlüğü de veriliyor: toplam, yeniden dengelemenin
+                # DOKUNMADIĞI container'lardan (panel, exporter,
+                # replika) taşıyor olabilir ve controller bunu zaten
+                # yazmıştır. Gerekçesiz bir kırmızı satır, okuyanı
+                # yanlış yere bakmaya gönderir.
+                t_fail "$R_ISIM_POL" "tavan toplamı $son_toplam MB > politika sınırı $son_sinir MB — yeniden dengeleme aşırı taahhüdü gidermedi${son_okunamayan:+ (okunamayanlar hariç:$son_okunamayan)}. İş günlüğü: ${is_log:0:220}"
             fi
         fi
 

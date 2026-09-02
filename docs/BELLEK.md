@@ -83,6 +83,11 @@ Asla esnetilmez. Rezerve motorun gerçekten ayıracağı bellektir; aşırı taa
 edilirse ilk yazma yükünde OOM killer devreye girer. Plan bu kapıyı
 `reserve_ok` alanında bildirir.
 
+Sığmayan bir istek **önce küçültülür**: rezerve tavanla birlikte büyüdüğü için
+(MariaDB buffer pool = tavanın %60'ı) daha küçük bir tavan çoğu zaman sığar ve
+kullanıcı istediği motoru açar. Tavan %5'lik adımlarla `min_mb`'ye kadar iner;
+asgari tavanda bile sığmıyorsa **o zaman** reddedilir.
+
 ### 3.3 Çekirdek kemeri
 
 ```
