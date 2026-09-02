@@ -173,11 +173,23 @@ async function watchJob(jobId, title, hint) {
          kapatmak, geri yükleme gibi bir işte kullanıcıyı verisinin ne
          durumda olduğunu bilmeden bırakırdı. */
       if (job.reason) $('#job-log').textContent += '\n\n' + job.reason;
-      break;
+      // Ertelenen iş BAŞARISIZ DEĞİLDİR: kilit görevini yapmış, veriye
+      // dokunulmamıştır. Başlıkta da öyle yazsın — kullanıcı yedeğinin
+      // bozulduğunu sanmasın. (Ölçülen olay: 'Yedek al'a basıldı, o an
+      // sunucuda başka bir yedekleme sürüyordu.)
+      if (job.deferred) {
+        $('#job-title').textContent = '⏳ Ertelendi';
+        $('#job-log').textContent += SATIR_SONU + SATIR_SONU
+          + 'Veriye dokunulmadı. Sunucuda o an başka bir yedekleme ya da '
+          + 'geri yükleme sürüyordu; o iş bitince tekrar deneyebilirsiniz.';
+      }
+      $('#job-close').disabled = false;
+      return job;
     }
     await new Promise((r) => setTimeout(r, 1200));
   }
   $('#job-close').disabled = false;
+  return null;
 }
 
 /* ------------------------------------------------------------------ eylem */
@@ -219,11 +231,32 @@ async function toggleSchedule(on) {
 
 /* Elle yedek, aktivasyonla AYNI iş mekanizmasını kullanır: uzun süren her
    işlem controller'da bir "job"a dönüşür, sayfa da log'u canlı gösterir. */
+/* Elle başlatılan işin SONUCU, pencere kapandıktan sonra da görünsün.
+   Ölçülen olay: kullanıcı "Yedek al"a bastı, o sırada sunucuda başka bir
+   yedekleme sürüyordu, iş kilide takılıp ertelendi — pencere kapanınca
+   ekranda hiçbir iz kalmadı ve kullanıcı haklı olarak "hata vermedi ama
+   yedek de alınmamış" dedi. Not, o motorun satırında durur; yeni bir yedek
+   alınınca ya da sayfa yenilenince kalkar. */
+const SATIR_SONU = String.fromCharCode(10);
+const SON_DENEME = {};
+
 async function takeBackup(engine) {
   const r = await api('/engines/' + engine.id + '/backup', { method: 'POST' });
-  await watchJob(r.job, engine.name + ' yedekleniyor…',
+  const bitti = await watchJob(r.job, engine.name + ' yedekleniyor…',
     'Yedek, veritabanı çalışırken alınır. Büyük bir veritabanında birkaç ' +
     'dakika sürebilir; pencereyi kapatsanız da iş sunucuda devam eder.');
+  if (bitti && bitti.state !== 'done') {
+    SON_DENEME[engine.id] = bitti.deferred
+      ? { tur: 'ertelendi',
+          metin: 'son deneme ertelendi — sunucuda başka bir yedekleme ya da '
+               + 'geri yükleme sürüyordu; birkaç dakika sonra tekrar deneyin' }
+      : { tur: 'hata',
+          metin: 'son deneme başarısız: '
+               + (String(bitti.reason || '').split(SATIR_SONU)[0]
+                  || 'sebep bilinmiyor') };
+  } else {
+    delete SON_DENEME[engine.id];
+  }
   // Liste normalde 30 saniyede bir tazeleniyor; işi kendi başlatan kullanıcı
   // ise yeni dosyayı HEMEN görmeli, yoksa "yedek alındı ama listede yok".
   await refreshBackups(true);
@@ -604,11 +637,11 @@ function schedHtml(s) {
     // "yedeğim var" sanan kullanıcının en pahalı yanılgısıdır. Sebebi de
     // burada duruyor; kullanıcıyı log dosyasına göndermiyoruz.
     son = `<p class="bk-last bk-err" title="${esc(tamTarih(s.last_run))}">
-             Son yedek: ${esc(bagilZaman(s.last_run))} · <b>BAŞARISIZ</b>${
+             Son otomatik yedek: ${esc(bagilZaman(s.last_run))} · <b>BAŞARISIZ</b>${
              s.last_error ? ' — ' + esc(s.last_error) : ''}</p>`;
   } else if (s.last_ok === true) {
     son = `<p class="bk-last" title="${esc(tamTarih(s.last_run))}">
-             Son yedek: ${esc(bagilZaman(s.last_run))} · başarılı</p>`;
+             Son otomatik yedek: ${esc(bagilZaman(s.last_run))} · başarılı</p>`;
   } else if (ertelendi) {
     /* Erteleme, önceki turun sonuç damgasını da sıfırlıyor (controller
        last_ok'u None'a çekiyor). Burada “sonucu bilinmiyor” yazmak,
@@ -618,7 +651,7 @@ function schedHtml(s) {
              Koşan son tur: ${esc(bagilZaman(s.last_run))}.</p>`;
   } else {
     son = `<p class="bk-last bk-muted" title="${esc(tamTarih(s.last_run))}">
-             Son yedek: ${esc(bagilZaman(s.last_run))} · sonucu bilinmiyor</p>`;
+             Son otomatik yedek: ${esc(bagilZaman(s.last_run))} · sonucu bilinmiyor</p>`;
   }
 
   /* Ertelemenin zamanı last_run DEĞİL last_deferred'dir: erteleme anında
@@ -774,11 +807,21 @@ function rowHtml(engine, b, st, s) {
        </details>`
     : '';
 
+  /* Elle başlatılan son denemenin sonucu, iş penceresi kapandıktan sonra da
+     burada durur. Yoksa ekranda hiçbir iz kalmıyor ve kullanıcı "hata
+     vermedi ama yedek de alınmamış" durumunda kalıyordu. */
+  const deneme = SON_DENEME[engine.id];
+  const denemeNotu = deneme
+    ? `<p class="bk-attempt ${deneme.tur === 'ertelendi' ? 'bk-attempt-wait'
+                                                        : 'bk-attempt-err'}"
+         >${deneme.tur === 'ertelendi' ? '⏳' : '⛔'} ${esc(deneme.metin)}</p>`
+    : '';
+
   return `
   <li class="bk-row" id="bk-${esc(engine.id)}">
     <span class="bk-icon" aria-hidden="true">${esc(engine.icon)}</span>
     <span class="bk-name">${esc(engine.name)}</span>
-    <span class="bk-facts">${facts.join('')}</span>
+    <span class="bk-facts">${facts.join('')}${denemeNotu}</span>
     <span class="bk-acts">
       <button class="btn btn-sm" data-act="backup" data-id="${esc(engine.id)}"
         ${kapali || mesgul ? 'disabled' : ''}${bkNot ? ' title="' + esc(bkNot) + '"' : ''}

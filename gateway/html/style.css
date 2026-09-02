@@ -1895,3 +1895,10 @@ main {
      Saat/gün kutuları ve düğmeler kâğıtta tıklanamaz. */
   .bk-ctrl, .bk-acts, .bk-file-btn { display: none !important; }
 }
+
+/* Elle başlatılan son denemenin sonucu — iş penceresi kapandıktan sonra da
+   motorun satırında kalır. Erteleme (sarı) ile gerçek hata (kırmızı) ayrı:
+   ertelemede veriye dokunulmamıştır, kırmızı göstermek yanlış alarm olurdu. */
+.bk-attempt { margin: 4px 0 0; font-size: 12px; line-height: 1.4; }
+.bk-attempt-wait { color: var(--warn); }
+.bk-attempt-err  { color: var(--err); }
