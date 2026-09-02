@@ -2823,6 +2823,30 @@ for _svc_ad, _svc in _dc_rmq["services"].items():
 _rds_fo = io.open("scripts/failover/redis.sh", encoding="utf-8").read()
 ck("redis ready: cevapsız düğüm 'yedek değil' sayılmıyor (çıkış 3)",
    'if [ -z "$info" ]' in _rds_fo and "exit 3" in _rds_fo)
+
+# --- DEPODA saklanan satır sonları -------------------------------------------
+# .gitattributes LF'i şart koşuyor ama git bir dosyayı "ikili" sezerse
+# normalize ETMEZ ve CRLF olduğu gibi depoya girer. Linux'ta checkout eden
+# herkes bozuk dosyayı alır:
+#     scripts/replication/postgresql.sh: set: line 7: illegal option -
+# Mesaj satır sonundan hiç söz etmiyor; insan hatayı mantıkta arar. için insan hatayı betiğin mantığında arar.
+# İki kez yaşandı (postgresql.sh, redis.sh); artık depo denetleniyor.
+try:
+    _eol = subprocess.run(["git", "ls-files", "--eol", "*.sh", "stack.sh",
+                           "install.sh"],
+                          capture_output=True, text=True, timeout=60)
+    _eol_ok = _eol.returncode == 0 and _eol.stdout.strip()
+except Exception:
+    _eol_ok = False
+if not _eol_ok:
+    ck("depoda saklanan betikler LF (git ls-files --eol)", False,
+       "git çalıştırılamadı — ölçülemedi")
+else:
+    _crlf = [ln.split(chr(9))[-1] for ln in _eol.stdout.splitlines()
+             if not ln.startswith("i/lf") and not ln.startswith("i/none")]
+    ck("depoda saklanan betiklerin hepsi LF", not _crlf,
+       ("LF değil: " + ", ".join(_crlf[:4])) if _crlf else "%d dosya"
+       % len(_eol.stdout.splitlines()))
 # Ve doğrulama zaman aşımında container'ın durumu da söyleniyor: sebep çoğu
 # zaman kopyalamada değil, düğümün hiç açılmamış olmasında.
 # _app bu noktada gateway/html/app.js'i tutuyor (1680. satır); controller'ı
