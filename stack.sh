@@ -353,6 +353,34 @@ HINT
             [ -n "$_img_md5" ] && ok "controller imajı depodaki kodla aynı"
         fi
     fi
+    # --- TOPOLOJİDEKİ ANA KOPYA GERÇEKTEN YAZMA KABUL EDİYOR MU? ---------
+    # Roller compose'a state/roles.env ile geçiyor. `docker compose up -d`
+    # ELLE, o env dosyası olmadan çalıştırılırsa (ya da başka bir yoldan
+    # container yeniden oluşturulursa) yükseltilmiş ana kopya varsayılan
+    # salt-okunur ayarıyla açılır: topoloji "ana kopya mariadb-replica" der,
+    # o düğüm ise hiçbir yazmayı kabul etmez. Hiçbir hata çıkmaz; yazan
+    # uygulama "read-only" alır ve sebebi panelde görünmez.
+    # Ölçüldü: elle recreate sonrası read_only=1, ürünün kendi yolundan
+    # (./stack.sh enable) sonra read_only=0.
+    if container_running controller; then
+        _api GET /api/status 2>/dev/null | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+kopuk = [e for e in d.get("engines", [])
+         if e.get("replication_active") and e.get("replication_flowing") is False]
+if kopuk:
+    print("  ⚠  Yedek kopyası AYAKTA ama replikasyonu AKMAYAN motorlar:")
+    for e in kopuk:
+        print("       %-14s %s" % (e["id"], (e.get("replication_detail") or "")[:60]))
+    print("     Devirde bu yedek kopyalar İŞE YARAMAZ. Onarım:")
+    print("       ./stack.sh failover rebuild <motor>")
+else:
+    print("  ✓ açık yedek kopyaların replikasyonu akıyor")
+'
+    fi
     # --- COMPOSE'DAKİ PORTLAR GERÇEKTEN YAYINLANMIŞ MI? ------------------
     # `docker restart` compose değişikliğini UYGULAMAZ: yeni port ya da yeni
     # mount ancak container YENİDEN OLUŞTURULUNCA geçerli olur. Arada hiçbir
