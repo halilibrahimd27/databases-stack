@@ -1027,6 +1027,14 @@ services:
     profiles: [redis-replica]
     image: ${REDIS_IMAGE:-redis:${REDIS_VERSION:-8-alpine}}
     container_name: redis-replica
+    # KATLANMIŞ SKALER (>) — buradaki her satır KOMUT SATIRI ARGÜMANIDIR.
+    # Blok içine "#" ile yorum yazılamaz: YAML onu metnin parçası sayar ve
+    # redis-server "#" kelimesini argüman olarak alıp şununla ölür:
+    #   *** FATAL CONFIG FILE ERROR *** wrong number of arguments
+    # (bir kez yapıldı; e2e yakaladı). Açıklamalar bu yüzden blok DIŞINDA.
+    #
+    # --protected-mode / --tcp-keepalive ana kopyada da var: bu düğüm
+    # devirden sonra ana kopya olacak, ayarların eşit olması gerekiyor.
     command: >
       redis-server
       --replicaof ${REDIS_REPLICA_STANDBY_OF:-redis} ${REDIS_REPLICA_STANDBY_PORT:-6379}
@@ -1036,8 +1044,6 @@ services:
       --replica-read-only ${REDIS_REPLICA_READ_ONLY:-yes}
       --maxmemory ${REDIS_MAXMEMORY:-384mb}
       --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
-      # Ana kopyayla eşitlik: bu düğüm devirden sonra ana kopya olacak.
-      # protected-mode ve tcp-keepalive orada var, burada yoktu.
       --protected-mode yes
       --tcp-keepalive 60
     volumes:

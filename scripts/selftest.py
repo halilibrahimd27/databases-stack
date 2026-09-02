@@ -2799,6 +2799,21 @@ ck("rabbitmq düğüm adı sabit (hostname tanımlı)",
 _imp = io.open("scripts/import.sh", encoding="utf-8").read()
 ck("import.sh geçici dizini paylaşılan yapıyor ve yazılabilirliğini ölçüyor",
    'chmod 2775 "$GECICI"' in _imp and '[ ! -w "$GECICI" ]' in _imp)
+
+# --- command: bloğuna YORUM yazılamaz ----------------------------------------
+# Katlanmış skalerde (command: >) her satır KOMUT SATIRI ARGÜMANIDIR; YAML
+# oradaki "#"i metnin parçası sayar. Bir kez yapıldı ve redis şununla öldü:
+#   *** FATAL CONFIG FILE ERROR *** 'maxmemory-policy "allkeys-lru" "#" "Ana"…'
+#   wrong number of arguments
+# Container hiç açılmadığı için de replikasyon 90 saniye bekleyip düştü ve
+# hata mesajı bambaşka bir şey söylüyordu ("replika bağlanmadı").
+for _svc_ad, _svc in _dc_rmq["services"].items():
+    _cmd = (_svc or {}).get("command")
+    if not _cmd:
+        continue
+    _cmd_s = " ".join(_cmd) if isinstance(_cmd, list) else str(_cmd)
+    ck("%s command'ında kaçak '#' yok (YAML yorum sanılmaz)" % _svc_ad,
+       "#" not in _cmd_s, _cmd_s[:60])
 ck("doctor içe aktarma geçici dizinini de kapsıyor",
    ".ice-aktarma" in _st)
 ck("install.sh içe aktarma geçici dizinini açıyor",
