@@ -147,7 +147,8 @@ health_state() {
     local out rc
     out="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}yok{{end}}' "$1" 2>&1)"; rc=$?
     [ "$rc" -ne 0 ] && { HEALTH_ERR="$(detail_tail "$out" 2)"; return 2; }
-    HEALTH_SEEN="${out//$''/}"
+    HEALTH_SEEN="${out//$'
+'/}"
     case "$HEALTH_SEEN" in
         healthy)   return 0 ;;
         yok)       return 3 ;;
@@ -454,6 +455,15 @@ e_mariadb_write() {
     return 1
 }
 
+# İSTEMCİ UYARILARINI AYIKLA. mariadb istemcisi parolasız/TLS'siz bağlantıda
+# stderr'e "WARNING: option --ssl-verify-server-cert is disabled…" basıyor;
+# çıktıyı 2>&1 ile topladığımız için bu satır ÖLÇÜLEN DEĞERE karışıyordu ve
+# karşılaştırma, beklenen damga çıktının içinde DURURKEN başarısız oluyordu.
+# Ürün sağlamken kırmızı yanan bir test, gerçek hatayı gizler.
+istemci_temizle() {
+    printf '%s' "$1" | grep -vaiE '^[[:space:]]*(warning|note|mysql: \[Warning\])' || true
+}
+
 e_mariadb_read() {
     if ! q_mariadb "$E_REP" "SELECT v FROM $PROBE.t WHERE id=1;"; then
         READ_SEEN="$(detail_tail "$Q_OUT" 2)"
@@ -463,7 +473,7 @@ e_mariadb_read() {
         fi
         return 1        # tablo henüz gelmemiş olabilir — gecikme sayılır, tekrar denenir
     fi
-    READ_SEEN="${Q_OUT//[[:space:]]/}"
+    READ_SEEN="$(istemci_temizle "$Q_OUT")"; READ_SEEN="${READ_SEEN//[[:space:]]/}"
     [ "$READ_SEEN" = "$TOKEN" ]
 }
 
@@ -486,7 +496,7 @@ e_mariadb_read_gw() {
         UNK_REASON="sorgu $E_PRIM içinden ÇALIŞTIRILAMADI (gateway'e bakılamadı): $READ_SEEN"
         return 4
     fi
-    READ_SEEN="${out//[[:space:]]/}"
+    READ_SEEN="$(istemci_temizle "$out")"; READ_SEEN="${READ_SEEN//[[:space:]]/}"
     [ "$READ_SEEN" = "1|$TOKEN" ]
 }
 

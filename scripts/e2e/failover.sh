@@ -1571,7 +1571,12 @@ esac
 # "hacim kullanımda" diye başarısız olur — test de ürünü haksız yere suçlar.
 # common.sh/acquire_lock kilidi alamazsa die() ile çıkıyor; burada özet
 # basılabilsin diye kilidi kendimiz alıyoruz (aynı dosya, aynı flock).
-KILIT_DOSYASI=/tmp/databases-stack-backup.lock
+# Kilit /tmp'den yığının state/ dizinine taşındı (bkz. scripts/lib/common.sh):
+# /tmp'deki dosyanın SAHİBİ onu ilk yaratandır ve root bir kez koşunca
+# sonraki kullanıcı koşuları "Permission denied" alıyordu. Bu satır eski
+# yolda kalınca devir paketi, kilidi OKUYAMADIĞI için komple atlandı:
+# ürün sapasağlamken test "ölçemedim" diyordu.
+KILIT_DOSYASI="${STACK_DIR:-/opt/databases}/state/backup.lock"
 if ! command -v flock >/dev/null 2>&1; then
     t_unknown "otomatik devir zinciri" \
               "flock yok — yedekleme kilidi alınamaz; rebuild çalışan bir yedeklemeyle çakışıp ürünü haksız yere suçlayabilirdi"

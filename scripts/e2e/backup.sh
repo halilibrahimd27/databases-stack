@@ -513,6 +513,39 @@ veri_yikim() { # veri_yikim <eid> <container> <parola> — geri yüklemeye iş �
     esac
 }
 
+# Yıkımı, SİLİNEN NESNENİN YOKLUĞUNU sorarak doğrular.
+#   0 = silinmiş · 1 = hâlâ duruyor · 2 = ölçülemedi · 3 = bu motorda veritabanı
+#   düşürülmüyor (çağıran eski yola düşsün)
+#
+# Neden ayrı bir soru: yıkım adımı mariadb/postgresql'de VERİTABANININ TAMAMINI
+# düşürüyor. Sonra eski kontrol aynı tabloyu okumaya çalışıyordu ve istemci
+# "veritabanı yok" diyerek sıfırdan farklı bir kod döndürüyordu (mariadb 1,
+# psql 2). Test bunu "ölçemedim" sayıyordu — oysa veritabanının yokluğu,
+# silmenin OLABİLECEK EN GÜÇLÜ kanıtıdır. Sonuç: yedekleme paketi, ürün
+# kusursuz çalışırken iki motorda birden "ÖLÇÜLEMEDİ" veriyordu.
+#
+# Bu soru, nesne var da olsa yok da olsa CEVAP VEREBİLEN bir soru: sistem
+# kataloğuna bakıyor, silinen nesneye dokunmuyor.
+yikim_dogrula() { # yikim_dogrula <eid> <container> <parola>
+    local eid="$1" C="$2" pw="$3" out rc
+    case "$eid" in
+        mariadb)
+            out="$(my_sql "$C" "$pw"                  "SELECT COUNT(*) FROM information_schema.SCHEMATA                   WHERE SCHEMA_NAME='$E2E_DB';")"; rc=$? ;;
+        postgresql)
+            out="$(pg_sql "$C" "$pw" postgres                  "SELECT count(*) FROM pg_database WHERE datname='$E2E_DB'")"; rc=$? ;;
+        mongodb)
+            out="$(mongo_js "$C" "${MONGO_USER:-root}" "$pw"                  "print(db.getMongo().getDBNames().indexOf('$E2E_DB') >= 0 ? 1 : 0)")"; rc=$? ;;
+        *) return 3 ;;
+    esac
+    [ "$rc" -ne 0 ] && return 2
+    out="${out//[[:space:]]/}"
+    case "$out" in
+        0) return 0 ;;
+        "") return 2 ;;
+        *) return 1 ;;
+    esac
+}
+
 veri_temizle() { # veri_temizle <eid> <container> <parola>
     local eid="$1" C="$2" pw="$3"
     case "$eid" in
@@ -911,21 +944,34 @@ motor_turu() {
     # Silmeyi doğrulamadan geri yüklemek en tehlikeli sahte testtir: veri
     # yerinde kalırsa, geri yükleme hiçbir şey yapmasa bile "geldi" derdik.
     veri_yikim "$eid" "$C" "$pw"
-    oku "$eid" "$C" "$pw"
-    if [ "$OKUMA_RC" -ne 0 ]; then
-        # Denetim bulgusu: istemci düştüğünde okuma BOŞ dönüyor, boş çıktı da
-        # "silindi" sayılıyordu. Silmeyi doğrulayamadıysak sonraki adımın
-        # hiçbir kanıt değeri kalmaz.
-        t_unknown "$eid: kanıt kaydı silindi (geri yükleme gerçekten iş yapmak zorunda)" \
-                  "silmeden sonraki okuma istemcisi hata verdi (rc=$OKUMA_RC); kaydın silinip silinmediği ÖLÇÜLEMEDİ"
-        return 0
+    local N_SIL="$eid: kanıt kaydı silindi (geri yükleme gerçekten iş yapmak zorunda)"
+    yikim_dogrula "$eid" "$C" "$pw"; local ydrc=$?
+    case "$ydrc" in
+        0) t_ok "$N_SIL" ;;
+        1) t_fail "$N_SIL"              "silme işe yaramadı, $E2E_DB hâlâ duruyor — geri yükleme kanıtı anlamsız olurdu"
+           return 0 ;;
+        2) t_unknown "$N_SIL"              "yıkım sorgusu cevap vermedi; silinip silinmediği ÖLÇÜLEMEDİ"
+           return 0 ;;
+    esac
+
+    # ydrc=3 → bu motorda yıkım veritabanını DÜŞÜRMÜYOR (MSSQL satırı siler).
+    # Orada doğru soru hâlâ "kanıt kaydı duruyor mu".
+    if [ "$ydrc" -eq 3 ]; then
+        oku "$eid" "$C" "$pw"
+        if [ "$OKUMA_RC" -ne 0 ]; then
+            # Denetim bulgusu: istemci düştüğünde okuma BOŞ dönüyor, boş çıktı
+            # da "silindi" sayılıyordu. Silmeyi doğrulayamadıysak sonraki
+            # adımın hiçbir kanıt değeri kalmaz.
+            t_unknown "$N_SIL"                 "silmeden sonraki okuma istemcisi hata verdi (rc=$OKUMA_RC); kaydın silinip silinmediği ÖLÇÜLEMEDİ"
+            return 0
+        fi
+        if kanit_var; then
+            t_fail "$N_SIL"                 "silme işe yaramadı, kayıt hâlâ duruyor — geri yükleme kanıtı anlamsız olurdu"
+            return 0
+        fi
+        t_ok "$N_SIL"
     fi
-    if kanit_var; then
-        t_fail "$eid: kanıt kaydı silindi (geri yükleme gerçekten iş yapmak zorunda)" \
-               "silme işe yaramadı, kayıt hâlâ duruyor — geri yükleme kanıtı anlamsız olurdu"
-        return 0
-    fi
-    t_ok "$eid: kanıt kaydı silindi (geri yükleme gerçekten iş yapmak zorunda)"
+
 
     # ---- 8. geri yükle ------------------------------------------------------
     # ASSUME_YES=yes: confirm_restore'un 'evet' sorusu otomasyonda beklenemez.
