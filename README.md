@@ -59,6 +59,12 @@ Kurtarma da buradan: **Son yedeğe dön** ya da dosya listesinden belirli bir
 güne. Geri yükleme veriyi silip yerine koyduğu için onay penceresi motor adını
 yazdırır — tek tıkla olacak bir iş değil.
 
+Her motorun satırında bir de **prova rozeti** var: `prova geçti 17 dakika önce
+· 10 sn`. Bu, o yedeğin tek kullanımlık bir container'da gerçekten geri
+yüklendiği ve kaç saniye sürdüğü demek — vaat değil ölçüm. Provayı panelden,
+haftalık zamanlayıcıdan ya da komut satırından çalıştırmanız fark etmez:
+sonuç aynı deftere, **kaynağı yazılı** olarak düşer.
+
 <div align="center">
 <img src="ss/05-izleme.png" alt="Grafana panoları" width="900">
 </div>
