@@ -32,7 +32,8 @@ RUN apk add --no-cache \
         # kalır ve dökümler şifresiz diske yazılır. e2e bunu yakaladı:
         # "controller container'ında openssl YOK — panelden ve gecelik
         # zamanlayıcıdan şifreli yedek ALINAMAZ".
-        openssl \n        docker-cli \
+        openssl \
+        docker-cli \
         docker-cli-compose \
         kubectl \
         tini \
