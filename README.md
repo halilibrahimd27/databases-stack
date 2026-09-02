@@ -21,55 +21,38 @@ Sen hiçbir teknik değer girmezsin.
 ## Nasıl görünüyor?
 
 <div align="center">
-
-<img src="ss/image.png" alt="Yönetim paneli — veritabanı kartları" width="880">
-
+<img src="ss/01-panel.png" alt="Yönetim paneli" width="900">
 </div>
 
-Her kart bir veritabanı. **Ne işe yaradığı sade dille** yazıyor, teknik terim
-gerekmiyor. Üst barda sunucunun durumu var: *ayrılan* bellek (motorlara söz
-verilen tavan) ve altında *gerçek kullanım*. Kapalı bir motorda "Tahmini
-bellek" yazar — açarsanız ne kadar alacağını önceden gösterir.
+Sayfa iki bölgeden oluşur. Üstte **şu an açık** olanlar kart hâlinde: ne kadar
+bellek aldıkları, hangi porttan bağlanılacağı, yedek kopyası ve otomatik devri
+var mı. Altta **kapalı** olanlar tek satır — hiç kaynak harcamıyorlar, bir
+kartı hak etmiyorlar. Satıra tıklayınca ne işe yaradığı, tahmini belleği ve
+lisansı açılır.
+
+Üst bardaki sayı *ayrılan* belleği gösterir (motorlara söz verilen tavan),
+altında da sunucunun toplam RAM'i ve **gerçek** kullanımı. İkisi farklıdır ve
+fark önemlidir: tavanlar rezervasyon değil üst sınırdır.
 
 <div align="center">
-
-<img src="ss/image1.png" alt="Çalışan ve kapalı motorlar" width="880">
-
+<img src="ss/03-islemler.png" alt="Geri dönüşü zor işlemler kapalı bir bölümde" width="900">
 </div>
 
-Çalışan bir motorda kart aksiyona döner: **Kapat**, panelini aç, bağlantı
-bilgisini kopyala, **replika kur**. Kapalı motorlar hiç container yaratmaz —
-sıfır RAM, sıfır CPU.
+Gündelik işler kartın yüzünde (paneli aç, bağlantı bilgisi). **Geri dönüşü zor
+olanlar** — kapatmak, yedek kopyayı kaldırmak, otomatik devri kapatmak —
+kapalı bir bölümde ve her biri **ne olacağını tek cümleyle** söylüyor. Yan yana
+duran altı düğme arasından yanlışına basmak bu üründe mümkün değil.
 
 <div align="center">
-
-<img src="ss/image2.png" alt="Mesajlaşma, analitik ve graph motorları" width="880">
-
-</div>
-
-12 motor kategorilere ayrılmış: ilişkisel, doküman, key-value, wide-column,
-arama, mesajlaşma, analitik, graph, nesne depolama.
-
-<div align="center">
-
-<img src="ss/image3.png" alt="Olay akışı" width="880">
-
-</div>
-
-**Olay akışı** ne olduğunu kaydeder: hangi motor ne zaman açıldı, kaç MB
-ayrıldı, bellek dar olduğu için paneli atlandı mı, otomatik devir yaşandı mı.
-Kritik olaylar (devir) ayrıca webhook ile bildirilir.
-
-<div align="center">
-
-<img src="ss/image4.png" alt="Sertifika kurulum rehberi" width="520">
-
+<img src="ss/02-kurulum.png" alt="Sertifika kurulum rehberi" width="620">
 </div>
 
 İç ağda alan adı olmadığı için TLS sertifikasını sunucu kendisi üretir.
-Tarayıcının "güvenli değil" uyarısını kaldırmak için **tek seferlik** bu
-rehber adım adım anlatır — sertifikayı kurduktan sonra bu sayfa sizi otomatik
-panele geçirir.
+Tarayıcının "güvenli değil" uyarısını kaldırmak için **tek seferlik** bu rehber
+adım adım anlatır — sertifikayı kurduktan sonra sayfa sizi otomatik panele
+geçirir. Panele bir kez girdiğinizde bütün yönetim ekranları (phpMyAdmin,
+pgAdmin, Grafana…) parola sormadan açılır; dışarıdan doğrudan gelen biri ise
+hâlâ parola ekranıyla karşılaşır.
 
 ---
 
@@ -374,6 +357,54 @@ doğrular; `./stack.sh doctor` bunu otomatik çağırır.
 > portlarını internete açmayın.
 
 Ayrıntı ve sertleştirme adımları: [docs/SECURITY.md](docs/SECURITY.md)
+
+---
+
+## Nasıl doğrulanıyor
+
+Bu ürünün iddiaları ölçülüyor. Depoda iki katman var:
+
+```bash
+./stack.sh selftest    # docker gerektirmez — boyutlandırma, API, nginx, betikler
+./stack.sh e2e         # ÇALIŞAN kuruluma karşı — sekiz paket, ~300 kontrol
+./stack.sh e2e --hepsi # Kubernetes dahil
+```
+
+`selftest` docker'ı taklit eder; hızlıdır ve mantık hatalarını yakalar. Ama
+taklit edilen bir docker, gerçek bir container'ın yapmadığını yapmaz. Bu
+yüzden ikinci katman var ve **çalışan sisteme** soruyor: veri yazılıp geri
+okunuyor mu, ana kopya öldürülünce uygulama **aynı adrese** yazmaya devam
+ediyor mu, alınan yedek gerçekten geri yükleniyor mu, her panonun her sorgusu
+veri döndürüyor mu.
+
+| Paket | Ne kanıtlar |
+|---|---|
+| `security` | Panel/API/metrik parolası, tek oturum, çapraz-site koruması |
+| `sizing` | Hesaplanan limit gerçekten uygulanmış mı, bütçe dolunca reddediyor mu |
+| `replication` | Replika akıyor, salt-okunur, kapatınca kalıntı bırakmıyor |
+| `failover` | Ölüm → devir → **aynı adresten yazma** → veri kaybı yok |
+| `backup` | Yedek al → **veriyi sil** → geri yükle → veri geri geldi |
+| `monitoring` | Hedefler, metrikler, **her panonun her sorgusu** |
+| `lifecycle` | Aç/kapat/aç — kapatınca veri silinmiyor |
+| `k8s` | Ayarlar pod içinde uygulanıyor mu (k3s açar ve sonunda kapatır) |
+
+**Sonuç türü üç değil dört:**
+
+| | Anlamı | Çıkış koduna etkisi |
+|---|---|---|
+| `GEÇTİ` / `BAŞARISIZ` | Ölçtük | — / 1 |
+| `ATLANDI` | Ön koşul yok (motor kapalı) — meşru | yok |
+| `ÖLÇÜLEMEDİ` | Sorgu düştü, docker cevap vermedi | **1** |
+
+Son satır kasıtlı: *"bilmeyi başaramadık" ile "iyi durumda" aynı şey değildir.*
+Aynı sebeple **hiçbir kontrol çalışmadıysa çıkış 2**, ölçülenden çok atlama
+varsa **çıkış 3** — "0/0 geçti" diyerek yeşil görünen bir test, hiç olmayan
+testten kötüdür.
+
+Bu paket yazıldığı gün ürünün kendisinde altı gerçek hata buldu; dördü ancak
+sıfırdan kurulmuş, gerçekten çalışan bir sistemde görülebilirdi. Her biri için
+teste kalıcı bir koruma eklendi ve **korumanın bozuk hâli gerçekten yakaladığı**
+ayrıca sınandı.
 
 ---
 
