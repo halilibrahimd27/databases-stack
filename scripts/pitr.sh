@@ -1519,17 +1519,34 @@ durum_olc() {   # <motor>
                 D_UYARI+=("archive_mode KAPALI — WAL arşivlenmiyor, PITR penceresi İLERLEMİYOR. compose'da açık görünüyorsa container o ayarla yeniden yaratılmamıştır: docker compose up -d postgresql")
             fi
             # Arşivleyicinin kendi sayacı. Bir tek başarısızlık bile kalıcı
-            # olabilir: PostgreSQL aynı segmenti sonsuza kadar dener ve
-            # bu arada pg_wal büyür. Diski dolduran arıza budur.
-            local hata_n hata_wal hata_zaman
+            # olabilir: PostgreSQL aynı segmenti sonsuza kadar dener ve bu
+            # arada pg_wal büyür. Diski dolduran arıza budur.
+            #
+            # AMA SAYAÇ SIFIRLANMAZ. failed_count geçmişteki toplamdır;
+            # yalnız ona bakan sürüm, sorun ÇÖZÜLDÜKTEN sonra da sonsuza
+            # kadar "arşivleme BAŞARISIZ" diye bağırıyordu. Ölçüldü: izinler
+            # düzeltildi, segmentler arşive düşmeye başladı, durum ekranı yine
+            # aynı uyarıyı yazdı. Sürekli yanlış alarm veren bir gösterge,
+            # insanın göstergeye bakmayı bırakmasıyla sonuçlanır — yani
+            # sessiz arızadan farkı kalmaz. Bu yüzden soruyu ŞİMDİKİ ZAMANDA
+            # soruyoruz: son BAŞARISIZLIK, son BAŞARIDAN sonra mı?
+            local hata_n hata_wal hata_zaman hala_bozuk
             hata_n="$(tek_satir "$(pg_sorgu "$C" postgres \
                 'SELECT failed_count FROM pg_stat_archiver')")"
-            if sayi_mi "$hata_n" && [ "$hata_n" -gt 0 ]; then
+            hala_bozuk="$(tek_satir "$(pg_sorgu "$C" postgres \
+                'SELECT (last_failed_time IS NOT NULL AND (last_archived_time IS NULL
+                         OR last_failed_time > last_archived_time))::int
+                 FROM pg_stat_archiver')")"
+            if sayi_mi "$hata_n" && [ "$hata_n" -gt 0 ] && [ "$hala_bozuk" = "1" ]; then
                 hata_wal="$(tek_satir "$(pg_sorgu "$C" postgres \
                     'SELECT coalesce(last_failed_wal, $$-$$) FROM pg_stat_archiver')")"
                 hata_zaman="$(tek_satir "$(pg_sorgu "$C" postgres \
                     'SELECT coalesce(last_failed_time::text, $$-$$) FROM pg_stat_archiver')")"
-                D_UYARI+=("arşivleme $hata_n kez BAŞARISIZ oldu (son: $hata_wal @ $hata_zaman). Sebebi genelde izindir: ./scripts/pitr.sh kur postgresql")
+                D_UYARI+=("arşivleme ŞU AN BAŞARISIZ (son hata: $hata_wal @ $hata_zaman; toplam $hata_n). Sebebi genelde izindir: ./scripts/pitr.sh kur postgresql")
+            elif sayi_mi "$hata_n" && [ "$hata_n" -gt 0 ]; then
+                # Geçmişte hata var ama sonrasında arşivleme başarılı: bu bir
+                # arıza değil, bir kayıt. Uyarı değil BİLGİ olarak yazıyoruz.
+                D_NOT="${D_NOT:+$D_NOT · }arşivleme geçmişte $hata_n kez başarısız oldu, sonrasında düzeldi"
             fi
             # pg_wal birikiyorsa arşivleme tıkanmış demektir; sayıyı
             # göstermek, "disk doldu" sürprizini birkaç gün öne çeker.
@@ -1690,6 +1707,53 @@ sure_yaz() {   # saniye → "3 gün 4 saat"
 # 999) oraya yazamaz ve archive_command her segmentte "Permission denied"
 # der. Bunun kötü tarafı gürültülü olması değil, SESSİZ olması: PostgreSQL
 # yeniden dener, pg_wal büyür ve arıza ancak veri diski dolduğunda görünür.
+# Arşiv dizinini motorun KENDİ kullanıcısına açar ve gerçekten yazabildiğini
+# ÖLÇER. Hem "kur" hem "arsivle" kullanıyor.
+#
+# NEDEN "arsivle" DE ÇAĞIRIYOR: bind-mount kaynağı yoksa docker onu
+# root:root olarak yaratır ve motorun kullanıcısı (postgres/mysql) oraya
+# yazamaz. archive_command her seferinde çıkış 1 döner, PostgreSQL segmenti
+# serbest bırakmaz ve pg_wal büyür. Sunucuda ölçüldü:
+#   wal-archive: arşiv dizinine yazılamıyor: /wal-archive
+#   LOG: archive command failed with exit code 1   (saniyede bir, sonsuza dek)
+# Bunu düzelten tek şey ELLE çalıştırılan "pitr.sh kur" idi — yani PITR,
+# kimse o komutu yazana kadar kapalı kalıyordu ve panelde bunu söyleyen
+# hiçbir şey yoktu. Zamanlanmış iş artık kendi ön koşulunu kendisi kuruyor;
+# 15 dakikada bir koştuğu için motor açılır açılmaz düzelir.
+arsiv_izni_kur() {   # <motor> <container> <ic_yol> <kullanici> <host_dizin>
+    local motor="$1" C="$2" ic_yol="$3" kullanici="$4" host_dizin="$5" gid
+    ARSIV_ONARILDI=0
+    docker exec "$C" sh -c "touch '$ic_yol/.yazma-testi' && rm -f '$ic_yol/.yazma-testi'" \
+        >>"$LOG_FILE" 2>&1 && return 0
+    plog "$ic_yol motorun kullanıcısına ($kullanici) kapalı — izinler düzeltiliyor"
+    # GRUP HOST'UN GRUBU OLMALI. Yalnız "chown postgres" demek dizini
+    # 750/postgres:root bırakıyor ve bu kez SUNUCUDAKİ YÖNETİCİ arşivi
+    # okuyamıyor: "durum" boyutu ölçemez, "temizle" hiçbir şey silemez,
+    # "don" arşive bakamaz. Yani izni bir tarafa açarken diğerine
+    # kapatmış oluyorduk. Numerik gid host'tan geliyor; container'ın
+    # /etc/group'unda o grubun adı olmayabilir.
+    # Grubu ARŞİV DİZİNİNİN KENDİSİNDEN değil ÜST DİZİNİNDEN alıyoruz:
+    # bind-mount kaynağı yoksa docker onu root:root yaratır ve o gid'i
+    # kopyalamak "grup root" demek olurdu — yani yönetici yine silemez.
+    # Üst dizini (backups/<motor>) install.sh yöneticinin grubuyla açıyor.
+    gid="$(stat -c %g "$(dirname "$host_dizin")" 2>/dev/null)"
+    case "$gid" in ""|*[!0-9]*) gid=0 ;; esac
+    # chown container'ın İÇİNDEN: bind-mount'ta inode host ile ortaktır, yani
+    # buradaki chown host'taki dizini de düzeltir. Host'ta "chown 999" demek,
+    # o uid'in imaj sürümüne göre değişebileceğini bilmeyi gerektirirdi.
+    docker exec -u 0 "$C" sh -c \
+        "mkdir -p '$ic_yol' && chown '$kullanici':$gid '$ic_yol' && chmod 2775 '$ic_yol'" \
+        >>"$LOG_FILE" 2>&1 || return 1
+    docker exec "$C" sh -c "touch '$ic_yol/.yazma-testi' && rm -f '$ic_yol/.yazma-testi'" \
+        >>"$LOG_FILE" 2>&1 || return 1
+    ARSIV_ONARILDI=1
+    pok "$ic_yol artık yazılabilir ($kullanici, grup $gid)"
+    return 0
+}
+
+pitr_ic_yol()    { case "$1" in postgresql) printf /wal-archive ;; mariadb) printf /binlog-archive ;; esac; }
+pitr_kullanici() { case "$1" in postgresql) printf postgres ;; mariadb) printf mysql ;; esac; }
+
 cmd_kur() {
     local motor="${1:-}"
     motor_kontrol "$motor"
@@ -1724,17 +1788,11 @@ cmd_kur() {
     # ortaktır, yani buradaki chown host'taki dizini de düzeltir. Host'ta
     # `chown 999` demek ise sunucuda o uid'in ne olduğunu bilmeyi gerektirir
     # ve imaj sürümüyle değişebilir.
-    docker exec -u 0 "$C" sh -c \
-        "mkdir -p '$ic_yol' && chown '$kullanici' '$ic_yol' && chmod 750 '$ic_yol'" \
-        >>"$LOG_FILE" 2>&1 \
-        || { err "İzinler düzeltilemedi ($ic_yol). Ayrıntı: $LOG_FILE"; return 1; }
-
     # Sözle değil ÖLÇÜMLE: motorun kendi kullanıcısı gerçekten yazabiliyor mu?
-    if ! docker exec "$C" sh -c \
-            "touch '$ic_yol/.yazma-testi' && rm -f '$ic_yol/.yazma-testi'" \
-            >>"$LOG_FILE" 2>&1; then
-        err "$ic_yol motorun kullanıcısı ($kullanici) tarafından hâlâ YAZILAMIYOR."
+    if ! arsiv_izni_kur "$motor" "$C" "$ic_yol" "$kullanici" "${dizinler[0]}"; then
+        err "$ic_yol motorun kullanıcısı ($kullanici) tarafından YAZILAMIYOR."
         err "  Host tarafında dizinin sahibini kontrol edin: ${dizinler[0]}"
+        err "  Ayrıntı: $LOG_FILE"
         return 1
     fi
     pok "$ic_yol yazılabilir ($kullanici) — arşivleme çalışabilir."
@@ -1764,6 +1822,7 @@ cmd_arsivle() {
     motor_kontrol "$motor"
     docker_var_mi
     local C; C="$(primary_of "$motor")"
+    local _ic _ku _hd
     # Motor kapalıysa çıkış 3: iş BAŞARISIZ olmadı, hiç DENENEMEDİ. Aradaki
     # fark cron çıktısında önemli — kapalı bir motor her gece "arşivleme
     # başarısız" diye alarm üretmemeli.
@@ -1771,6 +1830,17 @@ cmd_arsivle() {
         err "$motor çalışmıyor ($C) — arşivleme canlı sunucudan yapılır."
         return 3
     }
+
+    # ÖN KOŞULU KENDİ KUR. Gerekçe arsiv_izni_kur'un başında yazılı.
+    _ic="$(pitr_ic_yol "$motor")"; _ku="$(pitr_kullanici "$motor")"
+    case "$motor" in postgresql) _hd="$WAL_DIR" ;; mariadb) _hd="$BINLOG_DIR" ;; *) _hd="" ;; esac
+    if [ -n "$_ic" ] && baglama_var "$C" "$_ic"; then
+        arsiv_izni_kur "$motor" "$C" "$_ic" "$_ku" "$_hd" || {
+            err "$C içinde $_ic yazılabilir yapılamadı — arşivleme çalışamaz."
+            err "  Ayrıntı: $LOG_FILE · elle: ./scripts/pitr.sh kur $motor"
+            return 1
+        }
+    fi
 
     if [ "$motor" = "postgresql" ]; then
         # WAL segmenti dolmadan arşive düşmez. Yazı olmuş ama segment
@@ -1786,11 +1856,18 @@ cmd_arsivle() {
             'SELECT pg_walfile_name(pg_current_wal_lsn())')")"
         [ -n "$seg" ] || { err "Aktif WAL segmenti okunamadı."; return 1; }
         pg_sorgu "$C" postgres 'SELECT pg_switch_wal()' >/dev/null 2>&1
-        local bitis=$(( $(date +%s) + 60 ))
+        # PostgreSQL arşivleyicisi ARDIŞIK HATALARDAN SONRA GERİ ÇEKİLİR:
+        # başarısız bir archive_command'dan sonra bir sonraki denemeyi
+        # saniyeler değil, WAL yazıcısının turuna göre yapar. İzinleri az
+        # önce düzelttiysek ilk deneme 60 saniyeyi aşabiliyor (ölçüldü:
+        # segment 63 ve 64 dizine düştü ama biz çoktan "DÜŞMEDİ" demiştik).
+        # Onarım yaptıysak daha uzun bekliyoruz.
+        local _bek=60; [ "${ARSIV_ONARILDI:-0}" = "1" ] && _bek=180
+        local bitis=$(( $(date +%s) + _bek ))
         while :; do
             [ -f "$WAL_DIR/$seg" ] && { pok "Arşive düştü: $seg"; return 0; }
             if [ "$(date +%s)" -ge "$bitis" ]; then
-                err "$seg 60 sn içinde arşive DÜŞMEDİ."
+                err "$seg $_bek sn içinde arşive DÜŞMEDİ."
                 err "  Arşivleyicinin durumu için: ./scripts/pitr.sh durum postgresql"
                 return 1
             fi

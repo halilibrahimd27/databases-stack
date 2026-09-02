@@ -2760,6 +2760,23 @@ ck("stack.sh doctor --duzelt var (hata mesajları oraya yönlendiriyor)",
    "cmd_doctor_duzelt" in _st and "--duzelt" in _st)
 ck("doctor moda değil GERÇEK yazılabilirliğe bakıyor ([ -w ])",
    "[ -w " in _st)
+# SIRLAR "paylaşılan" sayılmamalı. state/mongo-keyfile 0400 OLMAK ZORUNDA:
+# MongoDB gruba/başkasına açık bir keyfile görürse "permissions on keyfile
+# are too open" deyip hiç açılmaz. İlk sürüm state/ altındaki BÜTÜN dosyalara
+# g+w veriyordu ve --duzelt keyfile'ı 0460 yapıp replica set'i kırdı.
+ck("doctor paylaşılan dosyaları TÜRÜNE göre seçiyor (sırlara dokunmuyor)",
+   '-name "*.lock"' in _st and '-name "*.json"' in _st
+   and "mongo-keyfile" in _st)
+ck("doctor --duzelt tüm dosyalara g+w vermiyor",
+   "-type f -exec chmod g+w" not in _st.replace(chr(92) + chr(10), " "))
+ck("install.sh PITR arşiv/taban dizinlerini açıyor (docker root:root yaratmasın)",
+   "backups/postgresql/wal" in _kur and "backups/mariadb/taban" in _kur)
+_pitr_src2 = io.open("scripts/pitr.sh", encoding="utf-8").read()
+ck("arşivleme kendi izin ön koşulunu kuruyor",
+   "arsiv_izni_kur" in _pitr_src2 and "ARSIV_ONARILDI" in _pitr_src2)
+ck("arşivleyici uyarısı ŞİMDİKİ duruma bakıyor (geçmiş sayaca değil)",
+   "last_failed_time > last_archived_time" in _pitr_src2
+   and "arşivleme ŞU AN BAŞARISIZ" in _pitr_src2)
 _app = io.open("controller/app.py", encoding="utf-8").read()
 ck("controller açılışta umask 0o002 kuruyor", "os.umask(0o002)" in _app)
 

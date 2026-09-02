@@ -280,7 +280,23 @@ PY
 # doğru görünüp grup üyeliği eksikse yine yazamayız.
 _paylasilan_yollar() {
     printf '%s\n' "$STACK_ROOT/state" "$STACK_ROOT/logs"
-    find "$STACK_ROOT/state" "$STACK_ROOT/logs" -maxdepth 1 -type f 2>/dev/null
+    # PITR dizinlerine de İKİ TARAF yazar: motorun kendi kullanıcısı
+    # (archive_command, container'ın içinden) ve buradaki yönetici
+    # (pitr.sh taban / temizle). Biri sahiplenirse diğeri sessizce düşer:
+    #   backups/mariadb/taban/...sql.gz: Permission denied   (ölçüldü)
+    printf '%s\n' \
+        "$STACK_ROOT/backups/postgresql/wal" "$STACK_ROOT/backups/postgresql/taban" \
+        "$STACK_ROOT/backups/mariadb/binlog" "$STACK_ROOT/backups/mariadb/taban"
+    # SIRLAR BU LİSTEDE YOK — bilerek. state/mongo-keyfile 0400 olmak
+    # ZORUNDA: MongoDB, gruba/başkasına açık bir keyfile görürse
+    # "permissions on keyfile are too open" deyip HİÇ AÇILMAZ. Onu
+    # "yazılamıyor" diye raporlayıp g+w vermek replica set'i tamamen
+    # kırardı — bir kez yaşandı, --duzelt keyfile'ı 0460 yaptı.
+    # Bu yüzden dosyalar TÜRÜNE göre seçiliyor: kilitler, durum kayıtları
+    # ve günlükler paylaşılır; anahtarlar ve sertifikalar paylaşılmaz.
+    find "$STACK_ROOT/state" "$STACK_ROOT/logs" -maxdepth 1 -type f \
+         \( -name "*.lock" -o -name "*.json" -o -name "*.jsonl" \
+            -o -name "*.env" -o -name "*.conf" -o -name "*.log" \) 2>/dev/null
 }
 
 _yazilamayanlar() {
@@ -307,13 +323,27 @@ cmd_doctor_duzelt() {
     # setgid: bundan SONRA açılacak dosyalar grubu miras alır. Tek başına
     # yetmez (yazma bitini vermez), umask 0002 ile birlikte çalışır.
     $S chgrp -R "$grup" "$STACK_ROOT/state" "$STACK_ROOT/logs" 2>/dev/null || true
+    # PITR dizinlerinde YALNIZ DİZİNİN kendisi düzeltiliyor: içindeki WAL/
+    # binlog dosyalarının sahibi motorun kullanıcısıdır ve öyle kalmalı.
+    # Silme yetkisi dosyanın değil DİZİNİN yazma bitine bağlı olduğu için
+    # yönetici yine temizlik yapabilir.
+    for _d in "$STACK_ROOT"/backups/postgresql/wal "$STACK_ROOT"/backups/postgresql/taban \
+              "$STACK_ROOT"/backups/mariadb/binlog "$STACK_ROOT"/backups/mariadb/taban; do
+        [ -d "$_d" ] || continue
+        $S chgrp "$grup" "$_d" 2>/dev/null || true
+        $S chmod 2775 "$_d" 2>/dev/null || true
+    done
     if ! $S chmod 2775 "$STACK_ROOT/state" "$STACK_ROOT/logs"; then
         die "Dizin izni değiştirilemedi.
   Dosyaların bir kısmı root'a ait ve sudo parola isteyemedi (tty yok).
   Doğrudan root olarak çalıştırın:
     sudo ./stack.sh doctor --duzelt"
     fi
-    $S find "$STACK_ROOT/state" "$STACK_ROOT/logs" -maxdepth 1 -type f         -exec chmod g+w {} + 2>/dev/null || true
+    # Yalnız paylaşılan TÜRLER; sırlara (mongo-keyfile, *.key) dokunulmuyor.
+    $S find "$STACK_ROOT/state" "$STACK_ROOT/logs" -maxdepth 1 -type f \
+         \( -name "*.lock" -o -name "*.json" -o -name "*.jsonl" \
+            -o -name "*.env" -o -name "*.conf" -o -name "*.log" \) \
+        -exec chmod g+w {} + 2>/dev/null || true
     # Kilit dosyaları veri TAŞIMAZ; iki kimliğin paylaşabilmesi için en geniş
     # modu hak ederler. Paylaşamazlarsa kilit hiçbir şeyi engellemez olur.
     $S find "$STACK_ROOT/state" -maxdepth 1 -name '*.lock'         -exec chmod 0666 {} + 2>/dev/null || true

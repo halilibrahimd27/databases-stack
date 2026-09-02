@@ -190,6 +190,16 @@ load_env
 heading "5/8  Dizinler"
 mkdir -p state certs overrides backups logs \
          backups/{mariadb,postgresql,mongodb,redis,mssql,cassandra,elasticsearch,clickhouse,neo4j,rabbitmq,minio}/{full,single}
+# PITR dizinleri BURADA açılıyor. Açılmazsa docker onları bind-mount kaynağı
+# olarak root:root yaratır; motorun kullanıcısı (postgres/mysql) oraya yazamaz
+# ve archive_command sonsuza dek çıkış 1 döner — yani PITR, kimse elle
+# "pitr.sh kur" yazana kadar KAPALI kalır ve bunu söyleyen hiçbir şey yoktur.
+# "taban" dizinleri de aynı sebeple: onlara hem host betiği hem controller
+# (container içinde root) yazıyor; ilk yazan sahip olunca diğeri yazamıyor.
+mkdir -p backups/postgresql/wal backups/postgresql/taban \
+         backups/mariadb/binlog backups/mariadb/taban
+chmod 2775 backups/postgresql/wal backups/postgresql/taban \
+           backups/mariadb/binlog backups/mariadb/taban
 # İZİNLER — container'lar bu dosyaları KENDİ kullanıcılarıyla okur, host
 # kullanıcısıyla değil. Dizinler 700 bırakılırsa:
 #   • nginx worker'ı (uid 101) .htpasswd ve sertifikayı okuyamaz → her istek 500
