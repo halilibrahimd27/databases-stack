@@ -42,7 +42,10 @@ RUN_LOG="$LOG_DIR/e2e_$(date +%Y%m%d_%H%M%S).log"
 # k8s
 # EN SONDA ve isteğe bağlı, çünkü k3s aynı host'ta 80/443'ü Docker'dan kapar
 # (bkz. docs/KUBERNETES.md) ve paketin sonundaki temizlik adımı kritiktir.
-GUVENLI=(security sizing replication failover backup monitoring lifecycle)
+# drill ve import, yedekleme ailesinin hemen ardından: ikisi de yedek
+# dosyalarını girdi olarak kullanıyor, backup paketi koştuktan sonra
+# elde taze bir dump oluyor.
+GUVENLI=(security sizing replication failover backup drill import monitoring lifecycle)
 ISTEGE_BAGLI=(k8s)
 
 declare -A ACIKLAMA=(
