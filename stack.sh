@@ -353,6 +353,29 @@ HINT
             [ -n "$_img_md5" ] && ok "controller imajı depodaki kodla aynı"
         fi
     fi
+    # --- ÇALIŞAN nginx yapılandırması ŞABLONLA aynı mı? -------------------
+    # nginx resmi imajı templates/*.template dosyalarını AÇILIŞTA envsubst ile
+    # işler. Yani şablonu değiştirmek yetmez, gateway'in yeniden başlaması
+    # gerekir — ve bu unutulduğunda hiçbir hata çıkmaz: nginx eski üretilmiş
+    # dosyayla sapasağlam çalışır. Gerçek olay: /yedekler sayfası eklendi,
+    # dosyalar yerindeydi, doctor "panel dosyaları aynı" diyordu ve sayfa
+    # 404 veriyordu. Şablondaki her `location = /…` yolunun çalışan
+    # yapılandırmada da bulunduğunu kontrol ediyoruz.
+    if container_running gateway; then
+        _tpl=gateway/templates/stack.conf.template
+        _eksik=""
+        if [ -f "$_tpl" ]; then
+            for _loc in $(grep -oE "location = /[a-zA-Z0-9_.-]+" "$_tpl" | awk "{print \$3}" | sort -u); do
+                docker exec gateway grep -qF "location = $_loc" /etc/nginx/conf.d/stack.conf 2>/dev/null                     || _eksik="$_eksik $_loc"
+            done
+        fi
+        if [ -n "$_eksik" ]; then
+            warn "Çalışan nginx yapılandırması ŞABLONDAN ESKİ — eksik adresler:$_eksik"
+            warn "→ Şablon açılışta işlenir; düzeltmek için: docker restart gateway"
+        else
+            ok "çalışan nginx yapılandırması şablonla aynı"
+        fi
+    fi
     # --- PANELİN STATİK DOSYALARI gateway'in gördüğüyle AYNI mı? -----------
     # Controller bir imajdan çalıştığı için yukarıda md5 karşılaştırması var;
     # panelin html/js/css'i ise bind-mount'tur ve "git pull yeter" sanılır.

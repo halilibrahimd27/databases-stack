@@ -3189,7 +3189,20 @@ def resolve_backup_file(eid, name):
     # Controller'ın kendi dizini (/app) referans alınsaydı iki taraf farklı
     # dizine bakardı ve "dosya yok" derken dosya diskte dururdu.
     kok = os.path.realpath(os.path.join(PROJECT_DIR, backups_dir(), eid))
+    # Yedekler DÜZ DURMUYOR: backup.sh türe göre alt dizin açıyor
+    # (backups/mariadb/full/…, .../single/…). Liste ucu os.walk ile ağacı
+    # gezip DOSYA ADINI veriyor; burada düz birleştirme yapınca panelin
+    # gösterdiği her dosya "bulunamadı" oluyordu — ekranda duran bir dosyaya
+    # "yok" demek, geri yüklemeyi kullanılamaz hâle getiriyordu.
+    # Ağacı gezip adı eşleşen dosyayı buluyoruz; kök kontrolü aşağıda
+    # ayrıca yapılıyor, yani alt dizin serbestliği kökten çıkmayı serbest
+    # bırakmıyor.
     yol = os.path.realpath(os.path.join(kok, ad))
+    if not os.path.isfile(yol):
+        for dizin, _alt, dosyalar in os.walk(kok):
+            if ad in dosyalar:
+                yol = os.path.realpath(os.path.join(dizin, ad))
+                break
     if not yol.startswith(kok + os.sep):
         return None, ("Dosya %s dizininin dışına çıkıyor; geri yükleme yalnız "
                       "o motorun kendi yedekleriyle yapılır." % kok)

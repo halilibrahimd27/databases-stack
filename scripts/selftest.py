@@ -1032,6 +1032,30 @@ except ImportError:
     ck("postgres ayarlarının hepsi `-c` ile veriliyor", True, "(PyYAML yok — atlandı)")
 
 
+# Geri yükleme, panelin gösterdiği dosyayı BULABİLMELİ. backup.sh yedekleri
+# türe göre alt dizine yazıyor (backups/<motor>/full/…, .../single/…); liste
+# ucu ağacı gezip dosya ADINI veriyor. Çözümleme düz birleştirme yapınca
+# ekranda duran her dosya "bulunamadı" oluyordu — yani geri yükleme düğmesi
+# hiç çalışmıyordu. Sunucuda ölçüldü ve düzeltildi; kontrol kalıcı.
+_ctrl_src = io.open("controller/app.py", encoding="utf-8").read()
+_rbf_i = _ctrl_src.find("def resolve_backup_file")
+_rbf = _ctrl_src[_rbf_i:_rbf_i + 3000] if _rbf_i >= 0 else ""
+ck("geri yükleme çözümleyicisi var", _rbf_i >= 0)
+ck("geri yükleme alt dizinlerde de arıyor (backups/<motor>/full/…)",
+   "os.walk(" in _rbf)
+ck("geri yükleme kökten çıkmayı engelliyor (realpath + önek)",
+   "realpath" in _rbf and "startswith" in _rbf)
+ck("geri yükleme yalnız .gz kabul ediyor ('.bozuk' kurtarma noktası değildir)",
+   '.gz' in _rbf and 'bozuk' in _rbf)
+
+# Replika bütçesi, motorun KENDİ servislerini boşta saymamalı.
+ck("replika bütçesi için ayrı hesap var (free_budget_mb)",
+   "def free_budget_mb" in _ctrl_src)
+_dorep_i = _ctrl_src.find("def do_replication")
+_dorep = _ctrl_src[_dorep_i:_dorep_i + 6000]
+ck("replika kontrolü plan_engine'in budget_mb'sini KULLANMIYOR",
+   "free_budget_mb()" in _dorep and 'p.get("budget_mb"' not in _dorep)
+
 # Kilit dosyası /tmp'de OLMAMALI. /tmp herkese yazılabilir ama dosyanın SAHİBİ
 # onu ilk yaratandır: root olarak bir kez koşan yedek, kilidi root'a ait bırakıp
 # ondan sonraki her kullanıcı koşusunu "Permission denied" ile öldürüyordu —
