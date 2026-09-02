@@ -2850,6 +2850,30 @@ for _p, _r in (("mongodb", "mongodb-replica-1"), ("mongodb", "mongodb-arbiter"),
     ck("%s, %s'in ayar bayraklarını taşıyor" % (_r, _p),
        not _eksik_b, "eksik: %s" % (", ".join(_eksik_b) or "yok"))
 
+# --- Replikasyon betikleri YÖNÜ çağırandan almalı ----------------------------
+# PostgreSQL betiği "ana kopya her zaman 'postgresql' container'ıdır" diye
+# yazılmıştı. Devirden sonra bu tersine döner: slot yedekte aranır (ana
+# kopyadaki kalıntıya dokunulmaz), rol ve pg_hba satırı yanlış düğüme yazılır.
+# Ölçülen sonucu, 900 saniyelik bir crash-loop ve tamamen alakasız bir hata
+# mesajıydı ("postgresql hiç WAL almamış").
+_pg_rep = io.open("scripts/replication/postgresql.sh", encoding="utf-8").read()
+ck("postgresql replikasyon betiği yönü çağırandan alıyor",
+   "REPLICATION_PRIMARY" in _pg_rep and "REPLICATION_STANDBY" in _pg_rep)
+ck("postgresql betiği psql'i ANA KOPYA container'ında çalıştırıyor",
+   '-i "$PRIMARY"' in _pg_rep and "-i postgresql " not in _pg_rep)
+# Slot adı düğüme göre değişiyor (compose'da öyle tanımlı); tek ada bakan
+# sürüm devirden sonra var olmayan slot'u siliyordu.
+ck("postgresql betiği slot adını hedef düğüme göre seçiyor",
+   'POSTGRES_SLOT_PRIMARY' in _pg_rep and 'POSTGRES_REPLICATION_SLOT' in _pg_rep)
+ck("postgresql betiği yön sağlaması yapıyor (kaynak = hedef ise durur)",
+   '"$PRIMARY" = "$STANDBY"' in _pg_rep)
+
+# Yeniden kurulum yolu ana kopyayı HAZIRLAMALI: kalıntı slot silinmeden yeni
+# düğüm `pg_basebackup -C` ile açılamaz.
+ck("yeniden kurulum yolu 'prepare' fazını çağırıyor (yalnız mariadb için değil)",
+   'jl("ana kopya hazırlanıyor (kalıntı slot/rol temizliği):", prim)' in _app
+   and 'script_has_phase(script, "prepare")' in _app)
+
 # =============================================================================
 print()
 if FAILS:

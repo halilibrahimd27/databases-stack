@@ -10,9 +10,40 @@ USER_="${POSTGRES_REPLICATION_USER:-replicator}"
 PASS="${POSTGRES_REPLICATION_PASSWORD:-${POSTGRES_PASSWORD:-$DB_PASSWORD}}"
 SU="${POSTGRES_USER:-root}"
 
-SLOT="${POSTGRES_REPLICATION_SLOT:-replica_1}"
+# YÖN, KATALOG ADINDAN DEĞİL ÇAĞIRANDAN GELİR.
+# Bu betik "ana kopya her zaman 'postgresql' container'ıdır" varsayıyordu.
+# Bir devirden sonra bu varsayım TERSİNE döner ve betik yanlış düğüme çalışır:
+# slot'u yedekte arar (ana kopyada duran kalıntıya dokunmaz), replikasyon
+# rolünü ve pg_hba satırını yanlış düğüme yazar. Ölçülen sonucu şuydu —
+# "failover rebuild postgresql" 900 saniye şu döngüde kaldı:
+#   pg_basebackup: error: could not send replication command
+#   "CREATE_REPLICATION_SLOT ..." ERROR: replication slot
+#   "replica_from_primary" already exists
+# ve kullanıcıya gösterilen mesaj bambaşka bir şey söylüyordu:
+#   "postgresql hiç WAL almamış — yükseltme veri kaybına yol açar"
+# Gerçek sebep yalnız `docker logs postgresql` çıktısındaydı.
+PRIMARY="${REPLICATION_PRIMARY:-postgresql}"
+STANDBY="${REPLICATION_STANDBY:-postgresql-replica}"
 
-psql_() { docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" -i postgresql \
+# SLOT ADI DÜĞÜME GÖRE DEĞİŞİR. compose'da her düğüm standby olduğunda kendi
+# adını kullanıyor: postgresql → replica_from_primary, postgresql-replica →
+# replica_1. Tek bir ada bakan sürüm, devirden sonra VAR OLMAYAN slot'u
+# siliyor ve gerçekten duran slot'u hiç görmüyordu.
+if [ "$STANDBY" = "postgresql" ]; then
+    SLOT="${POSTGRES_SLOT_PRIMARY:-replica_from_primary}"
+else
+    SLOT="${POSTGRES_REPLICATION_SLOT:-replica_1}"
+fi
+
+# Yön sağlaması: ikisi aynıysa elimizde tek düğüm var demektir ve temizlik
+# yanlış yere gider. Sessizce devam etmek yerine duruyoruz.
+if [ "$PRIMARY" = "$STANDBY" ]; then
+    echo "[pg] ✗ yön belirsiz: ana kopya ve yedek aynı düğüm ('$PRIMARY')." >&2
+    echo "[pg]   state/topology.json tutarsız; ./stack.sh doctor" >&2
+    exit 1
+fi
+
+psql_() { docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" -i "$PRIMARY" \
             psql -U "$SU" -d postgres -v ON_ERROR_STOP=1 "$@"; }
 
 # Slot'u siler ve GERÇEKTEN silindiğini DOĞRULAR; 0 dönerse slot yok demektir.
@@ -47,12 +78,13 @@ prepare)
   # Eski replikasyon slot'unu temizle. Replika sıfırdan kurulacağı için
   # pg_basebackup slot'u YENİDEN yaratmak isteyecek (`-S $SLOT -C`); kalıntı
   # varsa "replication slot already exists" ile ölür ve crash-loop'a girer.
+  echo "[pg] yön: $PRIMARY (kaynak) → $STANDBY (hedef)"
   echo "[pg] eski replikasyon slot'u temizleniyor (varsa): $SLOT"
   if ! drop_slot; then
       # Burada durup sebebi söylemek, replikanın 5 dakika crash-loop'ta
       # dönmesini bekleyip anlamsız bir zaman aşımı hatası vermekten iyidir.
       if [ -z "$slot_left" ]; then
-          echo "[pg] ✗ ana kopyaya (postgresql) bağlanılamadı." >&2
+          echo "[pg] ✗ ana kopyaya ($PRIMARY) bağlanılamadı." >&2
           echo "[pg]   Panelde PostgreSQL'in durumu 'çalışıyor' olmalı; başlatıp tekrar deneyin." >&2
       else
           echo "[pg] ✗ eski replikasyon slot'u silinemedi: $SLOT" >&2
@@ -74,7 +106,7 @@ prepare)
   # initdb'nin ürettiği pg_hba yalnız 127.0.0.1 için replikasyona izin verir;
   # replika ayrı bir container olduğu için ağdan gelen satırı eklemeliyiz.
   echo "[pg] pg_hba.conf güncelleniyor"
-  docker exec postgresql sh -c '
+  docker exec "$PRIMARY" sh -c '
       HBA="$PGDATA/pg_hba.conf"
       grep -q "databases-stack-replication" "$HBA" 2>/dev/null && exit 0
       printf "\n# databases-stack-replication\nhost replication %s all scram-sha-256\n" "'"$USER_"'" >> "$HBA"
@@ -97,7 +129,7 @@ attach)
       fi
       i=$((i+1)); sleep 5
   done
-  echo "[pg] ✗ replika 5 dakikada bağlanmadı — 'docker logs postgresql-replica' bakın" >&2
+  echo "[pg] ✗ replika 5 dakikada bağlanmadı — 'docker logs $STANDBY' bakın" >&2
   exit 1
   ;;
 cleanup)
@@ -113,7 +145,7 @@ cleanup)
       # bir replikanın geride bıraktığı slot ise geri alınamaz biçimde WAL
       # biriktirmeye devam ederdi.
       if [ -z "$slot_left" ]; then
-          echo "[pg] ✗ ana kopyaya (postgresql) bağlanılamadı — slot'un silindiği DOĞRULANAMADI." >&2
+          echo "[pg] ✗ ana kopyaya ($PRIMARY) bağlanılamadı — slot'un silindiği DOĞRULANAMADI." >&2
           echo "[pg]   Ana kopya çalışırken 'Yedek Kopya Kur / Kapat' işlemini bir kez daha çalıştırın." >&2
       else
           echo "[pg] ✗ replikasyon slot'u SİLİNEMEDİ: $SLOT" >&2

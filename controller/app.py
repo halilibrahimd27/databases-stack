@@ -2224,6 +2224,35 @@ def _rebuild_standby_locked(engine, eid, rep, jid, jl, refuse):
                 "eski veriyle açılan bir düğüm ikinci bir ana kopya olurdu."
                 % (full, (err or out).strip()[-300:]), "critical")
 
+    # ANA KOPYADAKİ KALINTIYI, DÜĞÜMÜ AÇMADAN ÖNCE TEMİZLE.
+    # PostgreSQL'de yeni düğüm entrypoint'inde `pg_basebackup -S <slot> -C`
+    # çalıştırır: slot'u YARATMAK ister. Önceki ilişkiden kalan aynı adlı bir
+    # slot ana kopyada duruyorsa komut şununla ölür ve düğüm sonsuz
+    # crash-loop'a girer:
+    #     ERROR: replication slot "replica_from_primary" already exists
+    # Sunucuda ölçüldü: 'failover rebuild postgresql' 900 saniye boyunca bu
+    # döngüde kaldı ve kullanıcıya gösterilen mesaj bambaşkaydı ("postgresql
+    # hiç WAL almamış"); gerçek sebep yalnız `docker logs` çıktısındaydı.
+    #
+    # Temizliği yapan faz zaten var: replikasyon betiğinin 'prepare' fazı.
+    # Yalnız MariaDB için çağrılıyordu; PostgreSQL bu yolda hiç prepare
+    # görmüyordu. Sıra ÖNEMLİ — düğüm açıldıktan sonra çalıştırmak yarış
+    # demektir: entrypoint basebackup'ı slot silinmeden başlatabilir.
+    script = script_path("replication", eid)
+    if os.path.exists(script) and script_has_phase(script, "prepare"):
+        prep_env = script_env()
+        prep_env.update(REPLICATION_PRIMARY=prim, REPLICATION_STANDBY=old)
+        jl("ana kopya hazırlanıyor (kalıntı slot/rol temizliği):", prim)
+        rc, out, err = run(["sh", script, "prepare"], timeout=900, env=prep_env)
+        jl((out + err).strip()[-2000:])
+        if rc != 0:
+            return refuse(
+                "Ana kopya (%s) yeniden kurulum için hazırlanamadı "
+                "(çıkış %d): %s. "
+                "Önceki ilişkiden kalan replikasyon slot'u silinemediyse yeni "
+                "düğüm 'replication slot already exists' ile açılamaz."
+                % (prim, rc, (err or out).strip()[-300:]), "critical")
+
     with ACTION_LOCK:
         rc, out, err = run(compose_base() + ["--profile", engine["profile"],
                                              "--profile", rep["profile"], "up", "-d", old],
