@@ -44,6 +44,25 @@ kapalı bir bölümde ve her biri **ne olacağını tek cümleyle** söylüyor. 
 duran altı düğme arasından yanlışına basmak bu üründe mümkün değil.
 
 <div align="center">
+<img src="ss/05-izleme.png" alt="Grafana panoları" width="900">
+</div>
+
+İzleme ayrı bir kurulum değil, panelden açılan bir modül: **İzleme aç** deyince
+Prometheus + Grafana kalkar, açık olan her motorun exporter'ı hedef listesine
+kendiliğinden eklenir ve **11 hazır pano** gelir — hepsi Türkçe ve "her şey
+yolunda mı?" sorusuna cevap verecek şekilde yazılmış. Tek bir PromQL sorgusu
+yazmanız gerekmez; kapattığınızda da hedef listesinden kendiliğinden çıkar.
+
+<div align="center">
+<img src="ss/04-olaylar.png" alt="Son olaylar" width="900">
+</div>
+
+Panelin altında **ne olduğu yazıyor**: hangi motor ne zaman açıldı, ne kadar
+bellek ayrıldı, hangi ayar hesaplandı, bir aktivasyon neden reddedildi, otomatik
+devir ne zaman ve **hangi sebeple** çalıştı. Sunucuya girip `docker logs`
+okumadan olan biteni buradan takip edersiniz.
+
+<div align="center">
 <img src="ss/02-kurulum.png" alt="Sertifika kurulum rehberi" width="620">
 </div>
 
