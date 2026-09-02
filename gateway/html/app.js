@@ -390,9 +390,13 @@ function cardHtml(engine, st) {
       <b>Kapat</b> hepsini temizler; verileriniz silinmez.</p>`;
   } else if (st.failed_over) {
     notice = `<p class="card-notice is-warn">Devir yapıldı — şu an
-      <b>${esc(st.primary_service || '')}</b> ana kopya. Uygulamanız aynı adrese
-      bağlanmaya devam eder. Rolleri normale döndürmek için aşağıdaki
-      “Eski kopyayı yeniden kur” işlemini kullanın.</p>`;
+      <b>${esc(st.primary_service || '')}</b> ana kopya. Uygulamanız <b>aynı
+      adrese</b> bağlanmaya devam eder, bağlantı bilgisi değişmez. Şu an yedek
+      kopya <b>yok</b>: aşağıdaki “Eski kopyayı yeniden kur” eski düğümü
+      <b>yedek olarak</b> geri getirir. Ana kopya
+      <b>${esc(st.primary_service || '')}</b> olarak kalır — rollerin yer
+      değiştirmiş olması zararsızdır, geri takas etmek gereksiz ikinci bir
+      kesinti demek olurdu.</p>`;
   } else if (st.health === 'unhealthy') {
     notice = `<p class="card-notice is-err">Çalışıyor ama sağlık kontrolüne
       yanıt vermiyor. Birkaç dakika beklemesine rağmen düzelmezse kapatıp
