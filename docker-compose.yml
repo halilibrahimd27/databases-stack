@@ -344,6 +344,17 @@ services:
       --max-connections=${MARIADB_MAX_CONNECTIONS:-200}
     volumes:
       - mariadb_replica_data:/var/lib/mysql
+      # ANA KOPYAYLA AYNI my.cnf. Eksikken ölçülen sonuç: devirden sonra bu
+      # düğüm ana kopya oluyor ve yığının bütün ayarlarını KAYBEDİYOR —
+      # binlog_expire_logs_seconds (binlog bir daha hiç silinmez, disk dolar),
+      # slow_query_log (yavaş sorgu ölçümü susar), bağlantı başına buffer
+      # sınırları, innodb_flush_log_at_trx_commit… Hiçbiri hata vermez;
+      # sunucu stok varsayılanlarla çalışmaya devam eder ve fark yalnız
+      # aylar sonra bir performans/disk olayı olarak görünür.
+      # Replikaya özel ayarlar (server-id, read-only, log-bin) command:
+      # satırında duruyor ve komut satırı config dosyasını EZER — yani bu
+      # bağlama onları bozmaz.
+      - ${STACK_DIR:-.}/config/mariadb/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
       # BİNLOG ARŞİVİ REPLİKADA DA ŞART. Devirden sonra ana kopya BU düğüm
       # olur ve yazmaları o üretir; bağlama yalnız 'mariadb' servisinde
       # kalırsa PITR tam da en gerekli anda — devirden sonra — sessizce
@@ -699,6 +710,19 @@ services:
       POSTGRES_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD:-${POSTGRES_PASSWORD:-${DB_PASSWORD}}}
     volumes:
       - postgresql_replica_data:/var/lib/postgresql/data
+      # PITR — ANA KOPYAYLA AYNI ARŞİV. Bu üç satır eksikken ölçülen sonuç:
+      # devirden sonra bu düğüm ana kopya oluyor, ama archive_command da
+      # /wal-archive de yok — WAL arşivlemesi SESSİZCE duruyor. `pitr.sh
+      # durum` "archive_mode KAPALI" diyor ve dönülebilir pencerenin üst
+      # sınırı devir anına donuyor. Yani PITR tam da en çok ihtiyaç duyulan
+      # anda, bir olayın hemen ardından ölüyor. (MariaDB tarafında aynı hata
+      # /binlog-archive bağlaması eksikken yaşandı.)
+      - ${STACK_DIR:-.}/backups/postgresql/wal:/wal-archive
+      - ${STACK_DIR:-.}/config/postgresql:/etc/pitr:ro
+      # Yavaş sorgu ölçümü de devirden sonra ölmesin: slowlog.sh bu dosyayı
+      # postgresql.conf'tan include ediyor, bağlı değilse "container'a BAĞLI
+      # DEĞİL" deyip ölçümü açamıyor.
+      - ${STACK_DIR:-.}/config/postgresql/slowlog.conf:/etc/postgresql/slowlog.conf:ro
     # Primary ile AYNI entrypoint — rol yalnızca PG_STANDBY_OF ile belirlenir.
     entrypoint:
       - bash
@@ -748,6 +772,17 @@ services:
       - work_mem=${POSTGRES_WORK_MEM:-4MB}
       - -c
       - wal_level=replica
+      # archive_mode=on: STANDBY iken PostgreSQL arşivlemez (yalnız "always"
+      # öyle yapar); yükseltildiği anda arşivlemeye başlar. İstediğimiz tam
+      # olarak bu — replikasyon sürerken iki düğüm aynı segment adlarını
+      # arşive yazmasın, devirden sonra yeni zaman çizgisiyle (00000002…)
+      # kaldığı yerden devam etsin.
+      - -c
+      - archive_mode=${POSTGRES_ARCHIVE_MODE:-on}
+      - -c
+      - archive_command=sh /etc/pitr/wal-archive.sh %p %f
+      - -c
+      - archive_timeout=${POSTGRES_ARCHIVE_TIMEOUT:-300}
     depends_on:
       postgresql:
         condition: service_healthy

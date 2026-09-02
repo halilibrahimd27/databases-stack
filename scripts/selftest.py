@@ -2781,6 +2781,52 @@ _lc = io.open("scripts/e2e/lifecycle.sh", encoding="utf-8").read()
 ck("lifecycle paketi de rabbitmq'yu check_running ile bekliyor",
    "check_running" in _lc)
 
+# --- Devirden SONRA yaşayacak her ayar replikada da olmalı --------------------
+# Bu sınıf üç kez ısırdı: mariadb-replica'da /binlog-archive bağlaması yoktu,
+# postgresql-replica ana kopyanın planlayıcı ayarını almıyordu, sonra da
+# arşivleme ayarlarını. Ortak yanları: hepsi ancak DEVİRDEN SONRA, yani en kötü
+# anda ortaya çıkıyor ve hiçbiri hata vermiyor — özellik sessizce ölüyor.
+# "Yedek kopya" bir yedek değil, YARIN'IN ANA KOPYASIDIR.
+_svc = _dc["services"]
+
+
+def _mount_hedefleri(ad):
+    """Bağlamanın KONTEYNER İÇİ hedefi. Kaynak tarafında ${STACK_DIR:-.} gibi
+    iki noktalı bir ifade olabildiği için basit split yanlış sonuç veriyordu;
+    önce ${...} blokları çıkarılıyor."""
+    out = set()
+    for m in (_svc[ad].get("volumes") or []):
+        sade = re.sub(r"\$\{[^}]*\}", "", str(m))
+        parca = [x for x in sade.split(":") if x.startswith("/")]
+        if parca:
+            out.add(parca[0])
+    return out
+
+
+def _ayar_adlari(ad):
+    """`-c ayar=deger` listesinden ayar adları."""
+    out = set()
+    for c in (_svc[ad].get("command") or []):
+        c = str(c)
+        if "=" in c and not c.startswith("-"):
+            out.add(c.split("=")[0])
+    return out
+
+
+for _p, _r in (("postgresql", "postgresql-replica"), ("mariadb", "mariadb-replica")):
+    _eksik_m = sorted(m for m in _mount_hedefleri(_p) - _mount_hedefleri(_r)
+                      # veri hacmi düğüme özeldir; onu paylaşmak zaten yanlış olur
+                      if "/var/lib/" not in m and "/data" != m)
+    ck("%s, %s'in kalıcılık bağlamalarını taşıyor" % (_r, _p),
+       not _eksik_m, "eksik: %s" % (", ".join(_eksik_m) or "yok"))
+
+# PITR ayarları, adı 'archive' geçen her şey: devirden sonra arşivleme durursa
+# dönülebilir pencerenin üst sınırı devir anına donar.
+_eksik_a = sorted(a for a in _ayar_adlari("postgresql") - _ayar_adlari("postgresql-replica")
+                  if "archive" in a)
+ck("postgresql-replica arşivleme ayarlarını taşıyor (devirden sonra PITR ölmesin)",
+   not _eksik_a, "eksik: %s" % (", ".join(_eksik_a) or "yok"))
+
 # =============================================================================
 print()
 if FAILS:
