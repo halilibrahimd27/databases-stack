@@ -1032,6 +1032,24 @@ except ImportError:
     ck("postgres ayarlarının hepsi `-c` ile veriliyor", True, "(PyYAML yok — atlandı)")
 
 
+# MariaDB'de 'healthcheck' hesabı DÜĞÜME ÖZELDİR: imaj ilk açılışta rastgele
+# bir parola üretip hem hesabı hem de o düğümün $datadir/.my-healthcheck.cnf
+# dosyasını aynı parolayla yazar. Hesap taşınırken kaynağınki hedefe yazılınca
+# parola ile dosya ayrışıyor ve düğüm — veritabanı kusursuz çalışırken —
+# sonsuza kadar "unhealthy" görünüyordu. Otomatik devir bekçisi sağlığa baktığı
+# için bu, kendi kendine kesinti üretebilen bir hataydı.
+_rep_mdb = io.open("scripts/replication/mariadb.sh", encoding="utf-8").read()
+_ulist = [l for l in _rep_mdb.splitlines() if "mysql.global_priv" in l and "NOT IN" in l]
+ck("MariaDB hesap taşımada dışlama listesi bulunuyor", len(_ulist) == 1,
+   "%d eşleşme" % len(_ulist))
+ck("'healthcheck' hesabı taşınmıyor (düğüme özel parola)",
+   bool(_ulist) and "'healthcheck'" in _ulist[0],
+   _ulist[0].strip()[:120] if _ulist else "")
+ck("hedefin sağlık hesabı taşımadan sonra yenileniyor (eski kurulumları onarır)",
+   ".my-healthcheck.cnf" in _rep_mdb and "ALTER USER IF EXISTS healthcheck" in _rep_mdb)
+ck("e2e, replikasyondan sonra iki düğümün de sağlığını ölçüyor",
+   "health_state" in io.open("scripts/e2e/replication.sh", encoding="utf-8").read())
+
 ck("motor imajları <MOTOR>_IMAGE ile değiştirilebilir",
    all(("${%s_IMAGE:-" % k) in compose_txt
        for k in ("MARIADB", "POSTGRES", "MONGO", "REDIS", "MSSQL", "MINIO", "ELASTIC")))

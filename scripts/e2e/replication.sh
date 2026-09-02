@@ -133,6 +133,29 @@ running_state() {   # $1 = container adı → 0 çalışıyor · 1 çalışmıyo
     return 1
 }
 
+# Container'ın SAĞLIK durumu → 0 healthy · 1 unhealthy · 2 sorulamadı ·
+# 3 sağlık kontrolü tanımsız (bu bir hata değil, ölçüm konusu değil demek).
+#
+# Neden ayrı bir kontrol: "replikasyon akıyor" ile "düğüm sağlıklı görünüyor"
+# aynı şey değil. MariaDB'de hesap taşıma, hedefin DÜĞÜME ÖZEL 'healthcheck'
+# hesabını kaynağınkiyle eziyordu; veritabanı kusursuz çalışırken container
+# sonsuza kadar 'unhealthy' kalıyordu. Testler yalnız veriye baktığı için bunu
+# görmedi — oysa otomatik devir bekçisi sağlığa bakar ve "3 kez üst üste
+# sağlıksız" görünce devir başlatır. Yani ölçülmeyen bu alan, kendi kendine
+# kesinti üretebilecek bir boşluktu.
+health_state() {
+    local out rc
+    out="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}yok{{end}}' "$1" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && { HEALTH_ERR="$(detail_tail "$out" 2)"; return 2; }
+    HEALTH_SEEN="${out//$''/}"
+    case "$HEALTH_SEEN" in
+        healthy)   return 0 ;;
+        yok)       return 3 ;;
+        unhealthy) HEALTH_ERR="$(docker inspect -f '{{range .State.Health.Log}}{{.Output}}{{end}}' "$1" 2>/dev/null | tail -c 400)"; return 1 ;;
+        *)         return 1 ;;   # starting: aşağıdaki bekleme döngüsü tekrar sorar
+    esac
+}
+
 # ---------------------------------------------------------------- bekleme ---
 # HİÇBİR BEKLEME SONSUZ DEĞİL; üstelik beklerken NE beklediğini yazar. Takılan
 # bir koşuda "hangi adımda kaldı?" sorusunun cevabı log'da bulunsun.
@@ -1332,6 +1355,26 @@ düğümde de bulunacağı için yalnız satırı okumak yanlış yönlendirmeyi
             t_unknown "$N_REP" "${UNK_REASON:-ana kopyaya yazma denemesi çalıştırılamadı}"
             t_unknown "$N_GW" "yazma ölçülemediği için replika portu da ÖLÇÜLMEDİ"
         fi
+
+        # --- 2b) İKİ DÜĞÜM DE SAĞLIKLI mı? -------------------------------
+        for _n in "$E_PRIM" "$rep_svc"; do
+            local N_HC="$eid: $_n replikasyon kurulduktan sonra da sağlıklı"
+            local _hrc=1 _i=0
+            while [ "$_i" -lt 24 ]; do          # 24 × 5 sn = 2 dk
+                health_state "$_n"; _hrc=$?
+                [ "$_hrc" -ne 1 ] && break
+                [ "$HEALTH_SEEN" = "unhealthy" ] && sleep 5 || sleep 5
+                _i=$((_i+1))
+            done
+            case "$_hrc" in
+                0) t_ok "$N_HC" ;;
+                3) t_skip "$N_HC" "$_n için sağlık kontrolü tanımlı değil" ;;
+                2) t_unknown "$N_HC" "docker sorulamadı: ${HEALTH_ERR:-<ayrıntı yok>}" ;;
+                *) t_fail "$N_HC" "durum: ${HEALTH_SEEN:-?} · son sağlık kontrolü çıktısı: ${HEALTH_ERR:-<yok>}
+Veritabanı çalışıyor olabilir ama container 'sağlıksız' göründüğü sürece
+otomatik devir bekçisi onu ölü sayar ve gereksiz devir başlatır." ;;
+            esac
+        done
 
         # --- 3) replika SALT OKUNUR mu? ----------------------------------
         call_hook "${fn}_denied"; drc=$?

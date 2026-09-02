@@ -390,7 +390,15 @@ attach)
   # AÇILMADAN ÖNCE var olan hesapların devirden sonra da çalışmasını sağlamak.
   # root/mariadb.sys dışlanır — replikanın kendi hesapları bozulmasın.
   echo "[mariadb] kullanıcı hesapları taşınıyor"
-  ulist="$(m_primary -N -e "SELECT CONCAT(QUOTE(User),'@',QUOTE(Host)) FROM mysql.global_priv WHERE User NOT IN ('root','mariadb.sys','mysql','PUBLIC') AND User <> '';" 2>/dev/null || true)"
+  # 'healthcheck' DIŞLANIR — bu hesap DÜĞÜME ÖZELDİR. MariaDB imajı ilk
+  # açılışta rastgele bir parola üretir; hem hesabı hem de o düğümün kendi
+  # $datadir/.my-healthcheck.cnf dosyasını aynı parolayla yazar ve container'ın
+  # sağlık kontrolü o dosyayı kullanır. Hesabı kaynaktan kopyalayınca hedefte
+  # parola ile dosya AYRIŞIYOR: veritabanı gayet çalışırken düğüm sonsuza
+  # kadar "unhealthy" görünüyordu. Bu kozmetik değil — otomatik devir bekçisi
+  # "3 kez üst üste sağlıksız" görünce devir başlatır; yani kopyalanan tek bir
+  # hesap kendi kendine kesinti üretiyordu.
+  ulist="$(m_primary -N -e "SELECT CONCAT(QUOTE(User),'@',QUOTE(Host)) FROM mysql.global_priv WHERE User NOT IN ('root','mariadb.sys','mysql','PUBLIC','healthcheck') AND User <> '';" 2>/dev/null || true)"
   for u in $ulist; do
       cu="$(m_primary -N -e "SHOW CREATE USER $u;" 2>/dev/null)" || continue
       # IF NOT EXISTS: hesap replikada zaten varsa hata verip akışı kesmesin.
@@ -399,6 +407,31 @@ attach)
       m_primary -N -e "SHOW GRANTS FOR $u;" 2>/dev/null | sed 's/$/;/' \
           | m_replica >/dev/null 2>&1 || true
   done
+
+  # Hedefin sağlık kontrolü hesabını ONAR. Üstteki dışlama bundan sonrasını
+  # korur; bu adım hesabı DAHA ÖNCE kopyalanmış, yani şu an sessizce
+  # "unhealthy" duran kurulumları düzeltir.
+  #
+  # Parolayı dosyadan okuyup SQL'e gömmüyoruz: içinde tırnak/ters bölü olsa
+  # kaçış hatası sessizce yanlış parola yazardı. Bunun yerine yalnız harf-rakam
+  # içeren yeni bir parola üretip HEM hesabı HEM dosyayı onunla yazıyoruz —
+  # ikisi de aynı kaynaktan geldiği için ayrışamazlar. Dosya yerinde
+  # kısaltılarak yazılır (sed -i değil): sahiplik ve izinler korunur, yoksa
+  # dosya root'a geçer ve mysql kullanıcısı okuyamaz.
+  echo "[mariadb] hedefin sağlık kontrolü hesabı yenileniyor"
+  MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD "$STANDBY" sh -c '
+    f=/var/lib/mysql/.my-healthcheck.cnf
+    [ -f "$f" ] || exit 0
+    np=$(tr -dc "A-Za-z0-9" < /dev/urandom | head -c 32)
+    [ ${#np} -eq 32 ] || exit 1
+    for h in localhost 127.0.0.1 ::1; do
+      echo "ALTER USER IF EXISTS healthcheck@\"$h\" IDENTIFIED BY \"$np\";"
+    done | mariadb -u root || exit 1
+    sed "s#^password=.*#password=$np#" "$f" > "$f.yeni" || exit 1
+    cat "$f.yeni" > "$f" || exit 1      # yerinde kısalt: sahiplik/izin korunur
+    rm -f "$f.yeni"
+    mariadb --defaults-extra-file="$f" -u healthcheck -e "SELECT 1" >/dev/null 2>&1
+  ' && echo "[mariadb] ✓ sağlık kontrolü hesabı çalışıyor"     || echo "[mariadb] uyarı: sağlık kontrolü hesabı yenilenemedi — düğüm 'unhealthy' görünebilir" >&2
 
   # Konumun gerçekten uygulandığını DOĞRULA. Uygulanmazsa START SLAVE, dökümde
   # zaten bulunan işlemleri tekrar oynatır ve yinelenen anahtar hatasıyla ölür;
