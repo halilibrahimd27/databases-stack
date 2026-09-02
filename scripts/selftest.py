@@ -2827,6 +2827,29 @@ _eksik_a = sorted(a for a in _ayar_adlari("postgresql") - _ayar_adlari("postgres
 ck("postgresql-replica arşivleme ayarlarını taşıyor (devirden sonra PITR ölmesin)",
    not _eksik_a, "eksik: %s" % (", ".join(_eksik_a) or "yok"))
 
+
+def _bayraklar(ad):
+    """`--bayrak [deger]` biçimindeki komut satırı bayrakları."""
+    c = _svc[ad].get("command") or []
+    if not isinstance(c, list):
+        c = str(c).split()
+    return set(str(x).split("=")[0] for x in c if str(x).startswith("--"))
+
+
+# ROL FARKI OLAN BAYRAKLAR — bunların replikada olmaması DOĞRU.
+# Gerekçesi tek tek yazılı; "istisna listesi" büyüdükçe sessizleşen bir
+# kontrol, olmayan kontrolden kötüdür.
+_ROL_FARKI = {
+    # replica set'te yetkilendirmeyi keyFile açar; --auth'un yerini tutar
+    ("mongodb", "mongodb-replica-1"): {"--auth"},
+    ("mongodb", "mongodb-arbiter"): {"--auth"},
+}
+for _p, _r in (("mongodb", "mongodb-replica-1"), ("mongodb", "mongodb-arbiter"),
+               ("redis", "redis-replica")):
+    _eksik_b = sorted(_bayraklar(_p) - _bayraklar(_r) - _ROL_FARKI.get((_p, _r), set()))
+    ck("%s, %s'in ayar bayraklarını taşıyor" % (_r, _p),
+       not _eksik_b, "eksik: %s" % (", ".join(_eksik_b) or "yok"))
+
 # =============================================================================
 print()
 if FAILS:

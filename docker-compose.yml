@@ -891,6 +891,14 @@ services:
       - --bind_ip_all
       - --keyFile
       - /etc/mongo-keyfile
+      # ÖNBELLEK TAVANI BURADA DA OLMALI. Yoksa bu düğüm MongoDB'nin
+      # varsayılanıyla açılır: (RAM − 1 GB) / 2. 16 GB'lık bir sunucuda bu
+      # 7.5 GB eder — yani panelin bütün bellek muhasebesinin dışında,
+      # controller'ın hesapladığı tavanın kat kat üstünde. Replica set'te
+      # ana kopya KENDİLİĞİNDEN değişir; o an bu düğüm ana kopya olur ve
+      # sunucu, kimsenin istemediği bir belleği ayırmaya başlar.
+      - --wiredTigerCacheSizeGB
+      - ${MONGO_WIREDTIGER_CACHE_GB:-1}
     healthcheck:
       test: ["CMD-SHELL", "${MONGO_SHELL:-mongosh} --quiet --eval 'db.adminCommand({ping:1}).ok' || exit 1"]
       interval: 30s
@@ -922,6 +930,14 @@ services:
       - --bind_ip_all
       - --keyFile
       - /etc/mongo-keyfile
+      # ÖNBELLEK TAVANI BURADA DA OLMALI. Yoksa bu düğüm MongoDB'nin
+      # varsayılanıyla açılır: (RAM − 1 GB) / 2. 16 GB'lık bir sunucuda bu
+      # 7.5 GB eder — yani panelin bütün bellek muhasebesinin dışında,
+      # controller'ın hesapladığı tavanın kat kat üstünde. Replica set'te
+      # ana kopya KENDİLİĞİNDEN değişir; o an bu düğüm ana kopya olur ve
+      # sunucu, kimsenin istemediği bir belleği ayırmaya başlar.
+      - --wiredTigerCacheSizeGB
+      - ${MONGO_WIREDTIGER_CACHE_GB:-1}
     healthcheck:
       test: ["CMD-SHELL", "${MONGO_SHELL:-mongosh} --quiet --eval 'db.adminCommand({ping:1}).ok' || exit 1"]
       interval: 30s
@@ -1020,6 +1036,10 @@ services:
       --replica-read-only ${REDIS_REPLICA_READ_ONLY:-yes}
       --maxmemory ${REDIS_MAXMEMORY:-384mb}
       --maxmemory-policy ${REDIS_MAXMEMORY_POLICY:-allkeys-lru}
+      # Ana kopyayla eşitlik: bu düğüm devirden sonra ana kopya olacak.
+      # protected-mode ve tcp-keepalive orada var, burada yoktu.
+      --protected-mode yes
+      --tcp-keepalive 60
     volumes:
       - redis_replica_data:/data
     environment:
