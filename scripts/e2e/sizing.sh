@@ -509,23 +509,31 @@ else
            "plan: $PLAN_TOTAL_MB MB, /proc/meminfo: $HOST_TOTAL_MB MB — controller yanlış kapasiteye göre bellek dağıtıyor"
 fi
 
-# Bütçe defteri: RAM − OS payı − çekirdek payı − zaten ayrılmış = bütçe.
-# Tutmazsa controller kendi defterini yanlış tutuyordur; sonucu ya sebepsiz
-# ret ya da host'u OOM'a sokan aşırı dağıtımdır.
+# Bütçe defteri. FORMÜL DEĞİŞTİ ve bu test onu izlemek zorunda: eskiden bütçe
+# doğrudan "RAM − OS payı − çekirdek payı − ayrılmış" idi ve tavanların toplamı
+# RAM'i aşamazdı. Ölçüm bu modelin yanlış olduğunu gösterdi — docker bellek
+# limiti bir TAVANDIR, rezervasyon değil: 16 GB'lık sunucuda tavan toplamı
+# 15 GB görünürken gerçek kullanım 1.5 GB'tı ve çekirdeğin bellek baskısı
+# sıfırdı, ama ürün "yer yok" diyordu. Yeni modelde:
+#     dağıtılabilir = RAM − OS payı − çekirdek payı
+#     tavan bütçesi = dağıtılabilir × aşırı_taahhüt − ayrılmış
+# Test formülü ELLE yazmıyor: planın kendi bildirdiği aşırı taahhüt katsayısını
+# okuyup onunla hesaplıyor. Sabit 1.5 yazsaydık, katsayı .env'den
+# değiştirildiğinde test ürünü haksız yere suçlardı.
 bozuk=""; defter_bakilan=0; defter_eksik=""
 for eid in $IDS; do
-    satir="$(pj "$PLANS" '" ".join(str(d["plans"][E].get(k,"yok")) for k in ("host_total_mb","os_reserve_mb","core_reserve_mb","committed_mb","budget_mb","overhead_mb","engine_budget_mb"))' "$eid")"
+    satir="$(pj "$PLANS" '" ".join(str(d["plans"][E].get(k,"yok")) for k in ("host_total_mb","os_reserve_mb","core_reserve_mb","committed_mb","budget_mb","overhead_mb","engine_budget_mb","allocatable_mb","overcommit_limit"))' "$eid")"
     # "yok" = plan bu alanları hiç üretmeden erken dönmüş (host belleği
     # okunamadı gibi). Eksi değer NORMALDİR (bütçe tükenmiş host) ve elenmemeli.
     # Eskiden burada sessizce `continue` ediliyordu: alanlar HİÇBİR planda
     # yoksa döngü tek karşılaştırma yapmadan bitiyor ve aşağıdaki `-z "$bozuk"`
     # dalı GEÇTİ yazıyordu. Sıfır karşılaştırma "tutarlı" demek değildir.
     case "$satir" in *yok*|'') defter_eksik="$defter_eksik $eid"; continue ;; esac
-    read -r tot osr cor com bud ovh ebud <<EOF
+    read -r tot osr cor com bud ovh ebud alc ocl <<EOF
 $satir
 EOF
     _sayisal=1
-    for _v in "$tot" "$osr" "$cor" "$com" "$bud" "$ovh" "$ebud"; do
+    for _v in "$tot" "$osr" "$cor" "$com" "$bud" "$ovh" "$ebud" "$alc"; do
         tamsayi_mi "$_v" || _sayisal=0
     done
     if [ "$_sayisal" -eq 0 ]; then
@@ -534,17 +542,23 @@ EOF
         defter_eksik="$defter_eksik $eid(sayısal-değil)"; continue
     fi
     defter_bakilan=$((defter_bakilan + 1))
-    [ "$bud"  -eq "$(( tot - osr - cor - com ))" ] || bozuk="$bozuk $eid(bütçe)"
+    # dağıtılabilir = RAM − OS payı − çekirdek payı
+    [ "$alc" -eq "$(( tot - osr - cor ))" ] || bozuk="$bozuk $eid(dağıtılabilir)"
+    # tavan bütçesi = dağıtılabilir × katsayı − ayrılmış. Katsayı ondalıklı
+    # (1.5) olduğu için kabuk aritmetiğiyle değil awk ile çarpılıyor; kabuk
+    # 1.5'i 1 sayıp testi sessizce yanlış hesaplardı.
+    _bek="$(awk -v a="$alc" -v k="$ocl" -v c="$com" 'BEGIN{printf "%d", int(a*k)-c}')"
+    [ "$bud" -eq "$_bek" ] || bozuk="$bozuk $eid(tavan-bütçesi:$bud≠$_bek)"
     [ "$ebud" -eq "$(( bud - ovh ))" ]             || bozuk="$bozuk $eid(motor-bütçesi)"
     # 512 MB'lık bir makinede "1024 MB işletim sistemine ayrıldı" demek bütçeyi
     # eksiye düşürür ve hiçbir motor açılamaz.
     [ "$osr" -le "$(( tot * 6 / 10 + 1 ))" ]       || bozuk="$bozuk $eid(os-payı>%60)"
 done
 if [ -n "$bozuk" ]; then
-    t_fail "plan bütçe aritmetiği tutarlı (RAM − OS payı − çekirdek payı − ayrılmış = bütçe)" \
+    t_fail "plan bütçe aritmetiği tutarlı (dağıtılabilir × aşırı taahhüt − ayrılmış = tavan bütçesi)" \
            "tutmayan:$bozuk"
 elif [ "$defter_bakilan" -eq 0 ]; then
-    t_unknown "plan bütçe aritmetiği tutarlı (RAM − OS payı − çekirdek payı − ayrılmış = bütçe)" \
+    t_unknown "plan bütçe aritmetiği tutarlı (dağıtılabilir × aşırı taahhüt − ayrılmış = tavan bütçesi)" \
               "hiçbir planda defter alanları (budget_mb/os_reserve_mb/…) yok — tek bir karşılaştırma bile yapılamadı:$defter_eksik"
 elif [ -n "$defter_eksik" ]; then
     t_ok "plan bütçe aritmetiği $defter_bakilan planda tutarlı (alanları üretmeyenler hariç:$defter_eksik)"
