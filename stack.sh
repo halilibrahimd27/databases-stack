@@ -552,6 +552,7 @@ ${BOLD}Bakım${NC}
   ./stack.sh getir <motor> <dosya>  Dışarıdan veri aktar (dump ya da uzak kaynak)
   ./stack.sh pitr durum|don ...   Zaman noktasına dönüş (PostgreSQL, MariaDB)
   ./stack.sh bakim [durum|bakim]  Tablo şişkinliğini ölç / temizle
+  ./stack.sh sorgu [durum|oneri]  En pahalı sorgular ve indeks önerileri
   ./stack.sh devir-provasi <motor>  Gerçek devir yapıp KESİNTİ SÜRESİNİ ölç
   ./stack.sh restore <motor> <dosya>
   ./stack.sh sync                 Yedekleri uzak depoya gönder
@@ -592,6 +593,7 @@ case "${1:-help}" in
     getir)           shift; exec ./scripts/import.sh "$@" ;;
     pitr)            shift; exec ./scripts/pitr.sh "$@" ;;
     bakim)           shift; exec ./scripts/maintenance.sh "${@:-durum}" ;;
+    sorgu)           shift; exec ./scripts/slowlog.sh "${@:-durum}" ;;
     devir-provasi)   shift; [ $# -ge 1 ] || die "Kullanım: ./stack.sh devir-provasi <motor> [--onayla]"
                      exec ./scripts/failover-drill.sh "$@" ;;
     app-user)        shift; exec ./scripts/setup-app-users.sh "$@" ;;

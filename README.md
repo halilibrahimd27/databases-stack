@@ -542,6 +542,35 @@ kalibre ediyor: her bakımdan sonra gerçekleşen hız ölçülüp kaydediliyor
 (ölçülen: 47 MB/sn). Kullanıcı o sayıya bakıp kesintiyi kabul edip
 etmeyeceğine karar veriyor. Panel yalnız güvenli bakımı sunar.
 
+## Yavaş sorgu avcısı
+
+"Veritabanım yavaş" herkesin derdi ama kimse `EXPLAIN` okumak istemiyor. Bu
+araç en pahalı sorguları bulur ve mümkün olduğunda ne yapılacağını söyler:
+
+```bash
+./stack.sh sorgu kur postgresql     # ölçümü aç (yeniden başlatma gerekir, söyler)
+./stack.sh sorgu durum              # en pahalı sorgular
+./stack.sh sorgu oneri postgresql   # indeks / kullanılmayan indeks önerileri
+```
+
+**Sıralama toplam süreye göre, ortalamaya göre değil** — ve bu karar ölçülerek
+verildi. Gerçek koşumdan:
+
+| sorgu | çağrı | toplam | ortalama | sıra |
+|---|---|---|---|---|
+| sık çağrılan | 400 | **56.7 ms** | 0.142 ms | **2** |
+| nadir ama ağır | 2 | 14.2 ms | **7.1 ms** | 3 |
+
+Ortalamaya göre sıralansaydı ikinci sorgu 50 kat üstte çıkardı; oysa sunucunun
+CPU'sundan 4 kat fazlasını yiyen birincisi. Yanlış sorguyu optimize etmek,
+hiçbir şey yapmamaktan pahalıdır.
+
+Öneriler **uygulanmaz, gösterilir**: indeks eklemek yazma yolunu yavaşlatır ve
+bu kararı veritabanının sahibi vermeli. Gizlilik: sorgu metinleri veri
+içerebilir; PostgreSQL parametreleri zaten maskeler, MariaDB slow log ham
+sorgu yazdığı için araç sabitleri maskeler ve bunu söyler.
+Ayrıntı: [docs/SLOWLOG.md](docs/SLOWLOG.md).
+
 ## İzleme
 
 Açtığınız veritabanlarının nasıl çalıştığını grafiklerle gösterir. Kurulum ya
