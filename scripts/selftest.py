@@ -2777,6 +2777,32 @@ ck("arşivleme kendi izin ön koşulunu kuruyor",
 ck("arşivleyici uyarısı ŞİMDİKİ duruma bakıyor (geçmiş sayaca değil)",
    "last_failed_time > last_archived_time" in _pitr_src2
    and "arşivleme ŞU AN BAŞARISIZ" in _pitr_src2)
+
+# --- RabbitMQ düğüm adı SABİT olmalı ----------------------------------------
+# RabbitMQ durumunu mnesia/rabbit@<hostname> altında tutar; docker hostname'i
+# varsayılan olarak CONTAINER ID yapar ve container_name bunu değiştirmez.
+# Sonuç: her yeniden yaratmada yepyeni ve BOŞ bir düğüm açılır, eski
+# vhost'lar/kullanıcılar/kuyruklar volume içinde öksüz kalır. Sunucuda tek bir
+# volume'un içinde birikmiş düğümler ölçüldü:
+#   rabbit@2265314e3f4e  rabbit@50271ae2babb  rabbit@644c923a8774 …
+# "Hacim duruyor, veri güvende" cümlesinin neden yetmediğinin örneği.
+with io.open("docker-compose.yml", encoding="utf-8") as _f:
+    _dc_rmq = _yaml.safe_load(_f)
+ck("rabbitmq düğüm adı sabit (hostname tanımlı)",
+   bool(_dc_rmq["services"]["rabbitmq"].get("hostname")),
+   str(_dc_rmq["services"]["rabbitmq"].get("hostname")))
+
+# --- İçe aktarmanın geçici alanı de paylaşılan --------------------------------
+# Panelden gelen aktarmayı controller (root) çalıştırır, komut satırından
+# geleni yönetici. İlk yaratan sahip olunca diğeri mktemp ile düşer:
+#   mktemp: failed to create directory via template '.../ia-XXXXXX'
+_imp = io.open("scripts/import.sh", encoding="utf-8").read()
+ck("import.sh geçici dizini paylaşılan yapıyor ve yazılabilirliğini ölçüyor",
+   'chmod 2775 "$GECICI"' in _imp and '[ ! -w "$GECICI" ]' in _imp)
+ck("doctor içe aktarma geçici dizinini de kapsıyor",
+   ".ice-aktarma" in _st)
+ck("install.sh içe aktarma geçici dizinini açıyor",
+   ".ice-aktarma" in _kur)
 _app = io.open("controller/app.py", encoding="utf-8").read()
 ck("controller açılışta umask 0o002 kuruyor", "os.umask(0o002)" in _app)
 

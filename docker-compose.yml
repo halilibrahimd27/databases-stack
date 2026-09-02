@@ -1353,6 +1353,23 @@ services:
     profiles: [rabbitmq]
     image: ${RABBITMQ_IMAGE:-rabbitmq:${RABBITMQ_VERSION:-3.13-management-alpine}}
     container_name: rabbitmq
+    # DÜĞÜM ADI SABİT OLMALI — yoksa her yeniden yaratmada BÜTÜN TANIMLAR
+    # KAYBOLUR. RabbitMQ durumunu mnesia/rabbit@<hostname> altında tutar ve
+    # docker, hostname'i varsayılan olarak CONTAINER ID yapar. container_name
+    # bunu değiştirmez. Sonuç: her recreate'te yepyeni ve BOŞ bir düğüm açılır,
+    # eski vhost'lar/kullanıcılar/kuyruklar volume içinde öksüz kalır.
+    # Ölçüldü — tek bir volume'un içinde birikmiş düğümler:
+    #   rabbit@2265314e3f4e  rabbit@50271ae2babb  rabbit@644c923a8774 …
+    # e2e lifecycle paketi bunu şöyle yakaladı: kapat/aç sonrası yazılan
+    # vhost "<boş>" döndü. Volume duruyordu; veri gitmişti. "Hacim var, veri
+    # güvende" cümlesinin neden yetmediğinin ders kitabı örneği.
+    #
+    # NOT (mevcut kurulumlar): bu satırdan sonra düğüm adı rabbit@rabbitmq
+    # olur ve eski rabbit@<id> dizinlerindeki tanımlar OKUNMAZ — ama zaten
+    # her recreate'te okunmuyordu. Öksüz dizinler yer kaplar; silmeden önce
+    # içlerinde işinize yarayan bir şey olup olmadığına bakın:
+    #   docker run --rm -v databases-stack_rabbitmq_data:/d alpine ls /d/mnesia
+    hostname: rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-${DB_PASSWORD}}

@@ -1129,7 +1129,24 @@ import_kilidi() {
 # =============================================================================
 # ÇALIŞTIR
 # =============================================================================
+# Bu dizine İKİ AYRI KİMLİK yazar: panelden gelen aktarmayı controller
+# (container'ın içinde root) çalıştırır, komut satırından/cron'dan gelen
+# aktarmayı sunucudaki yönetici. Kim önce yaratırsa dizin onun olur ve
+# diğeri bir daha içine geçici dizin açamaz. Ölçüldü:
+#   mktemp: failed to create directory via template
+#   '/opt/databases/backups/.ice-aktarma/ia-XXXXXX'
+# Sonucu, komut satırından aktarmanın TAMAMEN kırılmasıydı — üstelik hata
+# mesajı mktemp'in kendi cümlesi olduğu için sebebi (izin) görünmüyordu.
 mkdir -p "$GECICI" || cik "$KOD_HATA" "Geçici dizin açılamadı: $GECICI"
+# setgid + grup yazma: bundan sonra kim yaratırsa yaratsın diğeri de girebilir.
+# Sahibi değilsek chmod sessizce düşer; o durumda zaten yazabiliyoruzdur.
+chmod 2775 "$GECICI" 2>/dev/null || true
+if [ ! -w "$GECICI" ]; then
+    cik "$KOD_HATA" "Geçici dizine yazılamıyor: $GECICI" \
+        "(sahibi $(stat -c '%U:%G %a' "$GECICI" 2>/dev/null || echo bilinmiyor), siz $(id -un))." \
+        "Bu dizini panelden gelen aktarma root olarak yaratmış olabilir." \
+        "Onarım: ./stack.sh doctor --duzelt"
+fi
 GECICI_DIZIN="$(mktemp -d "$GECICI/ia-XXXXXX")" \
     || cik "$KOD_HATA" "Geçici dizin açılamadı: $GECICI"
 

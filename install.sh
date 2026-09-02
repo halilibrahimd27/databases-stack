@@ -197,9 +197,11 @@ mkdir -p state certs overrides backups logs \
 # "taban" dizinleri de aynı sebeple: onlara hem host betiği hem controller
 # (container içinde root) yazıyor; ilk yazan sahip olunca diğeri yazamıyor.
 mkdir -p backups/postgresql/wal backups/postgresql/taban \
-         backups/mariadb/binlog backups/mariadb/taban
+         backups/mariadb/binlog backups/mariadb/taban \
+         backups/.ice-aktarma
 chmod 2775 backups/postgresql/wal backups/postgresql/taban \
-           backups/mariadb/binlog backups/mariadb/taban
+           backups/mariadb/binlog backups/mariadb/taban \
+           backups/.ice-aktarma
 # İZİNLER — container'lar bu dosyaları KENDİ kullanıcılarıyla okur, host
 # kullanıcısıyla değil. Dizinler 700 bırakılırsa:
 #   • nginx worker'ı (uid 101) .htpasswd ve sertifikayı okuyamaz → her istek 500

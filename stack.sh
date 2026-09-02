@@ -286,7 +286,8 @@ _paylasilan_yollar() {
     #   backups/mariadb/taban/...sql.gz: Permission denied   (ölçüldü)
     printf '%s\n' \
         "$STACK_ROOT/backups/postgresql/wal" "$STACK_ROOT/backups/postgresql/taban" \
-        "$STACK_ROOT/backups/mariadb/binlog" "$STACK_ROOT/backups/mariadb/taban"
+        "$STACK_ROOT/backups/mariadb/binlog" "$STACK_ROOT/backups/mariadb/taban" \
+        "$STACK_ROOT/backups/.ice-aktarma"
     # SIRLAR BU LİSTEDE YOK — bilerek. state/mongo-keyfile 0400 olmak
     # ZORUNDA: MongoDB, gruba/başkasına açık bir keyfile görürse
     # "permissions on keyfile are too open" deyip HİÇ AÇILMAZ. Onu
@@ -328,7 +329,8 @@ cmd_doctor_duzelt() {
     # Silme yetkisi dosyanın değil DİZİNİN yazma bitine bağlı olduğu için
     # yönetici yine temizlik yapabilir.
     for _d in "$STACK_ROOT"/backups/postgresql/wal "$STACK_ROOT"/backups/postgresql/taban \
-              "$STACK_ROOT"/backups/mariadb/binlog "$STACK_ROOT"/backups/mariadb/taban; do
+              "$STACK_ROOT"/backups/mariadb/binlog "$STACK_ROOT"/backups/mariadb/taban \
+              "$STACK_ROOT"/backups/.ice-aktarma; do
         [ -d "$_d" ] || continue
         $S chgrp "$grup" "$_d" 2>/dev/null || true
         $S chmod 2775 "$_d" 2>/dev/null || true
