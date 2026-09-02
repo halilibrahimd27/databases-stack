@@ -353,6 +353,26 @@ HINT
             [ -n "$_img_md5" ] && ok "controller imajı depodaki kodla aynı"
         fi
     fi
+    # --- COMPOSE'DAKİ PORTLAR GERÇEKTEN YAYINLANMIŞ MI? ------------------
+    # `docker restart` compose değişikliğini UYGULAMAZ: yeni port ya da yeni
+    # mount ancak container YENİDEN OLUŞTURULUNCA geçerli olur. Arada hiçbir
+    # hata çıkmaz — servis ayakta, sağlıklı, ama yeni port kapalıdır.
+    # Gerçek olay: PgBouncer eklendi, container sağlıklı çalışıyordu, kendi
+    # sağlık kontrolü her 30 saniyede başarıyla bağlanıyordu; ama gateway
+    # 6432'yi hiç dinlemiyordu çünkü yalnız `docker restart` yapılmıştı.
+    if container_running gateway; then
+        _eksik_port=""
+        for _p in $(grep -oE '^      - "[0-9]+:[0-9]+"' docker-compose.yml                     | grep -oE '[0-9]+:' | tr -d ':' | sort -u); do
+            docker port gateway 2>/dev/null | grep -q "^${_p}/"                 || docker ps --filter name=gateway --format '{{.Ports}}'                    | grep -q ":${_p}->" || _eksik_port="$_eksik_port $_p"
+        done
+        if [ -n "$_eksik_port" ]; then
+            warn "Compose'da tanımlı ama gateway'de YAYINLANMAYAN portlar:$_eksik_port"
+            warn "→ `docker restart` yetmez; container yeniden oluşturulmalı:"
+            warn "   docker compose --env-file .env -p $STACK_PROJECT up -d gateway"
+        else
+            ok "compose'daki portların hepsi gateway'de yayınlanmış"
+        fi
+    fi
     # --- ÇALIŞAN nginx yapılandırması ŞABLONLA aynı mı? -------------------
     # nginx resmi imajı templates/*.template dosyalarını AÇILIŞTA envsubst ile
     # işler. Yani şablonu değiştirmek yetmez, gateway'in yeniden başlaması
