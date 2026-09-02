@@ -137,14 +137,18 @@ for s in "${SECILEN[@]}"; do
     fi
 done
 echo
+# grep -c EŞLEŞME YOKKEN de "0" basar AMA çıkış kodu 1'dir; `|| echo 0`
+# o durumda İKİNCİ bir 0 ekliyordu ve printf "0\n0: invalid number" diyordu.
+# Özet satırı bozuluyor, sayı yerine hata görünüyordu.
+say() { grep -c "$1" "$RUN_LOG" 2>/dev/null | head -1 | tr -dc '0-9'; }
 printf '  toplam [GEÇTİ] satırı : %d\n' \
-    "$(grep -c '\[GEÇTİ\]' "$RUN_LOG" 2>/dev/null || echo 0)"
+    "$(say '\[GEÇTİ\]')"
 printf '  toplam [BAŞARISIZ]    : %d\n' \
-    "$(grep -c '\[BAŞARISIZ\]' "$RUN_LOG" 2>/dev/null || echo 0)"
+    "$(say '\[BAŞARISIZ\]')"
 printf '  toplam [ÖLÇÜLEMEDİ]   : %d   <- başarısız sayılır\n' \
-    "$(grep -c '\[ÖLÇÜLEMEDİ\]' "$RUN_LOG" 2>/dev/null || echo 0)"
+    "$(say '\[ÖLÇÜLEMEDİ\]')"
 printf '  toplam [ATLANDI]      : %d   ← sebepleri günlükte, sessizce geçilmedi\n' \
-    "$(grep -c '\[ATLANDI\]' "$RUN_LOG" 2>/dev/null || echo 0)"
+    "$(say '\[ATLANDI\]')"
 printf '  günlük                : %s\n\n' "$RUN_LOG"
 
 if [ "$BASARISIZ" -gt 0 ]; then

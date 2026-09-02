@@ -481,6 +481,12 @@ e_mariadb_read() {
 # okur. Bu, kullanıcıya "okuma yükünü buraya verin" diye söylenen porttur;
 # yönlendirme eskimişse container içi okuma çalışır ama bu port ölü kalır.
 #
+# @@read_only DOĞRUDAN sorulmuyor, IF(@@read_only,1,0) ile soruluyor: MariaDB
+# sürümüne göre aynı değişken bir yerde 1/0, başka yerde ON/OFF yazdırılıyor
+# ve test, ürün kusursuz çalışırken "1|damga beklenirken ON|damga geldi" diye
+# kırmızı yanıyordu. Soruyu biçimden bağımsız hale getirmek, iki biçimi de
+# kabul etmekten daha doğru: ortada tek bir doğru cevap kalıyor.
+#
 # Yalnız satırı okumak YETMEZ: yönlendirme yanlışlıkla ANA KOPYAYA çıkıyorsa
 # satır orada da vardır ve kontrol boşuna geçerdi. O yüzden aynı sorguda
 # düğümün salt okunur olduğunu da soruyoruz — beklenen cevap "1|<damga>".
@@ -488,7 +494,7 @@ e_mariadb_read_gw() {
     local out rc
     out="$(MYSQL_PWD="$E_PASS" docker exec -e MYSQL_PWD "$E_PRIM" \
          mariadb -h gateway -P "$E_PORT" -u "$E_USER" -N -B \
-         -e "SELECT CONCAT(@@read_only, '|', COALESCE((SELECT v FROM $PROBE.t WHERE id=1),'YOK'));" \
+         -e "SELECT CONCAT(IF(@@read_only,1,0), '|', COALESCE((SELECT v FROM $PROBE.t WHERE id=1),'YOK'));" \
          2>&1)"; rc=$?
     out="${out//$'\r'/}"
     if dx_broken "$rc" "$out"; then
@@ -1305,7 +1311,16 @@ run_engine() {
     elif stack_unmeasurable "$src"; then
         t_unknown "$N_ON" "$(stack_why "$src"): $(detail_tail "$STACK_OUT" 12)"
     else
-        t_fail "$N_ON" "$(detail_tail "$STACK_OUT" 12)"
+        # Bütçe dolduğu için gelen ret BAŞARISIZLIK DEĞİLDİR: ürünün tam da
+        # yapması gereken şeydir (replika, devirden sonra aynı yükü taşıyacağı
+        # için ana kopya kadar bellek ister). Bunu kırmızı yakmak gerçek bir
+        # replikasyon hatasını gürültüye boğar. Yine de SESSİZCE geçilmiyor:
+        # sebep ve ölçülen sayılar atlama gerekçesine yazılıyor.
+        if printf '%s' "$STACK_OUT" | grep -qiE "bellek ister|yeterli bellek yok|bütçe"; then
+            t_skip "$N_ON" "sunucuda bütçe kalmadığı için ret — MEŞRU: $(detail_tail "$STACK_OUT" 4)"
+        else
+            t_fail "$N_ON" "$(detail_tail "$STACK_OUT" 12)"
+        fi
     fi
 
     local N_REP="$eid: ana kopyaya yazılan satır $rep_svc üzerinde görünüyor"

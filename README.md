@@ -220,9 +220,28 @@ Panelin yaptığı her şeyi yapar; aynı otomatik boyutlandırma çalışır.
 ./stack.sh restore mariadb backups/mariadb/full/mariadb_full_20260901.sql.gz
 ```
 
-`install.sh` `state/crontab` dosyasını hazır üretir — yüklemek için
-`crontab state/crontab`. Günde bir tam yedek (02:00), uzak depoya gönderim
-(02:30), eski yedeklerin temizliği (03:00).
+**Zamanlama panelden yönetilir.** Panelin altındaki *Yedekler* bölümünden
+açarsınız: saat, saklama süresi ve son koşunun sonucu orada. Zamanlayıcı
+controller'ın içinde çalışır — host'ta root yetkisi, cron kurulumu ya da
+systemd birimi gerektirmez.
+
+> Bu, ölçülmüş bir arızanın sonucudur. Önceden `install.sh` yalnız
+> `state/crontab` dosyasını *üretiyor* ve "yüklemek için `crontab state/crontab`"
+> diyordu. Kimse yapmıyordu: test sunucusunda `crontab -l | grep backup` sıfır
+> satır, `backups/` altındaki klasörler boştu. Yani yedek alındığı sanılırken
+> hiç alınmıyordu — bir yedekleme sisteminin verebileceği en kötü sonuç.
+> `./stack.sh doctor` artık zamanlama kapalıysa bunu açıkça söylüyor.
+
+Her motorun kartında ve *Yedekler* bölümünde **"Yedek al"** düğmesi var; elle
+alınan yedek gecelik turu iptal etmez, ek bir kurtarma noktası oluşturur.
+Listede her dosyanın tarihi, boyutu ve **kaynağı** yazar: `elle`, `zamanlı`
+ya da `dış` (host cron'u veya komut satırı).
+
+Host cron'unu tercih ederseniz `state/crontab` hâlâ üretiliyor; ikisi birlikte
+koşarsa `backup.sh` kendi kilidiyle çakışmayı önler.
+
+Geri yükleme **panelde yoktur** ve bu bilerek: veriyi silip yerine koyan bir
+işlemdir, sunucuda bilerek çalıştırılır (yukarıdaki `restore` komutu).
 
 Ayrıntı ve motor başına yöntemler: [docs/BACKUP.md](docs/BACKUP.md).
 Uzak depo (Google Drive / S3 / SFTP): [docs/GOOGLE-DRIVE.md](docs/GOOGLE-DRIVE.md).
