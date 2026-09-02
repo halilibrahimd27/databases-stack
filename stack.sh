@@ -519,6 +519,12 @@ ${BOLD}Otomatik devir (failover)${NC}
 
 ${BOLD}Bakım${NC}
   ./stack.sh backup [motor|all]   Yedek al (varsayılan: aktif motorların hepsi)
+  ./stack.sh prova <motor>        Kurtarma provası — yedeği GERÇEKTEN geri yükler
+                                  (tek kullanımlık kopyada, üretime dokunmadan)
+  ./stack.sh getir <motor> <dosya>  Dışarıdan veri aktar (dump ya da uzak kaynak)
+  ./stack.sh pitr durum|don ...   Zaman noktasına dönüş (PostgreSQL, MariaDB)
+  ./stack.sh bakim [durum|bakim]  Tablo şişkinliğini ölç / temizle
+  ./stack.sh devir-provasi <motor>  Gerçek devir yapıp KESİNTİ SÜRESİNİ ölç
   ./stack.sh restore <motor> <dosya>
   ./stack.sh sync                 Yedekleri uzak depoya gönder
   ./stack.sh app-user             Uygulama için kısıtlı kullanıcı oluştur
@@ -551,6 +557,15 @@ case "${1:-help}" in
     restore)         shift; [ $# -ge 2 ] || die "Kullanım: ./stack.sh restore <motor> <dosya>"
                      exec ./scripts/backup.sh "restore-$1" "$2" ;;
     sync)            shift; exec ./scripts/sync-remote.sh "$@" ;;
+    # Yeni araçlar tek kapıdan. Kullanıcı "./stack.sh" yazıp yardım ekranına
+    # bakıyor; bir özellik yalnız scripts/ altında dururken KEŞFEDİLEMEZ olur
+    # ve yazılmamış sayılır.
+    prova)           shift; exec ./scripts/restore-drill.sh "$@" ;;
+    getir)           shift; exec ./scripts/import.sh "$@" ;;
+    pitr)            shift; exec ./scripts/pitr.sh "$@" ;;
+    bakim)           shift; exec ./scripts/maintenance.sh "${@:-durum}" ;;
+    devir-provasi)   shift; [ $# -ge 1 ] || die "Kullanım: ./stack.sh devir-provasi <motor> [--onayla]"
+                     exec ./scripts/failover-drill.sh "$@" ;;
     app-user)        shift; exec ./scripts/setup-app-users.sh "$@" ;;
     logs)            shift; [ $# -ge 1 ] || die "Kullanım: ./stack.sh logs <servis>"
                      compose logs --tail 200 --no-color "$1" ;;
