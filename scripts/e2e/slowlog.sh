@@ -95,6 +95,20 @@ load_env
 E2E_SUITE="slowlog"
 source scripts/e2e/lib.sh
 
+# --- SONUÇ SARMALAYICILARI ---------------------------------------------------
+# lib.sh'in t_ok/t_fail/t_skip/t_unknown fonksiyonları YALNIZ İKİ argüman
+# okur: $1 ad, $2 sebep. Uzun bir sebebi ters bölü ile satıra bölmek onu
+# ÜÇÜNCÜ argümana çevirir ve o parça HİÇ BASILMAZ.
+# Bu paketin ilk koşumunda tam olarak bu oldu: sıralama kontrolünün kanıt
+# sayıları ("nadir sıra 3: toplam … ort …") ekranda yarıda kesildi — yani
+# kontrol geçti ama NEYE dayanarak geçtiği görünmüyordu. 79 sütun sınırı
+# olan bir depoda uzun gerekçeyi tek satırda tutmak da mümkün değil; bu
+# sarmalayıcılar fazladan parçaları tek dizgede birleştiriyor.
+r_ok()      { t_ok "$*"; }
+r_fail()    { local a="$1"; shift; t_fail    "$a" "$*"; }
+r_skip()    { local a="$1"; shift; t_skip    "$a" "$*"; }
+r_unknown() { local a="$1"; shift; t_unknown "$a" "$*"; }
+
 ARAC="scripts/slowlog.sh"
 # Çalıştırma izni kaybolmuş bir checkout'ta (Windows'tan kopyalanmış depo,
 # unzip edilmiş arşiv) "./betik" Permission denied verir. Paket bunu ÜRÜN
@@ -330,44 +344,61 @@ pg_veri_kur() {
     return 0
 }
 
+# generate_series yerine İKİYE KATLAMA: MariaDB'nin sequence eklentisi her
+# kurulumda etkin değil, ama INSERT … SELECT her sürümde çalışır
+# (maintenance.sh e2e'sindeki aynı gerekçe).
+my_katla() {   # my_katla <tablo> <kaç kez> <dolgu harfi>
+    local t="$1" kez="$2" harf="$3" i sql=""
+    my_calistir "INSERT INTO \`$E2E_DB\`.\`$t\` (bos, dolgu)
+                 VALUES (1, REPEAT('$harf', 60));" >/dev/null || return 1
+    for i in $(seq 1 "$kez"); do
+        sql="$sql INSERT INTO \`$E2E_DB\`.\`$t\` (bos, dolgu)
+                  SELECT bos, dolgu FROM \`$E2E_DB\`.\`$t\`;"
+    done
+    my_calistir "$sql" >/dev/null || return 1
+    return 0
+}
+
 my_veri_kur() {
-    local i sql=""
     my_calistir "DROP DATABASE IF EXISTS \`$E2E_DB\`;" >/dev/null 2>&1
     my_calistir "CREATE DATABASE \`$E2E_DB\`;" >/dev/null || return 1
     MY_KURULDU=1
+    # Dört tablo da AYNI ŞEMADA (bos + dolgu): her biri kendi içinde ikiye
+    # katlanarak dolduruluyor, hiçbiri diğerinden OKUNMUYOR. Bu tesadüf
+    # değil — ilk yazımda küçük tablolar büyük tablodan SELECT ile
+    # dolduruluyordu ve ÖLÇÜMDE PATLADI: InnoDB o taramalar için tablonun
+    # en dar indeksini (aşağıdaki 'kullanılmayan' indeksi) seçti, indeks
+    # okunmuş sayıldı ve "kullanılmayan indeks" kontrolü BAŞARISIZ oldu.
+    # Ölçmek istediğimiz şey aracın doğruluğuydu, testin veri kurulumu
+    # değil.
     my_calistir "
         CREATE TABLE \`$E2E_DB\`.\`$T_YAVAS\` (
             id INT AUTO_INCREMENT PRIMARY KEY,
             bos INT NOT NULL,
-            dolgu CHAR(60) NOT NULL,
-            KEY \`$IX_HIC\` (bos)) ENGINE=InnoDB;
+            dolgu CHAR(60) NOT NULL) ENGINE=InnoDB;
         CREATE TABLE \`$E2E_DB\`.\`$T_NADIR\` (
             id INT AUTO_INCREMENT PRIMARY KEY,
+            bos INT NOT NULL,
             dolgu CHAR(60) NOT NULL) ENGINE=InnoDB;
         CREATE TABLE \`$E2E_DB\`.\`$T_SIK\` (
             id INT AUTO_INCREMENT PRIMARY KEY,
+            bos INT NOT NULL,
             dolgu CHAR(60) NOT NULL) ENGINE=InnoDB;
         CREATE TABLE \`$E2E_DB\`.\`$T_HIZLI\` (
             id INT AUTO_INCREMENT PRIMARY KEY,
+            bos INT NOT NULL,
             dolgu CHAR(60) NOT NULL) ENGINE=InnoDB;" >/dev/null || return 1
-    # generate_series yerine İKİYE KATLAMA: MariaDB'nin sequence eklentisi
-    # her kurulumda etkin değil, ama INSERT … SELECT her sürümde çalışır
-    # (maintenance.sh e2e'sindeki aynı gerekçe).
-    my_calistir "INSERT INTO \`$E2E_DB\`.\`$T_YAVAS\` (bos, dolgu)
-                 VALUES (1, REPEAT('x', 60));" >/dev/null || return 1
-    for i in $(seq 1 "$KAT"); do
-        sql="$sql INSERT INTO \`$E2E_DB\`.\`$T_YAVAS\` (bos, dolgu)
-                  SELECT bos, dolgu FROM \`$E2E_DB\`.\`$T_YAVAS\`;"
-    done
-    my_calistir "$sql" >/dev/null || return 1
-    my_calistir "
-        INSERT INTO \`$E2E_DB\`.\`$T_NADIR\` (dolgu)
-             SELECT REPEAT('y', 60) FROM \`$E2E_DB\`.\`$T_YAVAS\`;
-        INSERT INTO \`$E2E_DB\`.\`$T_SIK\` (dolgu)
-             SELECT REPEAT('z', 60) FROM \`$E2E_DB\`.\`$T_YAVAS\` LIMIT 2000;
-        INSERT INTO \`$E2E_DB\`.\`$T_HIZLI\` (dolgu)
-             SELECT REPEAT('w', 60) FROM \`$E2E_DB\`.\`$T_YAVAS\` LIMIT 100;
-        ANALYZE TABLE \`$E2E_DB\`.\`$T_YAVAS\`;" >/dev/null || return 1
+
+    my_katla "$T_YAVAS" "$KAT" x || return 1
+    my_katla "$T_NADIR" "$KAT" y || return 1
+    my_katla "$T_SIK"   11     z || return 1
+    my_katla "$T_HIZLI"  7     w || return 1
+
+    # İNDEKS EN SONDA yaratılıyor: veriyi yüklerken var olsaydı yükleme
+    # sırasında okunmuş olabilirdi ve "hiç kullanılmadı" önkoşulu daha
+    # başlamadan bozulurdu.
+    my_calistir "ALTER TABLE \`$E2E_DB\`.\`$T_YAVAS\`
+                   ADD KEY \`$IX_HIC\` (bos);" >/dev/null || return 1
     return 0
 }
 
@@ -475,25 +506,25 @@ kontrol_kapsam_disi() {
     local ad="kapsam dışı motor 0 DEĞİL anlamlı bir kod döndürüyor (mongodb)"
     arac_calistir "kapsam dışı motor" durum mongodb
     if asildi_mi "$ARAC_RC"; then
-        t_unknown "$ad" "araç $SURE_ARAC sn içinde bitmedi (rc=$ARAC_RC)"
+        r_unknown "$ad" "araç $SURE_ARAC sn içinde bitmedi (rc=$ARAC_RC)"
     elif [ "$ARAC_RC" -eq 2 ]; then
-        t_ok "$ad — çıkış 2 (kapsam dışı), hata koduyla karışmıyor"
+        r_ok "$ad — çıkış 2 (kapsam dışı), hata koduyla karışmıyor"
     elif [ "$ARAC_RC" -eq 0 ]; then
-        t_fail "$ad" \
+        r_fail "$ad" \
             "çıkış 0: ölçümü OLMAYAN bir motor BAŞARILI görünüyor"
     else
-        t_fail "$ad" "beklenen çıkış 2, gelen $ARAC_RC: $(son_ozet)"
+        r_fail "$ad" "beklenen çıkış 2, gelen $ARAC_RC: $(son_ozet)"
     fi
 
     local ad2="kapsam dışı çağrıda da son satır JSON (panel boş görmüyor)"
     local ok_alan kuyruk
     if ! ok_alan="$(json_alan ok)"; then
         kuyruk="$(tail -c 200 "$ARAC_JSON" | tr -d '\r\n')"
-        t_fail "$ad2" "son satır geçerli JSON değil: $kuyruk"
+        r_fail "$ad2" "son satır geçerli JSON değil: $kuyruk"
     elif [ "$ok_alan" = "false" ]; then
-        t_ok "$ad2"
+        r_ok "$ad2"
     else
-        t_fail "$ad2" "ok=$ok_alan — ölçüm yapılmadığı hâlde olumlu görünüyor"
+        r_fail "$ad2" "ok=$ok_alan — ölçüm yapılmadığı hâlde olumlu görünüyor"
     fi
 }
 
@@ -501,13 +532,13 @@ kontrol_bilinmeyen_motor() {
     local ad="katalogda olmayan motorda anlamlı kod (yokmotor)"
     arac_calistir "bilinmeyen motor" durum yokmotor
     if asildi_mi "$ARAC_RC"; then
-        t_unknown "$ad" "araç $SURE_ARAC sn içinde bitmedi (rc=$ARAC_RC)"
+        r_unknown "$ad" "araç $SURE_ARAC sn içinde bitmedi (rc=$ARAC_RC)"
     elif [ "$ARAC_RC" -eq 2 ]; then
-        t_ok "$ad — çıkış 2"
+        r_ok "$ad — çıkış 2"
     elif [ "$ARAC_RC" -eq 0 ]; then
-        t_fail "$ad" "çıkış 0 — olmayan bir motor için başarı bildiriliyor"
+        r_fail "$ad" "çıkış 0 — olmayan bir motor için başarı bildiriliyor"
     else
-        t_fail "$ad" "beklenen çıkış 2, gelen $ARAC_RC: $(son_ozet)"
+        r_fail "$ad" "beklenen çıkış 2, gelen $ARAC_RC: $(son_ozet)"
     fi
 }
 
@@ -517,9 +548,9 @@ kontrol_motorsuz_kur() {
     local ad="'kur' motor verilmeden çalışmıyor (tahmin etmiyor)"
     arac_calistir "motorsuz kur" kur
     if [ "$ARAC_RC" -eq 2 ]; then
-        t_ok "$ad — çıkış 2"
+        r_ok "$ad — çıkış 2"
     else
-        t_fail "$ad" "beklenen çıkış 2, gelen $ARAC_RC: $(son_ozet)"
+        r_fail "$ad" "beklenen çıkış 2, gelen $ARAC_RC: $(son_ozet)"
     fi
 }
 
@@ -535,19 +566,19 @@ kontrol_kapaliyken() {   # kontrol_kapaliyken <motor>
     arac_calistir "durum $motor (kur öncesi)" durum "$motor"
 
     if [ "$ARAC_RC" -eq 0 ]; then
-        t_skip "$ad" "ölçüm bu sunucuda zaten açık; kapalı hâli sınanamaz"
+        r_skip "$ad" "ölçüm bu sunucuda zaten açık; kapalı hâli sınanamaz"
         return 0
     fi
     if [ "$ARAC_RC" -ne 4 ]; then
-        t_fail "$ad" "beklenen çıkış 4 (ölçüm kapalı), gelen $ARAC_RC:" \
+        r_fail "$ad" "beklenen çıkış 4 (ölçüm kapalı), gelen $ARAC_RC:" \
             "$(son_ozet)"
         return 0
     fi
     # Çıkış kodu doğru; şimdi asıl soru: KULLANICI NE OKUYOR?
     if grep -qaF "slowlog.sh kur $motor" "$ARAC_CIKTI"; then
-        t_ok "$ad (çıkış 4 ve ekranda 'kur $motor' komutu yazıyor)"
+        r_ok "$ad (çıkış 4 ve ekranda 'kur $motor' komutu yazıyor)"
     else
-        t_fail "$ad" \
+        r_fail "$ad" \
             "çıkış 4 doğru ama ekranda ölçümü AÇAN komut yok; kullanıcı" \
             "ne yapacağını bilemez"
     fi
@@ -572,42 +603,42 @@ kontrol_kur() {   # kontrol_kur <motor> <container>
     sonra="$(damga_al "$C")"
 
     if asildi_mi "$ARAC_RC"; then
-        t_unknown "$ad"  "araç $SURE_ARAC sn içinde bitmedi"
-        t_unknown "$ad2" "araç bitmedi"
+        r_unknown "$ad"  "araç $SURE_ARAC sn içinde bitmedi"
+        r_unknown "$ad2" "araç bitmedi"
         return 0
     fi
 
     if [ -z "$once" ] || [ -z "$sonra" ]; then
-        t_unknown "$ad" "$C docker inspect ile okunamadı"
+        r_unknown "$ad" "$C docker inspect ile okunamadı"
     elif [ "$once" = "$sonra" ]; then
-        t_ok "$ad ($C StartedAt değişmedi)"
+        r_ok "$ad ($C StartedAt değişmedi)"
     else
-        t_fail "$ad" \
+        r_fail "$ad" \
             "$C yeniden başlatılmış: önce [$once] sonra [$sonra] —" \
             "kesinti kararı kullanıcının olmalıydı"
     fi
 
     if [ "$ARAC_RC" -ne 0 ]; then
-        t_fail "$ad2" "'kur' çıkış $ARAC_RC: $(son_ozet)"
+        r_fail "$ad2" "'kur' çıkış $ARAC_RC: $(son_ozet)"
         return 0
     fi
     acik="$(json_alan enabled)"           || acik=""
     bekliyor="$(json_alan pending_restart)" || bekliyor=""
     if [ "$acik" = "true" ]; then
-        t_ok "$ad2 (ölçüm açık, yeniden başlatma gerekmedi)"
+        r_ok "$ad2 (ölçüm açık, yeniden başlatma gerekmedi)"
     elif [ "$bekliyor" = "true" ]; then
         # "Ayar yazdım ama ölçüm başlamadı" AYRI bir hâl ve JSON'da ayrı bir
         # alanla söylenmesi şart: panel bunu "açık" gösterseydi kullanıcı
         # ertesi gün boş listeye bakıp aracın bozulduğunu düşünürdü.
         if grep -qaF "docker compose up -d $motor" "$ARAC_CIKTI"; then
-            t_ok "$ad2 (pending_restart=true ve yeniden başlatma komutu" \
+            r_ok "$ad2 (pending_restart=true ve yeniden başlatma komutu" \
                  "ekranda)"
         else
-            t_fail "$ad2" \
+            r_fail "$ad2" \
                 "pending_restart=true ama ekranda yeniden başlatma komutu yok"
         fi
     else
-        t_fail "$ad2" \
+        r_fail "$ad2" \
             "enabled=$acik, pending_restart=$bekliyor — 'kur' 0 ile çıktı" \
             "ama ne açtı ne de ne gerektiğini söyledi"
     fi
@@ -653,13 +684,13 @@ motor_kontrolleri() {   # motor_kontrolleri <motor>
     t_info "$motor: iş yükü koşturuluyor ($YAVAS_N + $SIK_N + $NADIR_N +" \
            "$HIZLI_N sorgu)…"
     if ! yuk_kostur "$motor"; then
-        t_unknown "$n_gor"   "iş yükü koşturulamadı (ayrıntı: $E2E_LOG)"
-        t_unknown "$n_cagri" "iş yükü koşturulamadı"
-        t_unknown "$n_sira"  "iş yükü koşturulamadı"
-        t_unknown "$n_ucuz"  "iş yükü koşturulamadı"
-        t_unknown "$n_sif"   "iş yükü koşturulamadı"
-        t_unknown "$n_one"   "iş yükü koşturulamadı"
-        t_unknown "$n_uyg"   "iş yükü koşturulamadı"
+        r_unknown "$n_gor"   "iş yükü koşturulamadı (ayrıntı: $E2E_LOG)"
+        r_unknown "$n_cagri" "iş yükü koşturulamadı"
+        r_unknown "$n_sira"  "iş yükü koşturulamadı"
+        r_unknown "$n_ucuz"  "iş yükü koşturulamadı"
+        r_unknown "$n_sif"   "iş yükü koşturulamadı"
+        r_unknown "$n_one"   "iş yükü koşturulamadı"
+        r_unknown "$n_uyg"   "iş yükü koşturulamadı"
         return 0
     fi
 
@@ -667,34 +698,34 @@ motor_kontrolleri() {   # motor_kontrolleri <motor>
     arac_calistir "durum $motor --vt $E2E_DB" \
         durum "$motor" --vt "$E2E_DB" --adet 20
     if [ "$ARAC_RC" -ne 0 ]; then
-        t_unknown "$n_gor"   "'durum' çıkış $ARAC_RC: $(son_ozet)"
-        t_unknown "$n_cagri" "'durum' okunamadı"
-        t_unknown "$n_sira"  "'durum' okunamadı"
-        t_unknown "$n_ucuz"  "'durum' okunamadı"
+        r_unknown "$n_gor"   "'durum' çıkış $ARAC_RC: $(son_ozet)"
+        r_unknown "$n_cagri" "'durum' okunamadı"
+        r_unknown "$n_sira"  "'durum' okunamadı"
+        r_unknown "$n_ucuz"  "'durum' okunamadı"
     else
         sat_yavas="$(json_sorgu "$T_YAVAS")" || sat_yavas=""
         sat_sik="$(json_sorgu   "$T_SIK")"   || sat_sik=""
         sat_nadir="$(json_sorgu "$T_NADIR")" || sat_nadir=""
 
         if [ -z "$sat_yavas" ]; then
-            t_fail "$n_gor" \
+            r_fail "$n_gor" \
                 "$YAVAS_N kez koşturulan pahalı sorgu ($T_YAVAS) listede" \
                 "YOK — araç en pahalı sorguyu bulamıyor"
-            t_unknown "$n_cagri" "sorgu listede yok"
+            r_unknown "$n_cagri" "sorgu listede yok"
         else
             read -r r_yavas c_yavas t_yavas_ms o_yavas <<< "$sat_yavas"
-            t_ok "$n_gor (sıra $r_yavas, toplam $t_yavas_ms ms)"
+            r_ok "$n_gor (sıra $r_yavas, toplam $t_yavas_ms ms)"
             if [ "$c_yavas" = "$YAVAS_N" ]; then
-                t_ok "$n_cagri ($YAVAS_N koşum, $c_yavas sayıldı)"
+                r_ok "$n_cagri ($YAVAS_N koşum, $c_yavas sayıldı)"
             else
-                t_fail "$n_cagri" \
+                r_fail "$n_cagri" \
                     "$YAVAS_N kez koşturuldu, araç $c_yavas diyor"
             fi
         fi
 
         # --- SIRALAMA: asıl ayırt edici kontrol ------------------------------
         if [ -z "$sat_sik" ] || [ -z "$sat_nadir" ]; then
-            t_unknown "$n_sira" \
+            r_unknown "$n_sira" \
                 "karşılaştırılacak iki sorgudan biri listede yok"
         else
             read -r r_sik   c_sik   t_sik_ms   o_sik   <<< "$sat_sik"
@@ -705,15 +736,15 @@ motor_kontrolleri() {   # motor_kontrolleri <motor>
             # olur, "başarısız" demek de.
             if ! buyuk_mu "$t_sik_ms" "$t_nadir_ms" \
                || ! buyuk_mu "$o_nadir" "$o_sik"; then
-                t_unknown "$n_sira" \
+                r_unknown "$n_sira" \
                     "ayırt edici önkoşul oluşmadı: sik(toplam $t_sik_ms," \
                     "ort $o_sik) / nadir(toplam $t_nadir_ms, ort $o_nadir)"
             elif [ "$r_sik" -lt "$r_nadir" ]; then
-                t_ok "$n_sira (sik sıra $r_sik: toplam $t_sik_ms ms /" \
+                r_ok "$n_sira (sik sıra $r_sik: toplam $t_sik_ms ms /" \
                      "ort $o_sik ms — nadir sıra $r_nadir: toplam" \
                      "$t_nadir_ms ms / ort $o_nadir ms)"
             else
-                t_fail "$n_sira" \
+                r_fail "$n_sira" \
                     "ORTALAMAYA göre sıralanmış: ortalaması $o_nadir ms" \
                     "olan sorgu (toplam $t_nadir_ms ms) sıra $r_nadir'de," \
                     "toplamı $t_sik_ms ms olan sorgu sıra $r_sik'te"
@@ -725,17 +756,17 @@ motor_kontrolleri() {   # motor_kontrolleri <motor>
     arac_calistir "durum $motor --adet 3" \
         durum "$motor" --vt "$E2E_DB" --adet 3
     if [ "$ARAC_RC" -ne 0 ]; then
-        t_unknown "$n_ucuz" "'durum --adet 3' çıkış $ARAC_RC"
+        r_unknown "$n_ucuz" "'durum --adet 3' çıkış $ARAC_RC"
     elif json_sorgu "$T_HIZLI" >/dev/null 2>&1; then
-        t_fail "$n_ucuz" \
+        r_fail "$n_ucuz" \
             "$HIZLI_N kez koşan birincil anahtar sorgusu ilk 3'te —" \
             "liste maliyete göre sıralanmıyor"
     elif json_sorgu "$T_YAVAS" >/dev/null 2>&1; then
-        t_ok "$n_ucuz (ilk 3'te pahalı sorgu var, ucuz sorgu yok)"
+        r_ok "$n_ucuz (ilk 3'te pahalı sorgu var, ucuz sorgu yok)"
     else
         # Ucuz sorgu yok ama pahalı sorgu da yok: liste bambaşka. Bu
         # "geçti" değil, "ölçemedik".
-        t_unknown "$n_ucuz" "ilk 3'te bizim sorgularımızdan hiçbiri yok"
+        r_unknown "$n_ucuz" "ilk 3'te bizim sorgularımızdan hiçbiri yok"
     fi
 
     # --- 4) 'oneri' ---------------------------------------------------------
@@ -747,33 +778,33 @@ motor_kontrolleri() {   # motor_kontrolleri <motor>
     ix_sonra="$(indeks_sayisi "$motor")"
 
     if [ "$ARAC_RC" -ne 0 ]; then
-        t_unknown "$n_one" "'oneri' çıkış $ARAC_RC: $(son_ozet)"
+        r_unknown "$n_one" "'oneri' çıkış $ARAC_RC: $(son_ozet)"
     elif komut="$(json_oneri_var kullanilmayan-indeks "$IX_HIC")"; then
-        t_ok "$n_one (hiç kullanılmayan $IX_HIC bulundu: $komut)"
+        r_ok "$n_one (hiç kullanılmayan $IX_HIC bulundu: $komut)"
     else
         # Öneri çıkmadıysa iki ihtimal var ve ayırmak şart: ya araç
         # ölçemedi (bulgu), ya da bu motorda o sayaç yok
         # (performance_schema kapalı → meşru).
         if grep -qaF "performance_schema kapalı" "$ARAC_CIKTI"; then
-            t_skip "$n_one" \
+            r_skip "$n_one" \
                 "performance_schema kapalı — indeks kullanım sayacı yok"
         else
-            t_fail "$n_one" \
+            r_fail "$n_one" \
                 "hiç kullanılmayan $IX_HIC indeksi önerilerde YOK"
         fi
     fi
 
     if ! sayi_mi "${ix_once:-}" || ! sayi_mi "${ix_sonra:-}"; then
-        t_unknown "$n_uyg" "indeks sayısı okunamadı"
+        r_unknown "$n_uyg" "indeks sayısı okunamadı"
     elif [ "$ix_once" -ne "$ix_sonra" ]; then
-        t_fail "$n_uyg" \
+        r_fail "$n_uyg" \
             "'oneri' indeks sayısını değiştirdi: $ix_once → $ix_sonra —" \
             "yalnız yazması gereken komutu ÇALIŞTIRMIŞ"
     elif grep -qaF "ÇALIŞTIRILMADI" "$ARAC_CIKTI"; then
-        t_ok "$n_uyg ($ix_once indeks önce, $ix_sonra sonra; ekranda da" \
+        r_ok "$n_uyg ($ix_once indeks önce, $ix_sonra sonra; ekranda da" \
              "uygulanmadığı yazıyor)"
     else
-        t_fail "$n_uyg" \
+        r_fail "$n_uyg" \
             "indeks sayısı değişmedi ama ekranda 'uygulanmadı' uyarısı yok"
     fi
 
@@ -781,18 +812,18 @@ motor_kontrolleri() {   # motor_kontrolleri <motor>
     # EN SONDA, çünkü yukarıdaki bütün kontroller bu sayaçları okuyor.
     arac_calistir "sifirla $motor" sifirla "$motor" --vt "$E2E_DB"
     if [ "$ARAC_RC" -ne 0 ]; then
-        t_fail "$n_sif" "'sifirla' çıkış $ARAC_RC: $(son_ozet)"
+        r_fail "$n_sif" "'sifirla' çıkış $ARAC_RC: $(son_ozet)"
     else
         arac_calistir "durum $motor (sıfırlama sonrası)" \
             durum "$motor" --vt "$E2E_DB" --adet 20
         if [ "$ARAC_RC" -ne 0 ]; then
-            t_unknown "$n_sif" "sıfırlama sonrası 'durum' çıkış $ARAC_RC"
+            r_unknown "$n_sif" "sıfırlama sonrası 'durum' çıkış $ARAC_RC"
         elif json_sorgu "$T_YAVAS" >/dev/null 2>&1; then
             sat_yavas="$(json_sorgu "$T_YAVAS")"
-            t_fail "$n_sif" \
+            r_fail "$n_sif" \
                 "sıfırlamadan sonra sorgu hâlâ listede: $sat_yavas"
         else
-            t_ok "$n_sif ($(json_sorgu_sayisi) sorgu kaldı, bizimki yok)"
+            r_ok "$n_sif ($(json_sorgu_sayisi) sorgu kaldı, bizimki yok)"
         fi
     fi
     return 0
@@ -804,16 +835,16 @@ motor_kontrolleri() {   # motor_kontrolleri <motor>
 kontrol_dokunulmadi() {   # <ad> <container> <önceki damga>
     local ad="$1" C="$2" once="$3" sonra
     if [ -z "$once" ]; then
-        t_skip "$ad" "$C bu koşumun başında çalışmıyordu"
+        r_skip "$ad" "$C bu koşumun başında çalışmıyordu"
         return 0
     fi
     sonra="$(damga_al "$C")"
     if [ -z "$sonra" ]; then
-        t_unknown "$ad" "$C artık docker inspect ile okunamıyor"
+        r_unknown "$ad" "$C artık docker inspect ile okunamıyor"
     elif [ "$once" = "$sonra" ]; then
-        t_ok "$ad ($C, StartedAt değişmedi)"
+        r_ok "$ad ($C, StartedAt değişmedi)"
     else
-        t_fail "$ad" "$C durumu değişti: önce [$once] sonra [$sonra]"
+        r_fail "$ad" "$C durumu değişti: önce [$once] sonra [$sonra]"
     fi
 }
 
@@ -839,13 +870,13 @@ esac
 
 t_head "Ölç → gör → sırala → sıfırla"
 if ! docker_yasiyor; then
-    t_unknown "iş yükü koşturuldu ve ölçüldü" "docker cevap vermiyor"
+    r_unknown "iş yükü koşturuldu ve ölçüldü" "docker cevap vermiyor"
 else
     OLCULEN=0
     for M in $SECILEN; do
         C="$(primary_of "$M")"
         if ! container_running "$C"; then
-            t_skip "[$M] iş yükü koşturuldu ve ölçüldü" \
+            r_skip "[$M] iş yükü koşturuldu ve ölçüldü" \
                    "$M kapalı (container: $C)"
             continue
         fi
@@ -888,7 +919,7 @@ else
         fi
 
         if [ "$ARAC_RC" -eq 4 ]; then
-            t_skip "[$M] iş yükü ölçüldü" \
+            r_skip "[$M] iş yükü ölçüldü" \
                 "ölçüm hâlâ kapalı. PostgreSQL'de shared_preload_libraries" \
                 "yeniden başlatma ister: 'docker compose up -d $M' koşup" \
                 "bu paketi tekrar çalıştırın (ya da" \
@@ -905,7 +936,7 @@ else
             mariadb)    my_veri_kur || KURULDU=0 ;;
         esac
         if [ "$KURULDU" -ne 1 ]; then
-            t_unknown "[$M] test verisi kurulamadı" \
+            r_unknown "[$M] test verisi kurulamadı" \
                       "geçici veritabanı yaratılamadı (ayrıntı: $E2E_LOG)"
             continue
         fi
@@ -928,19 +959,19 @@ t_head "Temizlik"
 temizle
 if [ "$PG_KURULDU" -eq 1 ]; then
     case "$PG_TEMIZ" in
-        0)  t_ok "[postgresql] test veritabanı ($E2E_DB) silindi" ;;
-        '') t_unknown "[postgresql] test veritabanı silindi" \
+        0)  r_ok "[postgresql] test veritabanı ($E2E_DB) silindi" ;;
+        '') r_unknown "[postgresql] test veritabanı silindi" \
                       "silinip silinmediği doğrulanamadı" ;;
-        *)  t_fail "[postgresql] test veritabanı silindi" \
+        *)  r_fail "[postgresql] test veritabanı silindi" \
                   "$E2E_DB hâlâ duruyor — elle silin: DROP DATABASE $E2E_DB" ;;
     esac
 fi
 if [ "$MY_KURULDU" -eq 1 ]; then
     case "$MY_TEMIZ" in
-        0)  t_ok "[mariadb] test veritabanı ($E2E_DB) silindi" ;;
-        '') t_unknown "[mariadb] test veritabanı silindi" \
+        0)  r_ok "[mariadb] test veritabanı ($E2E_DB) silindi" ;;
+        '') r_unknown "[mariadb] test veritabanı silindi" \
                       "silinip silinmediği doğrulanamadı" ;;
-        *)  t_fail "[mariadb] test veritabanı silindi" \
+        *)  r_fail "[mariadb] test veritabanı silindi" \
                   "$E2E_DB hâlâ duruyor — elle silin: DROP DATABASE $E2E_DB" ;;
     esac
 fi

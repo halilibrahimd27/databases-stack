@@ -1913,3 +1913,8 @@ main {
 .bk-drill-ok  { color: var(--ok); border-color: var(--ok); }
 .bk-drill-err { color: var(--err); border-color: var(--err); font-weight: 600; }
 .bk-drill-yok { color: var(--warn); border-color: var(--warn); }
+
+/* Kart künyesinde tek kırmızı: akışı kopmuş yedek kopya. Bu, devirde işe
+   yaramayacak bir güvencedir ve kullanıcının felaket anında değil ŞİMDİ
+   görmesi gerekir. */
+.fact-err { color: var(--err); font-weight: 600; }

@@ -1073,6 +1073,25 @@ _dorep = _ctrl_src[_dorep_i:_dorep_i + 6000]
 ck("replika kontrolü plan_engine'in budget_mb'sini KULLANMIYOR",
    "free_budget_mb()" in _dorep and 'p.get("budget_mb"' not in _dorep)
 
+# "ÇALIŞIYOR" İLE "AKIYOR" AYRI ŞEYLER. Panel eskiden yalnız replika
+# container'ının ayakta olduğuna bakıp "yedek kopya çalışıyor" diyordu; akış
+# kopmuş olsa bile aynı cümleyi yazıyordu — ölçmediği bir güvenceyi iddia
+# ediyordu. Akışı kopmuş bir yedek kopya devirde İŞE YARAMAZ. Ölçüm için yeni
+# SQL yazılmadı: devrin dayandığı ölçütün AYNISI (failover/<motor>.sh ready)
+# kullanılıyor, böylece panelin gösterdiği şey ile devrin güvendiği şey
+# ayrışamaz.
+ck("replikasyon sağlığı ölçülüyor (container ayakta ≠ akış var)",
+   "def measure_replication_health" in _ctrl_src)
+ck("ölçüm devrin kullandığı ölçütle aynı (failover/<motor>.sh ready)",
+   '"ready", stby' in _ctrl_src or "'ready', stby" in _ctrl_src)
+ck("API 'akıyor mu' bilgisini ayrı alanda veriyor",
+   '"replication_flowing"' in _ctrl_src)
+ck("ölçülemeyen durum None kalıyor (False ile karıştırılmıyor)",
+   '(repl_health.get(e["id"]) or {}).get("flowing")' in _ctrl_src)
+_app_js = io.open("gateway/html/app.js", encoding="utf-8").read()
+ck("panel akışı kopmuş yedek kopyayı AYRI ve kırmızı gösteriyor",
+   "yedek kopya AKMIYOR" in _app_js and "fact-err" in _app_js)
+
 # PITR ARŞİVİ, DEVİRDEN SONRA DA ÇALIŞMALI. Ana kopya devirde replikaya
 # geçiyor ve yazmaları o üretmeye başlıyor; binlog arşiv bağlaması yalnız
 # birincil serviste kalırsa PITR tam da en gerekli anda sessizce durur —

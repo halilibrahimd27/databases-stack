@@ -384,7 +384,20 @@ function cardHtml(engine, st) {
     if (st.memory_mb != null) facts.push(mb(st.memory_mb) + ' üst sınır');
   }
   if (ports) facts.push('port ' + esc(ports));
-  if (st.replication_active) facts.push('yedek kopya çalışıyor');
+  /* "Çalışıyor" ile "akıyor" AYRI ŞEYLER. Eskiden burada yalnız replika
+     container'ının ayakta olduğuna bakılıyordu: akış kopmuş olsa bile panel
+     "yedek kopya çalışıyor" diyordu — yani ölçülmemiş bir güvence. Akışın
+     koptuğu bir yedek kopya, devirde işe YARAMAZ; kullanıcının bunu felaket
+     anında değil şimdi görmesi gerekiyor. */
+  if (st.replication_active) {
+    if (st.replication_flowing === false) {
+      facts.push('<span class="fact-err">yedek kopya AKMIYOR</span>');
+    } else if (st.replication_flowing === true) {
+      facts.push('yedek kopya akıyor');
+    } else {
+      facts.push('yedek kopya çalışıyor');
+    }
+  }
   if (st.auto_failover) facts.push('otomatik devir açık');
 
   // Sayfadaki tek renkli alan: gerçekten dikkat isteyen durum.

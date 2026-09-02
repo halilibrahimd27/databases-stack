@@ -1494,6 +1494,15 @@ my_oneri() {   # my_oneri <container>
         # kaldırır. YABANCI ANAHTAR indeksleri de dışarıda — MariaDB
         # onların silinmesini zaten reddeder; önerseydik kullanıcıya
         # çalışmayacak bir komut vermiş olurduk.
+        #
+        # ÖLÇÜT COUNT_FETCH, COUNT_STAR DEĞİL — ve fark önemli:
+        # COUNT_STAR okumaları VE YAZMALARI birlikte sayar. Yani sürekli
+        # yazılan bir tablodaki, hiç okunmayan bir indeks COUNT_STAR'da
+        # sıfırdan büyük görünür ve listeye HİÇ girmez. Oysa tam olarak
+        # aradığımız indeks odur: okunmuyor ama her yazmayı yavaşlatıyor —
+        # cümlenin kendisi zaten bunu söylüyor. COUNT_FETCH yalnız
+        # OKUMALARI sayar ve PostgreSQL'deki idx_scan = 0 ile aynı soruyu
+        # sorar; iki motorun aynı kavramı raporlaması da böyle sağlanıyor.
         while IFS="$AYIRAC" read -r sema tbl idx; do
             [ -z "$idx" ] && continue
             komut="DROP INDEX $(my_kimlik "$idx") ON"
@@ -1513,7 +1522,7 @@ my_oneri() {   # my_oneri <container>
                 AND st.SEQ_IN_INDEX = 1
               WHERE u.INDEX_NAME IS NOT NULL
                 AND u.INDEX_NAME <> 'PRIMARY'
-                AND u.COUNT_STAR = 0
+                AND u.COUNT_FETCH = 0
                 AND st.NON_UNIQUE = 1
                 AND u.OBJECT_SCHEMA NOT IN
                     ('mysql', 'performance_schema', 'information_schema',

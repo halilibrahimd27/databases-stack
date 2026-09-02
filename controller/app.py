@@ -3893,6 +3893,72 @@ def do_drill(jid, eid):
 
 
 # =============================================================================
+# REPLİKASYON SAĞLIĞI — "çalışıyor" ile "akıyor" ayrı şeyler
+# =============================================================================
+# Panel "yedek kopya çalışıyor" derken yalnız REPLİKA CONTAINER'ININ AYAKTA
+# olduğuna bakıyordu. Container ayakta ama replikasyon kopmuşsa panel yine
+# "çalışıyor" diyordu — yani ölçmediği bir sağlığı iddia ediyordu. Bu, bu
+# projede defalarca yakalanan hata sınıfının aynısı (healthcheck hesabı,
+# .Id şablonu): sessizce yanlış olan bir güvence.
+#
+# Ölçüm için var olan mantığı kullanıyoruz: scripts/failover/<motor>.sh
+# 'ready' eylemi, "yedek kopya yükseltmeye hazır mı" sorusuna cevap veriyor
+# ve bu ancak replikasyon gerçekten UYGULANIYORSA doğru olur. Yeni bir SQL
+# yazmıyoruz — devirle aynı ölçütü kullanmak, panelin gösterdiği şeyle
+# devrin dayandığı şeyin AYNI olmasını garanti eder.
+REPL_FILE = os.path.join(STATE_DIR, "replication.json")
+REPL_EVERY_SEC = int(os.environ.get("REPL_CHECK_EVERY_SEC", "60"))
+
+
+def load_replication_health():
+    return _oku_json_dosya(REPL_FILE)
+
+
+def _standby_service(engine, prim):
+    """Şu anki ana kopya DEĞİL olan düğüm. Devirden sonra roller yer
+    değiştirdiği için katalogdaki 'replica_service' her zaman yedek değildir."""
+    rep = engine.get("replication", {})
+    rs = rep.get("replica_service")
+    if not rs:
+        return None
+    return engine["primary_service"] if prim == rs else rs
+
+
+def measure_replication_health():
+    out = {}
+    calisan = {c["service"] for c in docker_containers() if c["status"] == "running"}
+    for e in CATALOG.engines:
+        eid = e["id"]
+        rep = e.get("replication", {})
+        if rep.get("mode") != "primary-replica":
+            continue
+        betik = os.path.join(PROJECT_DIR, "scripts", "failover", eid + ".sh")
+        if not os.path.exists(betik) or not shutil.which("bash"):
+            continue
+        prim = current_primary(e)
+        stby = _standby_service(e, prim)
+        if not stby or stby not in calisan:
+            continue          # yedek kopya yok: söylenecek bir şey de yok
+        rc, o, er = run(["bash", betik, "ready", stby], cwd=PROJECT_DIR,
+                        timeout=60, env=script_env())
+        out[eid] = {"at": int(time.time()), "standby": stby,
+                    "flowing": rc == 0,
+                    "detail": (o + er).strip().splitlines()[-1][:200]
+                              if (o + er).strip() else ""}
+    _yaz_json_dosya(REPL_FILE, out)
+    return out
+
+
+def replication_refresher():
+    while True:
+        try:
+            measure_replication_health()
+        except Exception as e:
+            log("replikasyon sağlığı ölçülemedi: %r" % e)
+        time.sleep(REPL_EVERY_SEC)
+
+
+# =============================================================================
 # PITR DURUMU ve DEVİR PROVASI
 # =============================================================================
 # İkisi de "ölçülmüş güvence" ailesinden: biri "ne kadar geriye dönebilirim",
@@ -4833,6 +4899,7 @@ def status():
 
     topo = load_topology()
     auto_fo = auto_failover_engines()
+    repl_health = load_replication_health()
 
     engines = []
     for e in CATALOG.engines:
@@ -4883,6 +4950,12 @@ def status():
                             if active else 0),
             "tuning": tun.get(e["id"], {}),
             "replication_active": bool(rep_svc and rep_svc["status"] == "running"),
+            # AYRI ALAN: "container ayakta" ile "replikasyon akıyor" aynı şey
+            # değil. None = ölçülmedi (yedek kopya yok ya da ölçüm yapılamadı);
+            # False = container ayakta AMA akış kopuk — panelin en çok
+            # göstermesi gereken durum bu.
+            "replication_flowing": (repl_health.get(e["id"]) or {}).get("flowing"),
+            "replication_detail": (repl_health.get(e["id"]) or {}).get("detail"),
             "primary_service": prim_name,
             # "failed_over" dashboard'da "Devir yapıldı — eski kopya durduruldu"
             # uyarısını ve "Eski kopyayı yeniden kur" düğmesini açar. Yalnız
@@ -5304,6 +5377,7 @@ def main():
         threading.Thread(target=backup_scheduler, daemon=True).start()
         threading.Thread(target=maintenance_refresher, daemon=True).start()
         threading.Thread(target=pitr_refresher, daemon=True).start()
+        threading.Thread(target=replication_refresher, daemon=True).start()
 
     Server(("0.0.0.0", LISTEN_PORT), Handler).serve_forever()
 
