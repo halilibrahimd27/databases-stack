@@ -767,7 +767,7 @@ Bu ürünün iddiaları ölçülüyor. Depoda iki katman var:
 
 ```bash
 ./stack.sh selftest    # docker gerektirmez — boyutlandırma, API, nginx, betikler
-./stack.sh e2e         # ÇALIŞAN kuruluma karşı — sekiz paket, ~300 kontrol
+./stack.sh e2e         # ÇALIŞAN kuruluma karşı — on dört paket
 ./stack.sh e2e --hepsi # Kubernetes dahil
 ```
 
