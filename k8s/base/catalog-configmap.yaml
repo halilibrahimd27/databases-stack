@@ -91,6 +91,13 @@ data:
             "overhead_mb": 320,
             "panel_mb": 256,
             "exporter_mb": 64,
+            "reserve": {
+              "from": [
+                "MARIADB_BUFFER_POOL"
+              ],
+              "plus_mb": 0,
+              "note": "InnoDB buffer pool'unu sunucu AÇILIŞTA ayırır ve işletim sistemine geri vermez; MARIADB_MEM_LIMIT ise yalnızca üst sınırdır."
+            },
             "tuning": [
               {
                 "env": "MARIADB_MEM_LIMIT",
@@ -208,6 +215,13 @@ data:
             "overhead_mb": 576,
             "panel_mb": 512,
             "exporter_mb": 64,
+            "reserve": {
+              "from": [
+                "POSTGRES_SHARED_BUFFERS"
+              ],
+              "plus_mb": 0,
+              "note": "shared_buffers'ı postmaster AÇILIŞTA tek parça paylaşımlı bellek olarak ayırır. work_mem bağlantı başına ve geçicidir, rezerve değildir."
+            },
             "tuning": [
               {
                 "env": "POSTGRES_MEM_LIMIT",
@@ -332,6 +346,11 @@ data:
             "overhead_mb": 320,
             "panel_mb": 256,
             "exporter_mb": 64,
+            "reserve": {
+              "from": [],
+              "plus_mb": 0,
+              "note": "0: WiredTiger önbelleği bir TAVANDIR. Veri okundukça o sınıra doğru büyür, açılışta ayrılmaz."
+            },
             "tuning": [
               {
                 "env": "MONGO_MEM_LIMIT",
@@ -433,6 +452,11 @@ data:
             "overhead_mb": 320,
             "panel_mb": 256,
             "exporter_mb": 64,
+            "reserve": {
+              "from": [],
+              "plus_mb": 0,
+              "note": "0: maxmemory bir TAVANDIR. Redis boş başlar, veri yazıldıkça büyür; baştan ayırdığı bir taban yoktur (ölçüm: 1278 MB tavan, 5 MB kullanım)."
+            },
             "tuning": [
               {
                 "env": "REDIS_MEM_LIMIT",
@@ -523,6 +547,11 @@ data:
             "overhead_mb": 0,
             "panel_mb": 0,
             "exporter_mb": 0,
+            "reserve": {
+              "from": [],
+              "plus_mb": 0,
+              "note": "0: 'max server memory' bir tavandır. SQL Server sayfa havuzunu iş yükü geldikçe büyütür, açılışta o kadar belleği almaz."
+            },
             "tuning": [
               {
                 "env": "MSSQL_MEM_LIMIT",
@@ -614,6 +643,13 @@ data:
             "overhead_mb": 128,
             "panel_mb": 0,
             "exporter_mb": 128,
+            "reserve": {
+              "from": [
+                "CASSANDRA_HEAP"
+              ],
+              "plus_mb": 0,
+              "note": "cassandra-env.sh MAX_HEAP_SIZE'ı hem -Xms hem -Xmx yapar; JVM heap'i açılışta ayırır."
+            },
             "tuning": [
               {
                 "env": "CASSANDRA_MEM_LIMIT",
@@ -723,6 +759,13 @@ data:
             "overhead_mb": 1088,
             "panel_mb": 1024,
             "exporter_mb": 64,
+            "reserve": {
+              "from": [
+                "ELASTIC_JAVA_OPTS"
+              ],
+              "plus_mb": 0,
+              "note": "ES_JAVA_OPTS içindeki -Xms açılışta ayrılan heap'tir ve -Xmx ile eşit verilir."
+            },
             "tuning": [
               {
                 "env": "ELASTIC_MEM_LIMIT",
@@ -821,6 +864,13 @@ data:
             "overhead_mb": 576,
             "panel_mb": 512,
             "exporter_mb": 64,
+            "reserve": {
+              "from": [
+                "KAFKA_HEAP_OPTS"
+              ],
+              "plus_mb": 0,
+              "note": "KAFKA_HEAP_OPTS içindeki -Xms açılışta ayrılan JVM heap'idir."
+            },
             "tuning": [
               {
                 "env": "KAFKA_MEM_LIMIT",
@@ -916,6 +966,11 @@ data:
             "overhead_mb": 0,
             "panel_mb": 0,
             "exporter_mb": 0,
+            "reserve": {
+              "from": [],
+              "plus_mb": 0,
+              "note": "0: Erlang VM belleği iş yüküyle büyür; açılışta ayrılan bir taban ayarlanmıyor."
+            },
             "tuning": [
               {
                 "env": "RABBITMQ_MEM_LIMIT",
@@ -1008,6 +1063,11 @@ data:
             "overhead_mb": 0,
             "panel_mb": 0,
             "exporter_mb": 0,
+            "reserve": {
+              "from": [],
+              "plus_mb": 0,
+              "note": "0: max_server_memory_usage bir tavandır; ClickHouse sorgu geldikçe büyür."
+            },
             "tuning": [
               {
                 "env": "CLICKHOUSE_MEM_LIMIT",
@@ -1100,6 +1160,13 @@ data:
             "overhead_mb": 0,
             "panel_mb": 0,
             "exporter_mb": 0,
+            "reserve": {
+              "from": [
+                "NEO4J_HEAP"
+              ],
+              "plus_mb": 0,
+              "note": "heap initial ve max eşit veriliyor, JVM açılışta ayırır. Sayfa önbelleği (NEO4J_PAGECACHE) sayfa okundukça dolar, o bir tavandır."
+            },
             "tuning": [
               {
                 "env": "NEO4J_MEM_LIMIT",
@@ -1201,6 +1268,11 @@ data:
             "overhead_mb": 0,
             "panel_mb": 0,
             "exporter_mb": 0,
+            "reserve": {
+              "from": [],
+              "plus_mb": 0,
+              "note": "0: MinIO nesne verisini diskte tutar, belleği istek başına kullanır; açılış tabanı yoktur."
+            },
             "tuning": [
               {
                 "env": "MINIO_MEM_LIMIT",
@@ -1270,6 +1342,11 @@ data:
             "overhead_mb": 0,
             "panel_mb": 0,
             "exporter_mb": 320,
+            "reserve": {
+              "from": [],
+              "plus_mb": 0,
+              "note": "0: Prometheus TSDB belleği seri sayısıyla büyür; açılışta ayrılan sabit bir taban yok."
+            },
             "tuning": [
               {
                 "env": "PROMETHEUS_MEM_LIMIT",
@@ -1295,7 +1372,7 @@ data:
           }
         }
       ],
-      "_sizing_note": "resources.* alanlarını controller/app.py okur. Aktivasyonda: bütçe = toplam RAM - OS payı - çekirdek servisler - zaten açık motorların taahhüdü. min_mb + overhead_mb bütçeye sığmıyorsa aktivasyon REDDEDİLİR. Sığıyorsa limit = clamp(toplam*share, min_mb, max_mb, bütçe) ve tuning kuralları bu limitten türetilip state/tuning.env'e yazılır.",
+      "_sizing_note": "resources.* alanlarını controller/app.py okur. ÜÇ AYRI KAVRAM: reserve = motorun AÇILIŞTA gerçekten ayırdığı bellek (reserve.from içindeki tuning anahtarlarından türer, boş liste = taban yok); tuning[kind=limit] = docker --memory TAVANI, aşılırsa cgroup OOM killer devreye girer; dağıtılabilir = toplam RAM - OS payı - çekirdek servisler. Aktivasyon üç kuralı birden ister: SERT (Σ rezerve + yeni rezerve <= dağıtılabilir), YUMUŞAK (Σ tavan + yeni tavan <= dağıtılabilir x OVERCOMMIT_LIMIT, varsayılan 1.5 — tavanların hepsi aynı anda dolmaz) ve ÇEKİRDEK KEMERİ (/proc/meminfo MemAvailable >= yeni rezerve + emniyet payı). Sığıyorsa limit = clamp(toplam*share, min_mb, max_mb) ve tavan bütçesi; tuning kuralları bu limitten türetilip state/tuning.env'e yazılır. Tavanları toplayıp RAM ile kıyaslamak KATEGORİ HATASIDIR: %6 dolu bir sunucuda panel '%122 aşım' yazdırıp bütün motorları reddediyordu.",
       "_failover_note": "Otomatik failover tek makinede SÜREÇ/CONTAINER arızasına karşı korur; host'un tamamı düşerse iki kopya da düşer (aynı arıza alanı). Gerçek host arızası koruması için replikayı ikinci bir makinede çalıştırın — docs/FAILOVER.md.",
       "_license_note": "Lisanslar bilgi amaçlıdır, hukuki tavsiye değildir. Bu yığındaki motorlar varsayılan ayarlarıyla üretimde ücretsiz kullanılabilir (SQL Server Express dahil). Dikkat gerektiren iki durum: (1) MSSQL_PID'i Developer yaparsanız o kurulum ÜRETİMDE kullanılamaz, (2) SSPL/AGPL lisanslı motorları üçüncü taraflara SERVİS olarak sunuyorsanız hukuk biriminize danışın. Ayrıntı: docs/LICENSING.md"
     }
