@@ -454,6 +454,23 @@ Panel ne yapıyorsa aynısı; ikisi de aynı `scripts/backup.sh`i çağırır.
 ./stack.sh restore mariadb backups/mariadb/full/mariadb_full_20260901.sql.gz
 ```
 
+> **Cron'dan koşuyorsanız izinlere dikkat.** `state/` ve `logs/` altına iki
+> ayrı kimlik yazar: controller container'ın içinde **root** olarak (docker
+> soketine erişmek zorunda), siz ve cron ise sunucudaki yönetici olarak. Kim
+> önce yazarsa dosya onun olur; root'un açtığı `0644/root:root` bir dosyaya
+> yönetici bir daha yazamaz. Sonucu **sessizdir**: gece işleri "Kilit dosyası
+> açılamadı" ile düşer, panel kendi yolundan çalışmayı sürdürdüğü için hata
+> görünmez. Kurulum bunu `state/` ve `logs/`'u setgid (2775) yaparak ve
+> `umask 0002` ile çözüyor. Eski bir kurulumda:
+>
+> ```bash
+> ./stack.sh doctor            # yazamadığınız dosyaları sahibiyle listeler
+> sudo ./stack.sh doctor --duzelt
+> ```
+>
+> `doctor` dosyanın **moduna** değil, gerçekten yazılabilir olup olmadığına
+> bakar — mod doğru görünüp grup üyeliği eksikken de yazamazsınız.
+
 Host cron'unu tercih ederseniz `state/crontab` hâlâ üretiliyor; ikisi birlikte
 koşarsa `backup.sh` kendi kilidiyle çakışmayı önler. Aynı kilit geri yüklemede
 de tutulur — 02:00 turu, yarım geri yüklenmiş bir veritabanını "geçerli yedek"
@@ -476,6 +493,29 @@ yedek + o andan sonraki WAL/binlog kayıtları bunu mümkün kılar.
 ./scripts/pitr.sh taban postgresql           # taban yedeği al
 ./scripts/pitr.sh don mariadb "2026-09-02 15:30:00" --prova
 ```
+
+### Arşivleme zamanlanmalıdır — yoksa özellik sessizce ölüdür
+
+PostgreSQL WAL'ı `archive_command` ile **kendi** arşivler. MariaDB'de böyle
+bir mekanizma yoktur: binlog arşive yalnız `pitr.sh arsivle` çalışınca düşer.
+O satır olmadan `durum` yine bir pencere yazar, ama pencerenin **üst sınırı**
+en son elle arşivlenen ana çakılı kalır — ve bunu öğrendiğiniz gün, kurtarmaya
+muhtaç olduğunuz gündür.
+
+`scripts/crontab.template` (dolayısıyla `install.sh`'ın ürettiği
+`state/crontab`) bunu zamanlıyor:
+
+```cron
+*/15 * * * *  scripts/pitr.sh arsivle    # RPO üst sınırı: 15 dakika
+0    1 * * *  scripts/pitr.sh taban      # WAL tek başına veri değildir
+15   3 * * *  scripts/pitr.sh temizle    # arşiv sonsuza kadar büyümesin
+```
+
+Motor adı vermeden çağırınca PITR'li motorların hepsinde çalışır; kapalı
+motor **atlanır** (çıkış 3) ve alarm üretmez — her sabah alarm veren bir
+cron, bakılmayan bir crondur. Motorları crontab'a tek tek yazmamamızın
+sebebi de bu: yığına üçüncü bir PITR motoru eklendiği gün sessizce arşivsiz
+kalırdı.
 
 `--prova` üretime dokunmaz: tek kullanımlık bir kopyada dener. Pencere
 **tahmin edilmiyor, arşivden hesaplanıyor** — en eski kullanılabilir taban

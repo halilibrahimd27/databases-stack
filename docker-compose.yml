@@ -1306,7 +1306,15 @@ services:
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
-      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping || exit 1"]
+      # ping DEĞİL. `rabbitmq-diagnostics ping` yalnız Erlang düğümünün cevap
+      # verdiğini gösterir; 'rabbit' UYGULAMASI hâlâ başlıyor olabilir. O
+      # aralıkta panel "sağlıklı" der, ama broker hiçbir işi kabul etmez —
+      # ölçüldü: healthcheck yeşilken `rabbitmqctl add_vhost` "this command
+      # requires the 'rabbit' app to be running on the target node" ile
+      # düştü (çıkış 64). Sağlık rozetinin anlamı "uygulamanız bağlanabilir"
+      # olmalı; check_running uygulamanın çalıştığını, check_port_connectivity
+      # ise dinleyicinin gerçekten bağlantı kabul ettiğini ölçer.
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_running && rabbitmq-diagnostics -q check_port_connectivity"]
       interval: 30s
       timeout: 15s
       retries: 5

@@ -668,7 +668,12 @@ clean_kafka() { _kt --delete --topic "$TAG_DASH" >/dev/null 2>&1; }
 # rabbitmqctl ile mesaj üretilemez, ama vhost dayanıklı yazılır ve
 # /var/lib/rabbitmq volume'unda durur — kalıcılık sorusu için doğru nesne budur.
 _rmq() { dex "$(primary_container rabbitmq)" rabbitmqctl "$@"; }
-probe_rabbitmq() { dex "$(primary_container rabbitmq)" rabbitmq-diagnostics -q ping >/dev/null 2>&1; }
+# ping YETMEZ: yalnız Erlang düğümünün cevap verdiğini gösterir, 'rabbit'
+# uygulaması hâlâ başlıyor olabilir. Paket o aralıkta "hazır" deyip
+# add_vhost çağırıyor ve çıkış 64 ile düşüyordu — ürün suçlanıyordu,
+# oysa hazır olduğunu SÖYLEYEN bizdik. check_running uygulamanın
+# çalıştığını ölçer (compose healthcheck'i de artık bunu kullanıyor).
+probe_rabbitmq() { dex "$(primary_container rabbitmq)" rabbitmq-diagnostics -q check_running >/dev/null 2>&1; }
 write_rabbitmq() { _rmq add_vhost "${TAG_SNAKE}_$TOKEN" >/dev/null; }
 read_rabbitmq() {
     local raw val

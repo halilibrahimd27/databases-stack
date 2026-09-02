@@ -2763,6 +2763,24 @@ ck("doctor moda değil GERÇEK yazılabilirliğe bakıyor ([ -w ])",
 _app = io.open("controller/app.py", encoding="utf-8").read()
 ck("controller açılışta umask 0o002 kuruyor", "os.umask(0o002)" in _app)
 
+# --- Sağlık rozeti "uygulamanız bağlanabilir" demeli -------------------------
+# RabbitMQ'da `rabbitmq-diagnostics ping` yalnız Erlang DÜĞÜMÜNÜN cevap
+# verdiğini gösterir; 'rabbit' UYGULAMASI hâlâ başlıyor olabilir. O aralıkta
+# panel "sağlıklı" derken broker hiçbir işi kabul etmiyor — ölçüldü:
+# healthcheck yeşilken `rabbitmqctl add_vhost` "requires the 'rabbit' app to
+# be running" ile çıkış 64 verdi. Yeşil bir rozetin altında çalışmayan bir
+# servis, bu projenin varlık sebebi olan hatanın ta kendisi.
+with io.open("docker-compose.yml", encoding="utf-8") as _f:
+    _dc = _yaml.safe_load(_f)
+_rmq_hc = " ".join((_dc["services"]["rabbitmq"].get("healthcheck") or {})
+                   .get("test", []))
+ck("rabbitmq healthcheck'i 'rabbit' uygulamasını ölçüyor (ping değil)",
+   "check_running" in _rmq_hc and " ping" not in _rmq_hc,
+   _rmq_hc[:80])
+_lc = io.open("scripts/e2e/lifecycle.sh", encoding="utf-8").read()
+ck("lifecycle paketi de rabbitmq'yu check_running ile bekliyor",
+   "check_running" in _lc)
+
 # =============================================================================
 print()
 if FAILS:
