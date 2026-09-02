@@ -1025,6 +1025,15 @@ cat <<PLAN
   Geri takas etmek gereksiz ikinci bir kesinti demek olurdu, o yüzden
   yapılmaz. Prova bittiğinde yedek kopya YOKTUR.
 
+  YEDEK KOPYAYI GERİ GETİRMEK provanın parçası DEĞİLDİR; ayrı bir komuttur ve
+  bunu bilerek siz çalıştırırsınız (eski düğümün verisi silinip yeni ana
+  kopyadan baştan kopyalanır, dakikalar sürebilir):
+
+      ./stack.sh failover rebuild $MOTOR
+
+  Bu komut çalıştırılana kadar sistem TEK KOPYAYLA çalışır: ikinci bir arıza
+  için yedeğiniz olmaz. Provanın ölçtüğü kesinti kadar önemli olan şey budur.
+
   Prova, $M_VTABANI içine küçük bir kap ($TABLO / $REDIS_ANAHTAR) yazar ve
   sonunda siler.
 PLAN
