@@ -386,26 +386,59 @@ yalnız kendi test tablosu (`e2e_pitr`) oluşturulup sonunda düşürülür.
 
 ## Zamanlanmış görevler
 
-`scripts/crontab.template` tam yedeği ve temizliği zamanlıyor. PITR için
-şunlar eklenebilir (yollar `install.sh`'ın ürettiği `state/crontab`
-biçiminde):
+**Bunlar artık `scripts/crontab.template` içinde hazır** — `install.sh`
+`state/crontab`'ı üretiyor, `crontab state/crontab` ile yüklüyorsunuz.
+Önceki sürümde "eklenebilir" diye örnek olarak duruyordu ve kimse eklemiyordu;
+sonucu, MariaDB'de hiç ilerlemeyen bir PITR penceresiydi.
 
 ```cron
-# Haftada bir PITR tabanı — pencerenin alt sınırını taze tutar.
-# Gecelik tam yedekten SONRA: ikisi aynı kilidi paylaşır ve çakışırlarsa
-# ikincisi "kilit başkasında" deyip çıkar.
-30 3 * * 0 /yol/scripts/pitr.sh taban postgresql >> /yol/logs/cron_pitr.log 2>&1
-40 3 * * 0 /yol/scripts/pitr.sh taban mariadb    >> /yol/logs/cron_pitr.log 2>&1
-
-# Saatte bir binlog kopyası — motorun hacmi ölse bile binlog host'ta kalsın.
-15 * * * * /yol/scripts/pitr.sh arsivle mariadb  >> /yol/logs/cron_pitr.log 2>&1
-
-# Arşiv temizliği, yedek temizliğinin hemen ardından.
-10 3 * * * /yol/scripts/pitr.sh temizle          >> /yol/logs/cron_pitr.log 2>&1
+*/15 * * * *  scripts/pitr.sh arsivle    # RPO üst sınırı: 15 dakika
+0    1 * * *  scripts/pitr.sh taban      # WAL/binlog tek başına veri değildir
+15   3 * * *  scripts/pitr.sh temizle    # arşiv sonsuza kadar büyümesin
 ```
 
-PostgreSQL WAL arşivi için zamanlanmış bir işe gerek yok: `archive_command`
-sürekli çalışır.
+Motor adı verilmezse PITR'li motorların **hepsinde** çalışır. Kapalı motor
+**atlanır** (çıkış 3) ve alarm üretmez; her sabah alarm veren bir cron,
+bakılmayan bir crondur. Motorları crontab'a tek tek yazmıyoruz: yığına
+üçüncü bir PITR motoru eklendiği gün sessizce arşivsiz kalırdı.
+
+`taban` ile gecelik tam yedek **bilerek farklı saatte**: ikisi aynı kilidi
+paylaşır, çakışırlarsa biri hiç çalışmaz.
+
+### PostgreSQL'de de arşivleme işine gerek var
+
+Önceki sürüm burada "PostgreSQL WAL arşivi için zamanlanmış bir işe gerek
+yok, `archive_command` sürekli çalışır" diyordu. Doğru ama eksik:
+`archive_command` **çalışamazsa** kimse fark etmiyor. Sunucuda ölçülen iki
+hâl:
+
+- **Dizin yok.** docker, bind-mount kaynağını **root:root** yaratır;
+  `postgres` kullanıcısı yazamaz ve arşivleme saniyede bir çıkış 1 döner.
+  Bunu düzelten tek şey elle yazılan `pitr.sh kur` idi — yani PITR, o komut
+  yazılana kadar kapalı kalıyordu. Artık `install.sh` dizinleri açıyor ve
+  `arsivle` izni **kendisi ölçüp düzeltiyor**.
+- **Devir yapılmış.** Yükseltilen düğümde `archive_mode` ve `/wal-archive`
+  yoksa arşivleme durur; pencerenin üst sınırı devir anına donar. Yani PITR
+  tam da bir olayın ardından, en çok gerektiği anda ölür. `postgresql-replica`
+  artık ana kopyayla aynı arşiv ayarlarını taşıyor.
+
+`arsivle` ayrıca `pg_switch_wal()` çağırıp segmentin arşive **düştüğünü
+doğruluyor**: yazı olmuş ama segment dolmamışsa "en yeni dönülebilir an"
+saatlerce geride kalır ve kullanıcı aslında elinde olan veriye dönemez.
+
+### İzinler iki taraflıdır
+
+Arşiv dizinine **iki ayrı kimlik** yazar: motorun kendi kullanıcısı
+(`postgres`/`mysql`, container'ın içinden) ve sunucudaki yönetici
+(`pitr.sh taban`, `temizle`). Yalnız birine açmak diğerini kırar — dizin
+`postgres:root 750` olduğunda yönetici arşivi listeleyemiyor, `temizle`
+hiçbir şey silemiyordu. Doğru hâl: sahibi motorun kullanıcısı, grubu
+sunucudaki grup, mod **2775**. Bozulmuşsa:
+
+```bash
+./stack.sh doctor            # yazamadığınız dizinleri sahibiyle listeler
+sudo ./stack.sh doctor --duzelt
+```
 
 ---
 
