@@ -1923,6 +1923,56 @@ cmd_temizle() {
 # =============================================================================
 # KULLANIM
 # =============================================================================
+# =============================================================================
+# TÜM MOTORLARDA ÇALIŞTIR (cron için)
+# =============================================================================
+# 'arsivle' ve 'taban' motor adı VERİLMEDEN de çağrılabilir. Sebebi cron:
+# arşivlemeyi crontab'a "postgresql için bir satır, mariadb için bir satır"
+# diye yazmak, yığına üçüncü bir PITR motoru eklendiği gün o motorun SESSİZCE
+# arşivsiz kalması demektir — ve arşivsiz PITR, açık sanılan ama hiçbir zaman
+# geri dönemeyeceğiniz bir özelliktir. Motor listesi tek yerde durur
+# (pitr_motorlari), crontab satırı ona sorar.
+#
+# Çıkış kodu KAPALI motoru başarısızlık SAYMAZ:
+#   0 = en az bir motorda yapıldı, düşen yok
+#   1 = en az bir motorda düştü
+#   3 = hiçbir motorda denenemedi (hepsi kapalı) — bu "başarısız" değil
+#       "ölçülemedi"dir. Gece cron'u, kapalı bir motor yüzünden her sabah
+#       alarm üretirse insan alarma bakmayı bırakır.
+her_motor_icin() {   # <etiket> <fonksiyon>
+    local etiket="$1" fn="$2"
+    local motor rc basari=0 dusen=0 atlanan=0
+    for motor in $(pitr_motorlari); do
+        "$fn" "$motor"; rc=$?
+        case "$rc" in
+            0) basari=$((basari+1)) ;;
+            3) atlanan=$((atlanan+1)) ;;
+            *) dusen=$((dusen+1)) ;;
+        esac
+    done
+    plog "$etiket: $basari yapıldı · $dusen düştü · $atlanan atlandı (kapalı/kapsam dışı)"
+    [ "$dusen"  -gt 0 ] && return 1
+    [ "$basari" -gt 0 ] && return 0
+    return 3
+}
+
+# Tek motorda taban. KAPALI motor burada 3 döner (pg_taban_al/my_taban_al
+# 1 döndürür): motoru ADIYLA isteyip kapalı bulmak hatadır, hepsini gezerken
+# kapalıya rastlamak değildir.
+taban_al() {   # <motor>
+    local C
+    C="$(primary_of "$1")" || return 3
+    container_running "$C" || {
+        plog "$1 kapalı ($C) — taban atlandı."
+        return 3
+    }
+    case "$1" in
+        postgresql) pg_taban_al ;;
+        mariadb)    my_taban_al ;;
+        *)          return 3 ;;
+    esac
+}
+
 kullanim() {
 cat <<EOF
 
@@ -1935,12 +1985,17 @@ Zamanda bir ana dönme (PITR) — databases-stack
   ./scripts/pitr.sh kur <motor>
         Arşiv dizinini açar ve motorun oraya YAZABİLDİĞİNİ ölçer.
 
-  ./scripts/pitr.sh taban <motor>
+  ./scripts/pitr.sh taban [motor]
         PITR tabanı alır. WAL/binlog tek başına veri değildir; bir tabanın
         üzerine oynatılır. Taban yoksa dönülebilir aralık da yoktur.
+        Motor verilmezse PITR'li motorların hepsinde; kapalı olanlar
+        atlanır (çıkış 3), hata sayılmaz.
 
-  ./scripts/pitr.sh arsivle <motor>
+  ./scripts/pitr.sh arsivle [motor]
         Biriken WAL/binlog'u ŞİMDİ arşive iter (üst sınırı bugüne çeker).
+        Motor verilmezse hepsinde. MariaDB'de binlog arşive YALNIZ bu
+        komutla düşer; düzenli çalışmazsa dönülebilir üst sınır ilerlemez.
+        Cron satırı için: scripts/crontab.template
 
   ./scripts/pitr.sh don <motor> "<zaman>" [--prova] [--dogrula "<SQL>"]
         O ana kurtarır. --prova ile üretime DOKUNMADAN, tek kullanımlık bir
@@ -1986,16 +2041,31 @@ case "$KOMUT" in
     kur)      cmd_kur "${1:-}"; exit $? ;;
     taban)
         MOTOR="${1:-}"
-        motor_kontrol "$MOTOR"
+        [ -n "$MOTOR" ] && motor_kontrol "$MOTOR"
         docker_var_mi
+        # Kilit BİR KEZ alınır ve bütün tur boyunca tutulur: iki motorun
+        # tabanını aynı anda almak tek sunucuda diski de belleği de ikiye
+        # böler, üstelik gece yedeğiyle çakışır.
         kilit_al
-        case "$MOTOR" in
-            postgresql) pg_taban_al ;;
-            mariadb)    my_taban_al ;;
-        esac
+        if [ -z "$MOTOR" ]; then
+            her_motor_icin "taban" taban_al
+        else
+            case "$MOTOR" in
+                postgresql) pg_taban_al ;;
+                mariadb)    my_taban_al ;;
+            esac
+        fi
         exit $?
         ;;
-    arsivle)  cmd_arsivle "${1:-}"; exit $? ;;
+    arsivle)
+        if [ -z "${1:-}" ]; then
+            docker_var_mi
+            her_motor_icin "arşivleme" cmd_arsivle
+        else
+            cmd_arsivle "$1"
+        fi
+        exit $?
+        ;;
     temizle)  cmd_temizle "${1:-}"; exit $? ;;
     don)
         MOTOR="${1:-}"; shift 2>/dev/null || true

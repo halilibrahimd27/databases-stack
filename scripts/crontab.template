@@ -28,6 +28,60 @@ SHELL=/bin/bash
 # 08:00 — günlük istatistik raporu
 0 8 * * * __STACK_DIR__/scripts/backup.sh stats >> __STACK_DIR__/logs/cron_stats.log 2>&1
 
+# =============================================================================
+# PITR — zamanda bir ana dönme
+# =============================================================================
+# NEDEN ARŞİVLEME AYRI BİR CRON SATIRI:
+# PostgreSQL WAL'ı archive_command ile KENDİ arşivler; MariaDB'de böyle bir
+# şey YOKTUR — binlog arşive yalnız `pitr.sh arsivle` ile düşer. Bu satır
+# olmazsa MariaDB'de PITR "açık" görünür, `durum` bir pencere yazar, ama
+# pencerenin ÜST SINIRI en son elle arşivlenen ana çakılı kalır: gece
+# 03:00'te bozulan veriyi kurtarmak isteyen insan, elindeki en yeni anın
+# haftalar öncesi olduğunu tam o anda öğrenir. Sessizce ölü bir özellik,
+# hiç olmayan özellikten kötüdür.
+#
+# 15 dakika, kurtarılamayacak en uzun süredir (RPO). Kısaltmak ucuz: her
+# koşum yalnız MÜHÜRLENMİŞ binlog dosyalarını kopyalar, aktif dosyaya
+# dokunmaz. Motor kapalıysa çıkış 3 verir ve alarm üretmez.
+*/15 * * * * __STACK_DIR__/scripts/pitr.sh arsivle >> __STACK_DIR__/logs/cron_pitr.log 2>&1
+
+# 01:00 — PITR tabanı. WAL/binlog tek başına veri DEĞİLDİR; bir tabanın
+# üzerine oynatılır. Taban yoksa dönülebilir aralık da yoktur. Ayrıca eski
+# arşiv, ancak daha yeni bir taban varsa silinebilir — tabansız kurulumda
+# arşiv sonsuza kadar büyür.
+# Saat 02:00'deki tam yedekten ÖNCE ve ayrı: ikisi aynı kilidi kullanır,
+# çakışırlarsa biri hiç çalışmaz. Bir saatlik aralık bilerek bırakıldı.
+0 1 * * * __STACK_DIR__/scripts/pitr.sh taban >> __STACK_DIR__/logs/cron_pitr.log 2>&1
+
+# 03:15 — arşivi saklama süresine göre buda. Saklanan tabanların GEREKTİRDİĞİ
+# dosyalara dokunmaz (zinciri kırmak, arşivi tamamen silmekle aynı şeydir).
+# 03:00'teki yedek temizliğinden sonra.
+15 3 * * * __STACK_DIR__/scripts/pitr.sh temizle >> __STACK_DIR__/logs/cron_pitr.log 2>&1
+
+# =============================================================================
+# ÖLÇÜM — yavaş sorgu ve şişkinlik
+# =============================================================================
+# Pazartesi 09:00 — haftanın en pahalı sorguları (TOPLAM süreye göre). Hiçbir
+# şeyi değiştirmez, yalnız yazar. İnsanın haftada bir bakacağı bir dosya,
+# kimsenin bakmadığı gerçek zamanlı bir panodan daha çok iş görür.
+0 9 * * 1 __STACK_DIR__/scripts/slowlog.sh durum >> __STACK_DIR__/logs/cron_slowlog.log 2>&1
+
+# ŞİŞKİNLİK ÖLÇÜMÜ CRON'DA YOK — bilerek. Controller zaten 6 saatte bir
+# ölçüp panele yazıyor; ikinci bir ölçüm aynı sorguları iki kez çalıştırıp
+# hiçbir şey eklemez.
+#
+# GÜVENLİ BAKIM İSTEĞE BAĞLI (yorumu kaldırın). PostgreSQL'de autovacuum
+# zaten çalışır; bu satır onun yetişemediği kurulumlar içindir. VACUUM
+# (ANALYZE) / ANALYZE TABLE tabloyu KİLİTLEMEZ.
+# 30 4 * * 0 __STACK_DIR__/scripts/maintenance.sh bakim postgresql >> __STACK_DIR__/logs/cron_maint.log 2>&1
+# 45 4 * * 0 __STACK_DIR__/scripts/maintenance.sh bakim mariadb >> __STACK_DIR__/logs/cron_maint.log 2>&1
+#
+# AGRESİF BAKIM (--agresif --onayla) BİLEREK ZAMANLANMIYOR: VACUUM FULL /
+# OPTIMIZE TABLE tabloyu TAMAMEN kilitler ve süresi tablo boyutuyla büyür.
+# Gecenin bir yarısı kendiliğinden başlayan, ne kadar süreceği kestirilmemiş
+# bir kilit, çözdüğü sorundan büyük bir sorundur. Panelden, tahmini kilit
+# süresini görüp onaylayarak çalıştırın.
+
 # Pazar 03:30 — 14 günden eski logları temizle
 30 3 * * 0 find __STACK_DIR__/logs -name "*.log" -mtime +14 -delete 2>/dev/null
 

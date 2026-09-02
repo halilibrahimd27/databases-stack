@@ -17,6 +17,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -539,6 +540,23 @@ ck("MariaDB dökümünün çıkış kodu boru hattından ayrı okunuyor",
 # raporluyordu. Akan bir replikada yönün gerçek kanıtı Master_Host'tur.
 ck("MariaDB 'zaten akışta' kısayolu kaynağı da doğruluyor",
    "Master_Host" in _mdb_rep_code)
+
+
+def _sh_fonksiyon(src, ad):
+    """`ad() { ... }` gövdesini olduğu gibi çıkarır — fonksiyonu ÇALIŞTIRARAK
+    sınamak için. Metne bakmak 'öyle yazılmış' der; koşturmak 'öyle davranıyor'
+    der. Kapanış, sütun 0'daki tek '}' ile bulunur (bu depoda kural bu)."""
+    out, inside = [], False
+    for ln in src.splitlines():
+        if not inside and ln.startswith(ad + "()"):
+            inside = True
+            out.append(ln)
+            continue
+        if inside:
+            out.append(ln)
+            if ln == "}":
+                break
+    return chr(10).join(out) if inside else ""
 
 
 def _sh_branch(src, name):
@@ -2584,6 +2602,118 @@ ck("erteleme yokken sonraki deneme = zamanlanmış koşum",
    "deneme=%s koşum=%s not=%s" % (_sch2.get("next_attempt"),
                                   _sch2.get("next_run"),
                                   _sch2.get("attempt_note")))
+
+# =============================================================================
+head("9. PITR zamanlaması — arşivlemeyi kimse çağırmazsa özellik ÖLÜDÜR")
+# =============================================================================
+# PostgreSQL WAL'ı archive_command ile KENDİ arşivler. MariaDB'de böyle bir
+# mekanizma YOK: binlog arşive yalnız `pitr.sh arsivle` çalışınca düşer.
+# Bu satır crontab'dan düşerse `pitr.sh durum` yine bir pencere yazar — ama
+# pencerenin üst sınırı en son elle arşivlenen ana çakılıdır. Özellik "açık"
+# görünür, panel yeşildir, ve bunu öğrenmenin tek yolu kurtarmaya muhtaç
+# olduğunuz gündür. Kontrol ettiğimiz şey tam olarak bu sessiz ölüm.
+_cron = io.open("scripts/crontab.template", encoding="utf-8").read()
+
+
+def _cron_satirlari(parca):
+    """Yorum OLMAYAN, o parçayı içeren cron satırları."""
+    return [ln for ln in _cron.splitlines()
+            if parca in ln and not ln.lstrip().startswith("#")]
+
+
+_arsiv = _cron_satirlari("pitr.sh arsivle")
+ck("crontab şablonunda etkin bir 'pitr.sh arsivle' satırı var",
+   len(_arsiv) == 1, "%d satır" % len(_arsiv))
+
+# Sıklık: günde bir arşivleme, "en fazla 24 saat kaybederim" demektir ve bu
+# PITR'ın varlık sebebini ortadan kaldırır. Dakika alanı */N biçiminde ve
+# N <= 30 olmalı.
+_sik = False
+_rpo = "?"
+if _arsiv:
+    _dk = _arsiv[0].split()[0]
+    if _dk.startswith("*/") and _dk[2:].isdigit():
+        _rpo = int(_dk[2:])
+        _sik = _rpo <= 30
+ck("arşivleme en az yarım saatte bir (RPO üst sınırı)", _sik,
+   "dakika alanı: %s" % (_arsiv[0].split()[0] if _arsiv else "yok"))
+
+_taban = _cron_satirlari("pitr.sh taban")
+ck("etkin bir 'pitr.sh taban' satırı var (WAL tek başına veri değildir)",
+   len(_taban) == 1, "%d satır" % len(_taban))
+ck("etkin bir 'pitr.sh temizle' satırı var (arşiv sonsuza kadar büyümemeli)",
+   len(_cron_satirlari("pitr.sh temizle")) == 1)
+
+# Taban ile gece yedeği AYNI kilidi kullanır. Aynı saate denk gelirlerse
+# biri her gece sessizce hiç çalışmaz — ve "hiç çalışmayan taban", yukarıdaki
+# satırın var olmasıyla aynı sonucu verir: pencere yok.
+_yedek = _cron_satirlari("backup.sh all")
+_ayni_saat = False
+if _taban and _yedek:
+    _ayni_saat = _taban[0].split()[1] == _yedek[0].split()[1]
+ck("taban ile gece yedeği aynı saate denk gelmiyor (ortak kilit)",
+   not _ayni_saat,
+   "taban=%s yedek=%s" % (_taban[0].split()[1] if _taban else "-",
+                          _yedek[0].split()[1] if _yedek else "-"))
+
+# crontab'da '%' satır sonu demektir; kaçırılmamış bir '%' komutu ortasından
+# keser ve cron bunu hata olarak bildirmez.
+ck("şablonda kaçırılmamış '%' yok (cron'da satır sonu anlamına gelir)",
+   all("%" not in ln or "\%" in ln
+       for ln in _cron.splitlines() if not ln.lstrip().startswith("#")))
+
+# --- Motorsuz çağrı: davranış, metin değil ----------------------------------
+# `arsivle`/`taban` motor adı verilmeden çalışabilmeli; yoksa crontab satırı
+# motorları TEK TEK saymak zorunda kalır ve yığına eklenen üçüncü bir PITR
+# motoru sessizce arşivsiz kalır. Aşağıda fonksiyonun KENDİSİ koşturuluyor:
+# çıkış kodu mantığı burada yanlışsa, kapalı bir motor her gece "başarısız"
+# diye alarm üretir (insan alarma bakmayı bırakır) ya da tam tersi, hiç
+# çalışmamış bir arşivleme "tamam" görünür.
+_pitr_src = io.open("scripts/pitr.sh", encoding="utf-8").read()
+ck("pitr.sh: 'arsivle' motorsuz çağrıyı karşılıyor",
+   "her_motor_icin \"arşivleme\" cmd_arsivle" in _pitr_src)
+ck("pitr.sh: 'taban' motorsuz çağrıyı karşılıyor",
+   "her_motor_icin \"taban\" taban_al" in _pitr_src)
+
+_fn = _sh_fonksiyon(_pitr_src, "her_motor_icin")
+ck("her_motor_icin gövdesi bulundu", len(_fn) > 50, "%d karakter" % len(_fn))
+
+if _fn:
+    _senaryo = [
+        # (etiket, motor->rc, beklenen çıkış, gerekçe)
+        ("hepsi yapıldı",        "0 0", 0, "iki motor da arşivlendi"),
+        ("biri düştü",           "0 1", 1, "bir motor düştü — çıkış 1"),
+        ("biri kapalı",          "0 3", 0, "kapalı motor başarısızlık değil"),
+        ("hepsi kapalı",         "3 3", 3, "hiç denenemedi — ölçülemedi (3)"),
+        ("kapalı + düşen",       "3 1", 1, "düşen varsa kapalı onu affetmez"),
+    ]
+    # Kabuk koşum ortamı: motor listesi iki elemanlı, her motorun döneceği
+    # çıkış kodu senaryodan geliyor. Fonksiyonun KENDİSİ (kopyası değil)
+    # pitr.sh'tan çıkarılıp buraya konuyor.
+    _HARNESS = chr(10).join([
+        "set -u",
+        "plog() { :; }",
+        "RCS=(%s)",
+        "I=0",
+        "pitr_motorlari() { printf 'a\nb\n'; }",
+        "sahte() { local r=${RCS[$I]}; I=$((I+1)); return $r; }",
+        "%s",
+        "her_motor_icin test sahte",
+        "exit $?",
+    ])
+    for _ad, _rcs, _bek, _neden in _senaryo:
+        _harness = _HARNESS % (_rcs, _fn)
+        try:
+            _r = subprocess.run(["bash", "-c", _harness],
+                                capture_output=True, timeout=30).returncode
+        except Exception as _e:                     # bash yok / çalıştırılamadı
+            _r = "ölçülemedi (%s)" % _e
+        ck("her_motor_icin · %s → çıkış %d" % (_ad, _bek),
+           _r == _bek, "%s — %s" % (_r, _neden))
+
+_kur = io.open("install.sh", encoding="utf-8").read()
+ck("install.sh şablonu state/crontab olarak üretiyor",
+   "crontab.template" in _kur and "state/crontab" in _kur)
 
 # =============================================================================
 print()
