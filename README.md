@@ -449,9 +449,10 @@ onayında uyarı çıkar.
 
 Çoğu motor iç kullanımda sorunsuzdur. İki başlık dikkat ister:
 
-- **SQL Server** varsayılan `Developer` sürümüyle gelir — **yalnız geliştirme
-  ve test için** ücretsizdir, üretimde kullanmak lisans ihlalidir. Üretim için
-  `MSSQL_PID=Express` (ücretsiz, DB başına 10 GB) ya da satın alınmış lisans.
+- **SQL Server** varsayılan olarak **ücretsiz Express** sürümüyle gelir ve
+  üretimde de kullanılabilir; sınırı veritabanı başına 10 GB ve ~1.4 GB tampon
+  havuzudur. Tüm özellikler gerekiyorsa `MSSQL_PID=Developer` ücretsizdir ama
+  **yalnız geliştirme/test** içindir; üretimde Standard/Enterprise lisansı ister.
 - **MongoDB (SSPL), Elasticsearch (ELv2/SSPL), Redis, Neo4j, MinIO (AGPL)**
   copyleft lisanslıdır. Kendi uygulamanız için kullanmak serbesttir; bu
   motorları üçüncü taraflara **yönetilen servis olarak satarsanız** kaynak açma

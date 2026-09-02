@@ -3,11 +3,12 @@
 > Bu sayfa bilgi amaçlıdır, hukuki tavsiye değildir. Şüphede kalırsanız hukuk
 > biriminize danışın.
 
-Bu yığındaki motorların çoğu iç kullanımda sorunsuzdur. **Dikkat gerektiren iki
-durum** vardır:
+Bu yığın **varsayılan ayarlarıyla** üretimde ücretsiz kullanılabilir; SQL Server
+dahil (Express sürümüyle gelir). **Dikkat gerektiren iki durum** vardır:
 
-1. **SQL Server Developer sürümü üretimde kullanılamaz** — bu bir hukuki
-   yükümlülüktür, teknik bir sınır değil.
+1. **`MSSQL_PID`'i `Developer` yaparsanız o kurulum üretimde kullanılamaz** —
+   bu bir hukuki yükümlülüktür, teknik bir sınır değil. Varsayılan `Express`
+   olduğu için bu ancak bilerek değiştirilirse geçerlidir.
 2. **SSPL / AGPL lisanslı motorları üçüncü taraflara *servis olarak* sunmak**
    kaynak açma yükümlülüğü doğurabilir. Kendi uygulamanız için kullanmak
    serbesttir.
@@ -29,7 +30,7 @@ durum** vardır:
 | **Elasticsearch** | Elastic License 2.0 / SSPL | ⚠️ Copyleft |
 | **Neo4j Community** | GPL-3.0 | ⚠️ Copyleft; kümeleme Enterprise'da |
 | **MinIO** | AGPL-3.0 | ⚠️ Copyleft |
-| **SQL Server** | Developer Edition | ❌ **Üretimde kullanılamaz** |
+| **SQL Server** | Express Edition (varsayılan) | ✅ Ücretsiz — DB başına 10 GB sınırı |
 
 Panelde her kartın altında lisansı görürsünüz; kısıtlı olanlar işaretlenir ve
 aktivasyon onayında uyarı çıkar.
@@ -40,16 +41,28 @@ aktivasyon onayında uyarı çıkar.
 
 ---
 
-## ❌ SQL Server — en önemli madde
+## SQL Server — hangi sürüm gelir?
 
-Varsayılan `MSSQL_PID=Developer`, **yalnız geliştirme ve test için** ücretsizdir.
-Üretimde kullanmak lisans ihlalidir.
+Varsayılan **`MSSQL_PID=Express`**: ücretsizdir ve **üretimde kullanılabilir**.
+Bu yığının hedefi minimum lisans yüküyle çalışan bir kurulum olduğu için
+varsayılan bilerek Express seçildi.
 
-Üretim seçenekleri:
+Express'in sınırları:
+
+| Sınır | Değer |
+|---|---|
+| Veritabanı başına veri | 10 GB |
+| Tampon havuzu (buffer pool) | ~1.4 GB |
+| Kullanılan çekirdek | en fazla 4 |
+
+Bu yüzden panel SQL Server'a en fazla ~3 GB ayırır: Express bundan fazlasını
+zaten kullanamaz, ayırmak diğer motorlardan çalmak olurdu.
+
+Diğer seçenekler:
 
 ```bash
-# Ücretsiz, veritabanı başına 10 GB / 1 GB RAM sınırı
-MSSQL_PID=Express
+# Tüm özellikler açık, ücretsiz — ama YALNIZ geliştirme/test
+MSSQL_PID=Developer
 
 # Satın alınmış lisans
 MSSQL_PID=Standard      # ya da Enterprise

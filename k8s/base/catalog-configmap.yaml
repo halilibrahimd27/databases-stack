@@ -477,7 +477,7 @@ data:
           "name": "SQL Server",
           "icon": "🟥",
           "category": "relational",
-          "summary": "Microsoft SQL Server 2022 Developer. T-SQL iş yükleri.",
+          "summary": "Microsoft SQL Server 2022 Express. T-SQL iş yükleri.",
           "profile": "mssql",
           "primary_service": "mssql",
           "services": [
@@ -519,7 +519,7 @@ data:
           "resources": {
             "min_mb": 2048,
             "share": 0.22,
-            "max_mb": 16384,
+            "max_mb": 3072,
             "overhead_mb": 0,
             "panel_mb": 0,
             "exporter_mb": 0,
@@ -540,7 +540,7 @@ data:
           },
           "plain": {
             "title": "Microsoft dünyası uygulamaları için",
-            "detail": ".NET / Windows tabanlı kurumsal uygulamalar genelde bunu ister. Diğerlerinden daha çok RAM tüketir.",
+            "detail": ".NET / Windows tabanlı kurumsal uygulamalar genelde bunu ister. Ücretsiz Express sürümüyle gelir: veritabanı başına 10 GB'a kadar veri, ~1.4 GB tampon havuzu. Diğerlerinden daha çok RAM tüketir.",
             "badge": null
           },
           "failover": {
@@ -556,10 +556,10 @@ data:
             }
           ],
           "license": {
-            "name": "Developer Edition — YALNIZ GELİŞTİRME/TEST",
-            "free_for_production": false,
-            "note": "⚠️ Varsayılan MSSQL_PID=Developer üretimde KULLANILAMAZ; yalnız geliştirme ve test için ücretsizdir. Üretim için MSSQL_PID=Express (ücretsiz, veritabanı başına 10 GB) ya da Standard/Enterprise lisansı gerekir.",
-            "alternative": "MSSQL_PID=Express (ücretsiz, 10 GB/DB sınırı) ya da satın alınmış lisans"
+            "name": "Express Edition — ücretsiz, üretimde de kullanılabilir",
+            "free_for_production": true,
+            "note": "Varsayılan MSSQL_PID=Express: ücretsizdir ve üretimde kullanılabilir. Sınırları: veritabanı başına 10 GB, ~1.4 GB tampon havuzu, en fazla 4 çekirdek. Tüm özellikler gerekiyorsa MSSQL_PID=Developer ücretsizdir ama YALNIZ geliştirme/test içindir; üretimde Standard/Enterprise lisansı gerekir.",
+            "alternative": "MSSQL_PID=Developer (yalnız geliştirme) ya da Standard/Enterprise (ücretli)"
           }
         },
         {
@@ -1297,5 +1297,5 @@ data:
       ],
       "_sizing_note": "resources.* alanlarını controller/app.py okur. Aktivasyonda: bütçe = toplam RAM - OS payı - çekirdek servisler - zaten açık motorların taahhüdü. min_mb + overhead_mb bütçeye sığmıyorsa aktivasyon REDDEDİLİR. Sığıyorsa limit = clamp(toplam*share, min_mb, max_mb, bütçe) ve tuning kuralları bu limitten türetilip state/tuning.env'e yazılır.",
       "_failover_note": "Otomatik failover tek makinede SÜREÇ/CONTAINER arızasına karşı korur; host'un tamamı düşerse iki kopya da düşer (aynı arıza alanı). Gerçek host arızası koruması için replikayı ikinci bir makinede çalıştırın — docs/FAILOVER.md.",
-      "_license_note": "Lisanslar bilgi amaçlıdır, hukuki tavsiye değildir. Bu yığındaki motorların çoğu iç kullanımda sorunsuzdur; dikkat gerektiren iki durum: (1) SQL Server Developer sürümü ÜRETİMDE kullanılamaz, (2) SSPL/AGPL lisanslı motorları üçüncü taraflara SERVİS olarak sunuyorsanız hukuk biriminize danışın. Ayrıntı: docs/LICENSING.md"
+      "_license_note": "Lisanslar bilgi amaçlıdır, hukuki tavsiye değildir. Bu yığındaki motorlar varsayılan ayarlarıyla üretimde ücretsiz kullanılabilir (SQL Server Express dahil). Dikkat gerektiren iki durum: (1) MSSQL_PID'i Developer yaparsanız o kurulum ÜRETİMDE kullanılamaz, (2) SSPL/AGPL lisanslı motorları üçüncü taraflara SERVİS olarak sunuyorsanız hukuk biriminize danışın. Ayrıntı: docs/LICENSING.md"
     }

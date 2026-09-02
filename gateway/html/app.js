@@ -245,6 +245,10 @@ function stableAttention(eid, st) {
 }
 
 function attention(st) {
+  // Container'ı VAR ama çalışmıyor (restarting/paused): en acil durum.
+  // Sürekli yeniden başlayan bir motor işlemci yakar ve kendiliğinden
+  // düzelmez — kullanıcının onu görüp kapatması gerekir.
+  if (st.present && !st.active) return 0;
   if (st.health === 'unhealthy' || st.failed_over) return 0;
   if (st.health === 'starting') return 1;
   return 2;
@@ -265,20 +269,29 @@ function cardHtml(engine, st) {
   const ports  = (engine.client_ports || []).map((x) => x.port).join(', ');
 
   let badge = '<span class="badge on">Çalışıyor</span>';
-  if (st.health === 'starting') badge = '<span class="badge busy">Başlatılıyor</span>';
+  if (st.present && !st.active) badge = '<span class="badge err">Sorunlu</span>';
+  else if (st.health === 'starting') badge = '<span class="badge busy">Başlatılıyor</span>';
   else if (st.health === 'unhealthy') badge = '<span class="badge err">Sorunlu</span>';
 
   // Kart bilgisi tek satıra indi: kutu içinde tanım listesi yerine
   // “512 MB · port 5432 · yedek kopya çalışıyor”.
   const facts = [];
-  if (st.memory_mb != null) facts.push(mb(st.memory_mb) + ' bellek');
+  if (st.present && !st.active) facts.push('çalışmıyor (' + esc(st.primary_status || '') + ')');
+  else if (st.memory_mb != null) facts.push(mb(st.memory_mb) + ' bellek');
   if (ports) facts.push('port ' + esc(ports));
   if (st.replication_active) facts.push('yedek kopya çalışıyor');
   if (st.auto_failover) facts.push('otomatik devir açık');
 
   // Sayfadaki tek renkli alan: gerçekten dikkat isteyen durum.
   let notice = '';
-  if (st.failed_over) {
+  if (st.present && !st.active) {
+    const kac = (st.stray || []).length;
+    notice = `<p class="card-notice is-err">Container'ı ayakta ama servis
+      çalışmıyor (durum: <b>${esc(st.primary_status || '')}</b>). “Yeniden
+      başlıyor” hâlinde işlemci harcar ve kendiliğinden düzelmez.
+      ${kac ? `Bu motora ait <b>${kac}</b> container hâlâ duruyor. ` : ''}Aşağıdaki
+      <b>Kapat</b> hepsini temizler; verileriniz silinmez.</p>`;
+  } else if (st.failed_over) {
     notice = `<p class="card-notice is-warn">Devir yapıldı — şu an
       <b>${esc(st.primary_service || '')}</b> ana kopya. Uygulamanız aynı adrese
       bağlanmaya devam eder. Rolleri normale döndürmek için aşağıdaki
@@ -386,7 +399,7 @@ function cardHtml(engine, st) {
 /* Kapalı bir motorun taşıdığı bilgi azdır; o yüzden kapladığı yer de azdır.
    Tek satır: ikon, ad, ne işe yaradığı, tahmini bellek, tek düğme.
    Uzun anlatım, port, panel ve lisans satıra tıklanınca açılır. */
-function rowHtml(engine, plan) {
+function rowHtml(engine, plan, st) {
   const p       = engine.plain || {};
   const blocked = plan && !plan.ok;
   const ports   = (engine.client_ports || []).map((x) => x.port).join(', ');
@@ -401,6 +414,14 @@ function rowHtml(engine, plan) {
     : (plan && plan.ok ? `<span class="row-mem">~ ${mb(plan.limit_mb)}</span>` : '');
 
   const lic = engine.license || {};
+
+  // Motor kapalı ama YARDIMCI servisleri (yönetim ekranı, exporter) hâlâ
+  // ayakta olabilir — ana kopya yoksa satırda kalır. Sessizce bellek/işlemci
+  // harcamasınlar diye satırda söylüyoruz ve tek düğmeyle temizletiyoruz.
+  const kalan = ((st || {}).stray || []).length;
+  const artik = kalan
+    ? `<span class="row-mem row-mem-block" title="${esc(((st || {}).stray || []).map((x) => x.service + ' (' + x.status + ')').join(', '))}">${kalan} artık container</span>`
+    : '';
 
   return `
   <li class="row${blocked ? ' is-blocked' : ''}" id="eng-${esc(engine.id)}">
@@ -426,7 +447,12 @@ function rowHtml(engine, plan) {
       </div>
     </details>
     <div class="row-side">
+      ${artik}
       ${mem}
+      ${artik
+        ? `<button class="btn btn-danger" data-act="off" data-id="${esc(engine.id)}"
+             title="Bu motora ait çalışır durumda kalan container'ları kaldırır — veri silinmez">Temizle</button>`
+        : ''}
       <button class="btn btn-open" data-act="on" data-id="${esc(engine.id)}"
         ${blocked ? 'title="Sunucuda yeterli bellek yok — sebebini görmek için tıklayın"' : ''}>Aktif Et</button>
     </div>
@@ -568,7 +594,10 @@ function render() {
     CATALOG.engines.filter((e) => e.category === cat).forEach((e) => ordered.push(e));
   });
 
-  const isOn  = (e) => !!(byId[e.id] || {}).active;
+  // "Açık" = çalışıyor VEYA container'ı hâlâ ayakta. İkincisi eskiden
+  // kapalılar arasında listeleniyordu: panel "kapalı" derken `docker ps`te
+  // canlıydı ve kimse kapatmıyordu (bkz. status() içindeki `present`).
+  const isOn  = (e) => { const s = byId[e.id] || {}; return !!(s.active || s.present); };
   const acik  = ordered.filter(isOn);
   const kapal = ordered.filter((e) => !isOn(e));
 
@@ -612,7 +641,7 @@ function render() {
       if (!list.length) return;
       html += `<h3 class="cat-title" id="cat-${esc(cat)}">${esc(cats[cat])}</h3>`;
       html += `<ul class="rows" aria-labelledby="cat-${esc(cat)}">` +
-        list.map((e) => rowHtml(e, STATE.plans[e.id])).join('') + '</ul>';
+        list.map((e) => rowHtml(e, STATE.plans[e.id], byId[e.id])).join('') + '</ul>';
     });
   }
   html += '</div></section>';

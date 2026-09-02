@@ -21,6 +21,7 @@ Dashboard'daki düğmelerin arkasındaki servis. Üç iş yapar:
 Harici Python bağımlılığı yoktur (yalnız stdlib).
 """
 
+import copy
 import http.server
 import json
 import os
@@ -776,6 +777,46 @@ def engine_preconditions(eid):
                     "MONGO_VERSION=4.4 ve MONGO_SHELL=mongo yapın — 4.4 bu CPU'da "
                     "sorunsuz çalışır." % ver)
     return None
+
+
+def catalog_for_client():
+    """Kataloğu ORTAMA göre uyarlar.
+
+    Şimdilik tek uyarlama SQL Server lisansı. Katalog Express'i (ücretsiz,
+    üretimde kullanılabilir) anlatır çünkü ürünün varsayılanı odur; ama .env
+    içinde MSSQL_PID=Developer yazan eski bir kurulumda panel o kurulumu
+    "üretimde kullanılabilir" diye göstermemeli — Developer sürümü ücretsizdir
+    ama üretimde kullanmak lisans ihlalidir. Kullanıcı kendi .env'ini
+    değiştirdiğinde panelin de doğruyu söylemesi gerekiyor.
+    """
+    data = copy.deepcopy(CATALOG.data)
+    pid = (_dotenv().get("MSSQL_PID") or "Express").strip()
+    for e in data.get("engines", []):
+        if e["id"] != "mssql":
+            continue
+        if pid.lower() == "express":
+            break            # katalogdaki hâli zaten Express'i anlatıyor
+        if pid.lower() == "developer":
+            e["license"] = {
+                "name": "Developer Edition — YALNIZ GELİŞTİRME/TEST",
+                "free_for_production": False,
+                "note": (".env içinde MSSQL_PID=Developer yazıyor. Bu sürüm ücretsizdir "
+                         "ama üretimde kullanmak lisans ihlalidir. Ücretsiz ve üretimde "
+                         "kullanılabilir sürüm için .env'de MSSQL_PID=Express yapın "
+                         "(veritabanı başına 10 GB sınırı)."),
+                "alternative": "MSSQL_PID=Express (ücretsiz, 10 GB/DB) ya da Standard/Enterprise",
+            }
+        else:
+            e["license"] = {
+                "name": "%s Edition — satın alınmış lisans gerekir" % pid,
+                "free_for_production": False,
+                "note": (".env içinde MSSQL_PID=%s yazıyor. Bu sürüm için Microsoft'tan "
+                         "lisans satın alınmış olmalıdır. Ücretsiz seçenek: "
+                         "MSSQL_PID=Express (veritabanı başına 10 GB)." % pid),
+                "alternative": "MSSQL_PID=Express (ücretsiz, 10 GB/DB)",
+            }
+        e["summary"] = e["summary"].replace("Express", pid)
+    return data
 
 
 def plan_all():
@@ -2605,9 +2646,29 @@ def status():
         rep = e.get("replication", {})
         rep_svc = containers.get(rep.get("replica_service")) if rep.get("replica_service") else None
         active = bool(primary and primary["status"] == "running")
+        # "Kapalı" ile "container'ı var ama çalışmıyor" AYNI ŞEY DEĞİL.
+        # Sürekli yeniden başlayan (restarting) bir motor CPU yakar, ama
+        # active=False olduğu için panelde kapalılar listesinde görünüyordu:
+        # ekranda "kapalı", `docker ps`te canlı. Operatör orada olduğunu bile
+        # bilmediği için kapatmıyor da. Artık ayrı bildiriyoruz.
+        present = bool(primary)
+        # active=False iken AYAKTA kalan servisler (yönetim ekranı, exporter,
+        # yükseltilmiş replika...). Kapatma bunları temizler; panelin bunu
+        # gösterebilmesi için listeyi buradan veriyoruz.
+        stray = []
+        if not active:
+            for x in svcs:
+                if x["status"] not in ("absent", "exited", "dead", "created"):
+                    stray.append({"service": x["service"], "status": x["status"]})
+            if rep_svc and rep_svc["status"] not in ("absent", "exited", "dead", "created"):
+                if rep_svc["service"] not in [y["service"] for y in stray]:
+                    stray.append({"service": rep_svc["service"], "status": rep_svc["status"]})
         engines.append({
             "id": e["id"],
             "active": active,
+            "present": present,
+            "primary_status": primary["status"] if primary else "absent",
+            "stray": stray,
             "ready": bool(active and primary["health"] in ("healthy", "none")),
             "health": primary["health"] if primary else "none",
             "services": svcs,
@@ -2713,7 +2774,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not self._authed():
             return self._send(401, {"error": "yetkisiz"})
         if path == "/api/catalog":
-            return self._send(200, CATALOG.data)
+            return self._send(200, catalog_for_client())
         if path == "/api/status":
             return self._send(200, status())
         if path == "/api/plans":

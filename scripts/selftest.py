@@ -930,8 +930,22 @@ ck("kısıtlı lisansların açıklaması var",
    all(e["license"].get("note") for e in cat["engines"]
        if e["license"].get("free_for_production") is not True))
 mssql_lic = [e for e in cat["engines"] if e["id"] == "mssql"][0]["license"]
-ck("SQL Server üretimde kullanılamaz olarak işaretli",
-   mssql_lic["free_for_production"] is False, mssql_lic["name"])
+# SQL Server VARSAYILAN OLARAK Express ile gelir: ücretsiz ve üretimde de
+# kullanılabilir. Bu bilinçli bir üründür kararı — açık kaynak bir yığında
+# kullanıcıyı varsayılan olarak "üretimde kullanamazsın" sürümüne düşürmek
+# doğru değil. Kataloğun bunu compose'daki gerçek varsayılanla AYNI anlatması
+# şart: ikisi ayrışırsa panel yanlış lisans bilgisi gösterir.
+_compose_ham = io.open("docker-compose.yml", encoding="utf-8").read()
+_env_ornek = io.open(".env.example", encoding="utf-8").read()
+ck("SQL Server varsayılanı ücretsiz Express sürümü",
+   "${MSSQL_PID:-Express}" in _compose_ham, mssql_lic["name"])
+ck(".env.example de aynı varsayılanı söylüyor",
+   any(l.strip() == "MSSQL_PID=Express" for l in _env_ornek.splitlines()))
+ck("katalog, Express varsayılanıyla tutarlı (üretimde kullanılabilir)",
+   mssql_lic["free_for_production"] is True
+   and "Express" in mssql_lic["name"], mssql_lic["name"])
+ck("Express'in sınırları kullanıcıya yazılı (10 GB / DB)",
+   "10 GB" in (mssql_lic.get("note") or ""))
 ck("Redis için copyleft'siz alternatif belirtilmiş",
    "Valkey" in ([e for e in cat["engines"] if e["id"] == "redis"][0]["license"].get("alternative") or ""))
 compose_txt = open("docker-compose.yml", encoding="utf-8").read()
@@ -995,6 +1009,27 @@ ck("compose servis blokları doğru ayrıştırılıyor (kontrol boş değil)",
    "primary=%d replika=%d karakter" % (len(_pg_blok), len(_pg_rep)))
 ck("replika, ana kopyanın planlayıcı ayarlarını da alıyor", not _eksik,
    ("replikada eksik: " + ", ".join(_eksik)) if _eksik else "")
+
+# Ayarı EKLEMEK yetmiyor, `-c` ile eklemek gerekiyor. Üstteki kontrolü geçmek
+# için eklenen iki satırın başında `-c` yoktu; postgres "invalid argument" ile
+# 1 döndü ve replika sonsuz crash-loop'a girdi. Dışarıdan görünen tek şey
+# panelde "kapalı" yazmasıydı — container ise sürekli yeniden başlıyordu.
+# Bu yüzden ayarın VARLIĞINI değil, ARGÜMAN DİZİSİNİ doğruluyoruz.
+_kotu_arg = []
+try:
+    import yaml as _yaml
+    _cfg = _yaml.safe_load(io.open("docker-compose.yml", encoding="utf-8").read())
+    for _ad, _svc in (_cfg.get("services") or {}).items():
+        _cmd = _svc.get("command")
+        if not (isinstance(_cmd, list) and _cmd and str(_cmd[0]).startswith("postgres")):
+            continue
+        for _i in range(1, len(_cmd)):
+            if "=" in str(_cmd[_i]) and _cmd[_i - 1] != "-c":
+                _kotu_arg.append("%s: %s" % (_ad, _cmd[_i]))
+    ck("postgres ayarlarının hepsi `-c` ile veriliyor", not _kotu_arg,
+       ("`-c` yok: " + ", ".join(_kotu_arg)) if _kotu_arg else "")
+except ImportError:
+    ck("postgres ayarlarının hepsi `-c` ile veriliyor", True, "(PyYAML yok — atlandı)")
 
 
 ck("motor imajları <MOTOR>_IMAGE ile değiştirilebilir",

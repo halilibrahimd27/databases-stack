@@ -360,6 +360,18 @@ import json,sys
 s=json.load(sys.stdin)
 if s.get("preflight_error"): print("  ⚠ ", s["preflight_error"])
 else: print("  ✓ controller aktivasyona hazır")
+# ARTIK CONTAINER: motor kapalı sayılıyor ama servisleri hâlâ ayakta.
+# Bu sessiz bir yüktür — panelde "kapalı" yazarken `docker ps` doludur ve
+# yeniden başlayan bir container işlemci yakar. Kapatma komutu temizler.
+artik = [(e["id"], e["stray"]) for e in s.get("engines", []) if e.get("stray")]
+if artik:
+    print()
+    print("  ⚠  Kapalı görünen motorların ayakta kalan containerları var:")
+    for eid, sv in artik:
+        print("       %-14s %s" % (eid, ", ".join("%s (%s)" % (x["service"], x["status"]) for x in sv)))
+    print("     Temizlemek için: %s" % " ; ".join("./stack.sh disable %s" % e for e, _ in artik))
+else:
+    print("  ✓ kapalı motorlardan artık container kalmamış")
 '
     fi
 }

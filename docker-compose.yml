@@ -530,7 +530,9 @@ services:
       # varsayılanı 4GB) varsayıp kötü plan seçer — oysa container limiti
       # ~2.4 GB. Bu ürün replikaya ana kopya kadar bellek ayırıyor çünkü
       # "devirden sonra aynı yükü taşıyacak"; ayarların da öyle olması lazım.
+      - -c
       - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE:-1536MB}
+      - -c
       - log_min_duration_statement=2000
       - -c
       - work_mem=${POSTGRES_WORK_MEM:-4MB}
@@ -804,7 +806,14 @@ services:
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: ${MSSQL_PASSWORD:-${DB_PASSWORD}}
-      MSSQL_PID: ${MSSQL_PID:-Developer}
+      # VARSAYILAN EXPRESS. Developer sürümü de ücretsizdir ama YALNIZ
+      # geliştirme/test içindir: üretime çıkan bir kurulumda lisans ihlalidir
+      # ve bunu kimse container'ı açarken hatırlamaz. Express üretimde de
+      # ücretsizdir (veritabanı başına 10 GB, ~1.4 GB tampon havuzu, 4 çekirdek)
+      # — bu yığının hedefi olan iç/küçük iş yükleri için fazlasıyla yeterli.
+      # Daha fazlası gerekiyorsa .env'de MSSQL_PID=Developer (yalnız test) ya da
+      # satın alınmış Standard/Enterprise yazılır.
+      MSSQL_PID: ${MSSQL_PID:-Express}
       # SQL Server'ın kendi bellek tavanı — container limitinin altında tutulur,
       # yoksa motor limiti aşıp cgroup OOM-killer'a yakalanır.
       MSSQL_MEMORY_LIMIT_MB: ${MSSQL_MEMORY_LIMIT_MB:-2048}
