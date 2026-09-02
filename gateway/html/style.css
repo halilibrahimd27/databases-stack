@@ -29,7 +29,7 @@
     13. Alt bilgi
     14. Kurulum sayfası (setup.html — ortak stil dosyası)
     15. Duyarlılık ve erişilebilirlik
-    16. Yedekler bölümü (zamanlama satırı + motor listesi)
+    16. Yedekler sayfası (yedekler.html — zamanlama, liste, geri yükleme)
    ========================================================================== */
 
 /* ---------------------------------------------- 1. Tasarım değişkenleri --- */
@@ -1488,22 +1488,32 @@ main {
   .theme-btn { margin-right: 8px; padding: 5px 9px; }
 }
 
-/* --------------------------------------------- 16. Yedekler bölümü ------- */
-/* Bu bölümün HTML'i app.js tarafından üretiliyor (index.html'de karşılığı
-   yok); burada yalnız görünüm var.
+/* -------------------------------------------- 16. Yedekler sayfası ------- */
+/* Bu bölüm ARTIK AYRI BİR SAYFAYI giydiriyor: yedekler.html + yedekler.js.
+   Daha önce panelin (index.html) içinde bir bölümdü; “Şu an açık” ve “Kapalı”
+   bölgelerinin altında kalıyor, 5 saniyelik yenileme de dosya listesini
+   incelemeyi huzursuz ediyordu. Sınıf adları korundu — çizim mantığı aynı,
+   değişen şey satır düzeni ve geri yüklemenin eklenmesi.
 
-   RENK KURALI BOZULMUYOR: bölümde renk yalnız iki şey için çıkar —
-   zamanlama KAPALIYKEN (sarı) ve son yedek BAŞARISIZKEN (kırmızı). İkisi de
-   kullanıcının bilmemesi pahalıya patlayan durumlar; “3 yedek · 142 MB” gibi
-   her satırda tekrar eden bilgiler gri kalıyor.
+   RENK KURALI BOZULMUYOR: bölümde renk üç şey için çıkar — zamanlama
+   KAPALIYKEN (sarı), son tur ERTELENDİĞİNDE (yine sarı, bkz. .bk-defer) ve
+   son yedek gerçekten BAŞARISIZ olduğunda (kırmızı). Erteleme ile
+   başarısızlık eskiden aynı kırmızıyı paylaşıyordu: “başka bir işlem kilidi
+   tutuyor” diyen geçici bir çakışma ekranda arıza gibi duruyor, kullanıcı da
+   olmayan bir sorunun peşine düşüyordu.
 
    YENİ RENK DEĞİŞKENİ TANIMLANMADI. Bölüm tamamen var olan token'larla
-   (--warn, --err, --border, --surface…) çiziliyor; ikisi de hem açık hem koyu
+   (--warn, --err, --border, --surface…) çiziliyor; hepsi hem açık hem koyu
    temada tanımlı olduğu için koyu tema kendiliğinden doğru çalışıyor ve iki
    koyu tema bloğunun aynı kalmasını isteyen selftest denetimi de bozulmuyor.
    Saat/gün kutuları da native: color-scheme kalıtımla geldiği için tarayıcının
    kendi saat seçici arayüzü koyu temada koyu açılıyor. */
 
+/* Üst bar yapışkan; bölge çıpalarına gelen bir bağlantı, bu kural olmadan
+   başlığı üst barın ALTINA sokuyordu (aynısı .row/.card için de var). */
+.bk-zone { scroll-margin-top: 110px; }
+
+/* --- zamanlama kutusu ---------------------------------------------------- */
 .bk-sched {
   display: flex;
   flex-wrap: wrap;
@@ -1517,7 +1527,7 @@ main {
   background: var(--surface);
 }
 
-/* Zamanlama kapalıyken bölümün tek sarı işareti burası. “KAPALI” kelimesi
+/* Zamanlama kapalıyken kutunun tek sarı işareti burası. “KAPALI” kelimesi
    sayfada nötr okunuyordu; oysa söylediği şey bir risk. */
 .bk-sched.is-off {
   border-color: var(--warn-border);
@@ -1533,6 +1543,7 @@ main {
 
 .bk-last, .bk-next {
   margin: 4px 0 0;
+  max-width: 72ch;
   color: var(--text-2);
   font-size: var(--fs-md);
   line-height: 1.5;
@@ -1546,6 +1557,18 @@ main {
   font-weight: 600;
   overflow-wrap: anywhere;
 }
+
+/* ERTELENMİŞ TUR KIRMIZI DEĞİL.
+   Ekranda “BAŞARISIZ — başka bir işlem kilidi tutuyor” yazıyordu; oysa olan
+   şey şuydu: o dakikada başka bir yedekleme sürüyordu, tur atlandı, ertesi
+   gün yine denenecek. Kırmızı burada yalan söylüyordu — kullanıcı gece
+   yedeğinin bozulduğunu sanıp sunucuya bakmaya gidiyordu. Sarı: “dikkat et
+   ama koşma”. Kalın yazı yalnız durumun ADINDA, cümlenin tamamında değil. */
+.bk-defer {
+  color: var(--warn);
+  overflow-wrap: anywhere;
+}
+.bk-defer b { font-weight: 650; }
 
 .bk-warn {
   margin: 6px 0 0;
@@ -1593,26 +1616,39 @@ main {
   line-height: 1.5;
 }
 
-/* Motor listesi: kapalı motor satırıyla aynı dil — çizgi, ikon, ad, sessiz
-   bilgiler, sağda tek düğme. Kutu ve zebra yok. */
-.bk-list { margin: 18px 0 0; padding: 0; list-style: none; }
+/* --- motor listesi ------------------------------------------------------- */
+.bk-list { margin: 0; padding: 0; list-style: none; }
 
+/* SATIR ARTIK GRID, FLEX DEĞİL.
+   Ekran görüntüsündeki kusurun sebebi buydu: satır flex'ken, tam genişlik
+   isteyen dosya listesi (grid-column: 1 / -1 taşıyan bir <details>) o kuralı
+   uygulayamıyor ve düğmenin yanına sıkışıyordu — “Yedek al” ile “Yedekleri
+   göster” üst üste biniyordu. Sütunlar burada adlarıyla tanımlı: ikon · ad ·
+   bilgiler · düğmeler; her çocuk kendi hücresini AÇIKÇA seçiyor, dosya
+   listesi de kendi satırında tam genişlikte duruyor. Otomatik yerleşime
+   bırakılsaydı dar ekranda aynı çakışma başka bir kılıkta geri gelirdi. */
 .bk-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 22px minmax(120px, 190px) minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
+  column-gap: 12px;
+  row-gap: 4px;
   min-height: var(--row-h);
-  padding: 6px 0;
+  padding: 8px 0;
   border-top: 1px solid var(--border);
 }
 .bk-list > .bk-row:first-child { border-top: 0; }
 .bk-row:hover { background: var(--surface-2); }
 .bk-row:focus-within { background: var(--surface-2); }
 
-.bk-icon { flex: none; width: 20px; text-align: center; font-size: 16px; line-height: 1; }
+.bk-icon  { grid-column: 1; grid-row: 1;
+            width: 20px; text-align: center; font-size: 16px; line-height: 1; }
+.bk-name  { grid-column: 2; grid-row: 1; }
+.bk-facts { grid-column: 3; grid-row: 1; }
+.bk-acts  { grid-column: 4; grid-row: 1; }
+.bk-files { grid-column: 1 / -1; grid-row: 2; }
 
 .bk-name {
-  flex: 0 0 168px;
   min-width: 0;
   font-size: 14.5px;
   font-weight: 600;
@@ -1621,7 +1657,6 @@ main {
 }
 
 .bk-facts {
-  flex: 1 1 auto;
   display: flex;
   flex-wrap: wrap;
   gap: 2px 16px;
@@ -1636,13 +1671,24 @@ main {
    metnin kendisi “hiç yedek yok” diyor. */
 .bk-none { color: var(--warn); font-weight: 600; }
 
-.bk-row .btn { flex: none; margin-left: auto; }
+/* Düğmeler KENDİ SÜTUNUNDA ve kendi kutusunda: ikisi yan yana sığmazsa alt
+   alta geçerler, komşu sütunun üstüne binmezler. */
+.bk-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  justify-self: end;
+}
+.bk-acts .btn { flex: none; white-space: nowrap; }
 
-@media (max-width: 760px) {
-  /* Dar ekranda ad ve bilgiler alt alta; düğme satırın sağında kalır. */
-  .bk-row { flex-wrap: wrap; }
-  .bk-name { flex: 1 1 auto; }
-  .bk-facts { flex: 1 1 100%; margin-left: 32px; padding-bottom: 8px; }
+@media (max-width: 900px) {
+  /* Bilgiler kendi satırına iner; düğmeler ilk satırın sağında kalır. */
+  .bk-row { grid-template-columns: 22px minmax(0, 1fr) auto; }
+  .bk-acts  { grid-column: 3; grid-row: 1; }
+  .bk-facts { grid-column: 2 / -1; grid-row: 2; }
+  .bk-files { grid-column: 1 / -1; grid-row: 3; }
 }
 
 @media (max-width: 640px) {
@@ -1651,29 +1697,28 @@ main {
   .bk-ctrl .btn { margin-left: auto; }
 }
 
-/* Üst bar yapışkan; #backups çıpasına gelen bir bağlantı, bu kural olmadan
-   bölüm başlığını üst barın ALTINA sokuyordu (aynısı .row/.card için de var). */
-.bk-zone { scroll-margin-top: 110px; }
-
-@media print {
-  /* Kâğıda basılan şey listedir: hangi motorun ne zamandan kalma yedeği var.
-     Saat/gün kutuları ve “Yedek al” düğmesi kâğıtta tıklanamaz. */
-  .bk-ctrl, .bk-row .btn { display: none !important; }
+@media (max-width: 560px) {
+  /* Telefonda üç şey alt alta: ad, bilgiler, düğmeler. */
+  .bk-row { grid-template-columns: 22px minmax(0, 1fr); }
+  .bk-facts { grid-column: 2; grid-row: 2; }
+  .bk-acts  { grid-column: 2; grid-row: 3; justify-self: start;
+              justify-content: flex-start; }
+  .bk-files { grid-column: 1 / -1; grid-row: 4; }
 }
 
 /* --- yedek dosyası listesi ------------------------------------------------
-   Satırın ALTINDA açılan liste: motor satırı grid olduğu için liste tüm
-   genişliği kaplasın diye grid-column: 1 / -1. Kaynak rozeti üç durumu
-   ayırır — elle alınan, gecenin turu ve dışarıdan (host cron / komut satırı)
-   gelen. Renk yalnız "dış"ta kullanılıyor: diğer ikisi bizim ürettiğimiz,
-   beklenen şeyler; "dış" ise açıklanması gereken tek durum. */
-.bk-files { grid-column: 1 / -1; margin: 6px 0 0; }
+   Kaynak rozeti üç durumu ayırır — elle alınan, gecenin turu ve dışarıdan
+   (host cron / komut satırı) gelen. Renk yalnız "dış"ta kullanılıyor: diğer
+   ikisi bizim ürettiğimiz, beklenen şeyler; "dış" ise açıklanması gereken
+   tek durum. Her satırın sonundaki düğme o dosyaya geri döner — "son yedek"
+   her zaman istenen yedek değildir. */
+.bk-files { margin: 4px 0 0; padding-left: 34px; }
 .bk-files > .sum { font-size: 12px; color: var(--muted); padding: 4px 0; }
 .bk-flist { list-style: none; margin: 4px 0 0; padding: 0;
             border-top: 1px solid var(--border); }
 .bk-file { display: grid; gap: 10px; align-items: center;
-           grid-template-columns: 90px 62px 1fr auto;
-           padding: 5px 0; border-bottom: 1px solid var(--border);
+           grid-template-columns: 96px 66px minmax(0, 1fr) auto auto;
+           padding: 6px 0; border-bottom: 1px solid var(--border);
            font-size: 12px; }
 .bk-file-when { color: var(--text); white-space: nowrap; }
 .bk-file-kind { justify-self: start; font-size: 11px; padding: 1px 6px;
@@ -1682,8 +1727,44 @@ main {
 .bk-kind-dis { border-color: var(--warn); color: var(--warn); }
 .bk-file-name { color: var(--muted); overflow-wrap: anywhere; }
 .bk-file-size { color: var(--muted); white-space: nowrap; }
-.bk-flist-hint { margin-top: 8px; }
-@media (max-width: 640px) {
-  .bk-file { grid-template-columns: 1fr auto; }
-  .bk-file-name { grid-column: 1 / -1; }
+.bk-file-btn { white-space: nowrap; }
+
+@media (max-width: 720px) {
+  /* Dosya adı kendi satırına geçer; tarih solda, düğme sağda kalır ki
+     “hangi yedeğe dönüyorum” sorusu düğmenin yanında cevaplı olsun. */
+  .bk-file { grid-template-columns: minmax(0, 1fr) auto; }
+  .bk-file-when { grid-column: 1; grid-row: 1; }
+  .bk-file-kind { grid-column: 2; grid-row: 1; justify-self: end; }
+  .bk-file-name { grid-column: 1 / -1; grid-row: 2; }
+  .bk-file-size { grid-column: 1; grid-row: 3; }
+  .bk-file-btn  { grid-column: 2; grid-row: 3; justify-self: end; }
+}
+
+@media (max-width: 560px) {
+  .bk-files { padding-left: 0; }
+}
+
+/* --- geri yükleme onayı ---------------------------------------------------
+   Onay penceresindeki “motor adını yazın” kutusu. Bağlantı bilgilerindeki
+   .copy-row input'undan AYRI: o kutu salt okunur ve gri zeminli, bu ise
+   yazılacak bir alan — aynı görünümü vermek, kullanıcıda içine
+   yazamayacağı izlenimi bırakırdı. */
+.bk-onay { margin-top: 8px; }
+.bk-onay-inp {
+  width: 100%;
+  height: var(--ctl-h);
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-md);
+}
+.bk-onay-inp:focus-visible { border-color: var(--accent); }
+
+@media print {
+  /* Kâğıda basılan şey listedir: hangi motorun ne zamandan kalma yedeği var.
+     Saat/gün kutuları ve düğmeler kâğıtta tıklanamaz. */
+  .bk-ctrl, .bk-acts, .bk-file-btn { display: none !important; }
 }

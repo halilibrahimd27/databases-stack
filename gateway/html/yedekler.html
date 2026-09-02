@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Yedekler — Veritabanı Yönetim Paneli</title>
+<meta name="description" content="Veritabanı yedeklerinin listesi, günlük yedek zamanlaması ve geri yükleme.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💾</text></svg>">
+<link rel="stylesheet" href="style.css">
+<script>
+/* Tema, CSS'ten ÖNCE uygulanıyor — index.html'dekiyle BİREBİR aynı betik.
+   Ayrı sayfa olduğu için kendi kopyasını taşımak zorunda: harici bir dosyaya
+   alınsaydı <script src> CSS'ten sonra çözülür ve koyu tema seçmiş kullanıcı
+   her yenilemede bir an beyaz ekran görürdü. localStorage bazı ortamlarda
+   (gizli pencere, site verisi kapalı) erişimin KENDİSİNDE hata verir; tema
+   tercihi yüzünden sayfanın hiç açılmaması saçma olurdu. */
+try {
+  var t = localStorage.getItem('dbstack-theme');
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+} catch (e) {}
+</script>
+</head>
+<body>
+
+<!-- Üst bar index.html ile AYNI: aynı sınıflar, aynı id'ler (#sys-host
+     #sys-mem #sys-mem-bar #sys-mem-real #sys-disk #sys-cpu) ve aynı tema
+     düğmesi. İki sayfa arasında gidip gelen kullanıcı için başlığın yerinden
+     oynaması, panelden çıkıp başka bir ürüne girmiş hissi veriyordu. -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-icon" aria-hidden="true">💾</span>
+    <div class="brand-txt">
+      <h1>Yedekler</h1>
+      <p class="sub">Kurtarma noktalarınız — ve gerektiğinde geri dönüş.</p>
+    </div>
+  </div>
+
+  <button type="button" class="theme-btn" id="theme-toggle"
+          title="Görünüm: sistem / açık / koyu" aria-label="Görünümü değiştir">
+    <span class="theme-ico" id="theme-ico" aria-hidden="true">◐</span>
+    <span class="theme-txt" id="theme-txt">Sistem</span>
+  </button>
+
+  <div class="sysbar" id="sysbar" role="group" aria-label="Sunucu durumu">
+
+    <div class="sys-item sys-item-mem">
+      <span class="sys-label">Ayrılan bellek</span>
+      <b id="sys-mem">—</b>
+      <div class="meter" role="img" aria-label="Ayrılan bellek">
+        <div class="meter-fill" id="sys-mem-bar"></div>
+      </div>
+      <span class="sys-sub" id="sys-mem-real">—</span>
+    </div>
+
+    <dl class="sys-meta">
+      <div class="sys-meta-item">
+        <dt class="sys-label">Sunucu</dt>
+        <dd id="sys-host">—</dd>
+      </div>
+      <div class="sys-meta-item">
+        <dt class="sys-label">Disk</dt>
+        <dd id="sys-disk">—</dd>
+      </div>
+      <div class="sys-meta-item">
+        <dt class="sys-label">İşlemci</dt>
+        <dd id="sys-cpu">—</dd>
+      </div>
+    </dl>
+
+  </div>
+</header>
+
+<div id="banner" class="banner" role="alert" hidden></div>
+
+<main>
+
+  <div class="toolbar">
+    <span class="legend-tools">
+      <a class="tool-link" href="/" title="Veritabanlarını açıp kapatma ekranı">
+        ← Yönetim paneli</a>
+    </span>
+  </div>
+
+  <section class="intro">
+    <h2>Yedekleriniz burada</h2>
+    <p>
+      Her veritabanının diskteki yedek dosyaları, ne zaman alındıkları ve
+      kaynakları aşağıda. Gecelik yedeğin saati ve kaç gün saklanacağı da
+      buradan ayarlanır.
+    </p>
+    <p class="hint">
+      <b>Bir yedek yalnız geri yüklenebildiği kadar yedektir.</b> Silinen ya da
+      bozulan bir veriyi geri getirmek istediğinizde motorun satırındaki
+      <b>Son yedeğe dön</b> düğmesini kullanın; belirli bir güne dönmek için
+      dosya listesini açıp o satırdaki düğmeye basın.
+    </p>
+  </section>
+
+  <!-- Zamanlama ve motor listesi controller'dan geliyor; controller kapalıyken
+       ya da /api/backups'ı tanımayan eski bir sürümdeyken sayfada boş bir
+       iskelet bırakmak "panel bozuk" diye okunuyordu. O yüzden iki bölge de
+       veri gelene kadar gizli; yerine tek satırlık durum metni duruyor. -->
+  <p class="loading" id="bk-loading">Yükleniyor…</p>
+
+  <section class="zone bk-zone" id="bk-sched-zone" aria-labelledby="bk-sched-title" hidden>
+    <div class="zone-head">
+      <h2 class="zone-title" id="bk-sched-title">Otomatik yedek</h2>
+      <p class="zone-note">Gece kendiliğinden koşan tur.</p>
+    </div>
+    <div class="zone-body" id="bk-sched"></div>
+  </section>
+
+  <section class="zone bk-zone" id="bk-list-zone" aria-labelledby="bk-list-title" hidden>
+    <div class="zone-head" id="bk-list-head">
+      <h2 class="zone-title" id="bk-list-title">Motorlar</h2>
+    </div>
+    <div class="zone-body">
+      <ul class="bk-list" id="bk-list"></ul>
+    </div>
+  </section>
+
+  <section class="footer-note">
+    <h3>Yardımcı bağlantılar</h3>
+    <ul>
+      <li><a href="/">Yönetim paneli</a> — veritabanlarını açıp kapatma.</li>
+      <li><a href="https://github.com/halilibrahimd27/databases-stack" target="_blank" rel="noopener">Belgeler</a>
+          — yedekleme, geri yükleme ve komut satırı kullanımı.</li>
+    </ul>
+  </section>
+</main>
+
+<!-- Onay penceresi — index.html'deki ile aynı iskelet ve aynı id'ler.
+     Geri yükleme onayı motor adını yazdırdığı için pencere gövdesine bir
+     metin kutusu koyuyor; "Devam" düğmesi doğru yazılana kadar kapalı. -->
+<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" hidden>
+  <div class="modal-box">
+    <h3 id="modal-title">…</h3>
+    <div id="modal-body"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="modal-cancel">Vazgeç</button>
+      <button type="button" class="btn btn-primary" id="modal-ok">Devam</button>
+    </div>
+  </div>
+</div>
+
+<!-- İş ilerleme penceresi -->
+<div class="modal" id="job" role="dialog" aria-modal="true" aria-labelledby="job-title" hidden>
+  <div class="modal-box">
+    <h3 id="job-title">İşlem sürüyor…</h3>
+    <p class="job-hint" id="job-hint">
+      İlerleme aşağıda canlı görünür. Pencereyi kapatsanız da iş sunucuda
+      devam eder.
+    </p>
+    <pre class="joblog" id="job-log" tabindex="0" aria-live="polite"></pre>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="job-close" disabled>Kapat</button>
+    </div>
+  </div>
+</div>
+
+<script src="yedekler.js"></script>
+</body>
+</html>

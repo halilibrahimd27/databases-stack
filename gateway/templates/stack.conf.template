@@ -345,6 +345,32 @@ Az önce bir işlem başlattıysanız (aktif etme, kapatma, replika kurma) o iş
         try_files /setup.html =404;
     }
 
+    # Yedekler sayfası — panelin ikinci ekranı. /setup ile aynı desen:
+    # temiz bir adres, arkasında tek bir dosya. try_files şart, çünkü
+    # /yedekler diye bir DOSYA yok; `location /` yalnız $uri'ye baktığı
+    # için adres çubuğuna yazılan /yedekler 404 dönerdi.
+    #
+    # /setup'tan tek farkı var ve bilerek: burada `auth_basic off` YOK.
+    # Sertifika rehberi parolasızdır çünkü kullanıcı tam da sertifikaya
+    # güvenmediği için oraya gelir. Bu sayfa ise diskteki yedek dosyalarının
+    # adını, boyutunu ve tarihini listeler ve üstüne geri yükleme
+    # başlatabilir — yani veriyi silip yerine koyan bir işlemin düğmesi.
+    # Sunucu bloğundaki auth_basic buraya olduğu gibi miras kalıyor;
+    # hiçbir şeyi kapatmıyoruz.
+    #
+    # panel-sso.conf `location /` ile aynı sebeple burada da: kullanıcı
+    # panele /yedekler'i yer iminden ya da adres çubuğundan açarak da
+    # girebilir, tek oturum çerezi ise yalnız girilen sayfada bırakılıyor.
+    # Snippet üç güvenlik başlığını KENDİ İÇİNDE tekrarlıyor (add_header
+    # mirası "hep ya da hiç"tir — bir add_header yazan blok üsttekilerin
+    # hepsini yitirir), o yüzden buraya ayrıca add_header yazmıyoruz;
+    # yazsaydık Set-Cookie ile birlikte gelen o üç başlığı düşürürdük.
+    location = /yedekler {
+        root /usr/share/nginx/html;
+        try_files /yedekler.html =404;
+        include /etc/nginx/snippets/panel-sso.conf;
+    }
+
     location / {
         root  /usr/share/nginx/html;
         index index.html;

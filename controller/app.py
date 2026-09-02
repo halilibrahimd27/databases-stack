@@ -755,6 +755,42 @@ def plan_engine(eid, requested_mb=None):
     return detail
 
 
+def free_budget_mb():
+    """ŞU AN boşta olan bellek: (boş_mb, ayrıntı). Hiçbir servis düşülmez.
+
+    plan_engine'in budget_mb'si bu sorunun cevabı DEĞİLDİR ve olması da
+    gerekmez: orada soru "bu motoru YENİDEN boyutlandırsam ne verebilirim"
+    olduğu için motorun kendi servisleri taahhütten çıkarılır. "Yanına BİR
+    TANE DAHA koyabilir miyim" diye soran taraf (replika kurulumu) o rakamı
+    okuyunca motorun kendi container'larını boşta sanıyordu.
+
+    Ölçülen olay: 15984 MB RAM'de OS payı 3196, çekirdek payı 448 → 12340 MB
+    dağıtılabilirken ayrılan 15087 MB'a çıktı ve panel "%122 aşım" yazdı.
+    Onay, silinmemiş olan 2397+512+64 MB'ı iki kez saymıştı.
+
+    Hesap plan_engine ile BİREBİR aynı sırayı izler (aynı OS oranı, aynı
+    çekirdek payı, aynı docker defteri) — iki sayı birbirini yalanlamasın.
+    """
+    total, _available = host_memory_mb()
+    if total <= 0:
+        # /proc/meminfo okunamadı: sıfır bütçe döndürmek, "yer var" demekten
+        # iyidir — bilinmeyen bir bütçeye replika kurdurmak aşırı taahhüdün
+        # ta kendisi olurdu.
+        return 0, {"host_total_mb": 0, "os_reserve_mb": 0,
+                   "core_reserve_mb": CORE_RESERVE_MB, "committed_mb": 0,
+                   "free_mb": 0}
+    os_reserve = min(max(OS_RESERVE_MIN_MB, int(total * OS_RESERVE_RATIO)),
+                     int(total * 0.6))
+    # Kendi defterimize değil docker'ın söylediğine bakıyoruz: elle konmuş
+    # limitler de taahhüttür ve RAM'i onlar da tüketir.
+    committed = sum(c["memory_mb"] for c in docker_containers()
+                    if c["status"] == "running")
+    free = total - os_reserve - CORE_RESERVE_MB - committed
+    return free, {"host_total_mb": total, "os_reserve_mb": os_reserve,
+                  "core_reserve_mb": CORE_RESERVE_MB,
+                  "committed_mb": committed, "free_mb": free}
+
+
 def _cpu_flags():
     try:
         with open("/proc/cpuinfo") as f:
@@ -2419,16 +2455,32 @@ def do_replication(jid, eid, enable):
                 if c["service"] == prim and c["status"] == "running":
                     prim_mb = c["memory_mb"]
             if prim_mb:
-                p = plan_engine(eid)
-                free = p.get("budget_mb", 0)
+                # plan_engine DEĞİL, free_budget_mb: plan_engine motorun KENDİ
+                # servislerini taahhütten çıkarır ("yeniden boyutlandırsam ne
+                # verebilirim" sorusu). Replika ana kopyanın YERİNE değil
+                # YANINA geliyor; o çıkarma burada sunucuyu aşırı taahhüde
+                # sokuyordu — 15984 MB RAM'de 15087 MB ayrılmış hâlde panel
+                # "%122 aşım" gösterdi. Sayıyı ekleme sorusuna göre soruyoruz.
+                free, bd = free_budget_mb()
                 if free < prim_mb:
-                    return job_done(jid, False, (
-                        "Replika ana kopya kadar bellek ister (%d MB) çünkü devirden "
-                        "sonra aynı yükü taşıyacak; kullanılabilir bütçe %d MB. "
-                        "Başka bir motoru durdurun ya da sunucuya RAM ekleyin."
-                        % (prim_mb, max(free, 0))))
-                job_log(jid, "bütçe uygun: replika %d MB alacak, %d MB kullanılabilir"
-                        % (prim_mb, free))
+                    msg = ("Replika ana kopya kadar bellek ister (%d MB) çünkü "
+                           "devirden sonra aynı yükü taşıyacak; şu an boşta "
+                           "yalnız %d MB var. Toplam %d MB RAM'in %d MB'ı "
+                           "işletim sistemine, %d MB'ı çekirdek servislere, "
+                           "%d MB'ı zaten çalışan container'lara ayrılmış "
+                           "durumda. Başka bir motoru durdurun ya da sunucuya "
+                           "RAM ekleyin."
+                           % (prim_mb, max(free, 0), bd["host_total_mb"],
+                              bd["os_reserve_mb"], bd["core_reserve_mb"],
+                              bd["committed_mb"]))
+                    # Olay günlüğüne de düşüyor: "yedek kopya neden kurulmadı"
+                    # sorusu çoğu zaman iş penceresi kapandıktan sonra
+                    # soruluyor, iş günlüğü ise o zamana kadar budanmış olur.
+                    record_event("replication_blocked", eid, msg,
+                                 level="warning")
+                    return job_done(jid, False, msg)
+                job_log(jid, "bütçe uygun: replika %d MB alacak, şu an boşta "
+                             "%d MB var" % (prim_mb, free))
             st = load_state()
             if os.path.exists(os.path.join(OVERRIDE_DIR, override + ".yml")):
                 st["overrides"] = list(set(st.get("overrides", [])) | {override})
@@ -2659,6 +2711,23 @@ BACKUP_BUSY_MSG = ("Şu anda başka bir yedekleme sürüyor. İki dump aynı and
                    "koşarsa aynı container'ın belleğini iki kez zorlar; "
                    "bitmesini bekleyip tekrar deneyin.")
 
+# BACKUP_LOCK yalnız BU süreçteki işleri sıraya sokar. Betiğin kendi flock'u
+# (state/backup.lock) host'tan başlatılan koşumları da kapsıyor ve alamadığında
+# common.sh'ın acquire_lock'ı şu satırı basıp 1 ile çıkıyor:
+#   "[✗] Başka bir işlem kilidi tutuyor (/project/state/backup.lock). Çıkılıyor."
+# Metni tahmin etmiyoruz, kaynağı scripts/lib/common.sh acquire_lock; renk
+# kodları yok çünkü çıktı boruya yazılıyor (tty değil). Panelde bu çıkış
+# "Son yedek: az önce · BAŞARISIZ — backup.sh çıkış 1" diye kırmızı
+# görünüyordu; oysa o an başka bir yedek/geri yükleme koşuyordu ve kilit tam
+# görevini yapmıştı. Yanlış alarm, gerçek alarmı değersizleştirir.
+BACKUP_LOCK_TEXT = "Başka bir işlem kilidi tutuyor"
+# Ertelenen tur ne kadar sonra yeniden denenir ve bu ne kadar sürdürülür.
+# Hedef DAKİKA geçtiği için tek şansa bırakılamaz: kilidi tutan iş (uzun bir
+# geri yükleme) bittiğinde o günün yedeği hâlâ alınabilmeli. Pencere gün
+# boyu açık kalmaz — akşam alınan "gece yedeği" kullanıcıyı yanıltır.
+BACKUP_RETRY_AFTER = int(os.environ.get("BACKUP_RETRY_AFTER", "600"))
+BACKUP_DEFER_WINDOW = int(os.environ.get("BACKUP_DEFER_WINDOW", "21600"))
+
 
 # Panelde gösterilecek dosya listesinin üst sınırı ve YEDEĞİN KAYNAĞI defteri.
 #
@@ -2767,7 +2836,12 @@ def load_backup_cfg():
     yüzünden bütün zamanlamayı çöpe atmak gerekmiyor.
     """
     cfg = dict(BACKUP_DEFAULTS)
-    cfg.update({"last_run": None, "last_ok": None, "last_error": None})
+    # last_deferred: son turun KOŞMADIĞI, kilit yüzünden ertelendiği an.
+    # last_ok'tan ayrı bir alan, çünkü "yedek alınamadı" ile "sıra bekliyor"
+    # aynı şey değil; ikisini tek alanda toplamak paneli yanlış alarma
+    # sokuyordu.
+    cfg.update({"last_run": None, "last_ok": None, "last_error": None,
+                "last_deferred": None})
     try:
         with open(BACKUP_CFG_FILE, encoding="utf-8") as f:
             raw = f.read()
@@ -2803,6 +2877,9 @@ def load_backup_cfg():
         cfg["last_ok"] = data["last_ok"]
     if isinstance(data.get("last_error"), str):
         cfg["last_error"] = data["last_error"]
+    ld = data.get("last_deferred")
+    if isinstance(ld, (int, float)) and not isinstance(ld, bool):
+        cfg["last_deferred"] = int(ld)
     return cfg
 
 
@@ -2816,6 +2893,7 @@ def save_backup_cfg(cfg):
         "last_run": cfg.get("last_run"),
         "last_ok": cfg.get("last_ok"),
         "last_error": cfg.get("last_error"),
+        "last_deferred": cfg.get("last_deferred"),
     }
     _write_json(BACKUP_CFG_FILE, out)
     return out
@@ -2911,6 +2989,9 @@ def backups_overview():
             "last_run": cfg["last_run"],
             "last_ok": cfg["last_ok"],
             "last_error": cfg["last_error"],
+            # Panel bunu "BAŞARISIZ" değil "ertelendi" diye gösterir: tur
+            # koşmadı, kilit sırayı korudu ve zamanlayıcı yeniden deneyecek.
+            "last_deferred": cfg["last_deferred"],
             "next_run": backup_next_run(cfg),
             "running": BACKUP_LOCK.locked(),
         },
@@ -2918,8 +2999,17 @@ def backups_overview():
     }
 
 
-def _backup_run(args, jl):
-    """backup.sh'ı çalıştırır, çıktısını günlüğe döker: (rc, hata_metni).
+def _backup_run(args, jl, extra_env=None):
+    """backup.sh'ı çalıştırır: (rc, hata_metni, ertelendi).
+
+    `ertelendi`, betiğin İŞ YAPMADAN dosya kilidine takıldığı durumdur
+    (BACKUP_LOCK_TEXT). Bunu ayrı döndürmek zorundayız: çıkış kodu 1, yani
+    "yedek alınamadı" ile aynı; oysa ortada arıza yok, sıra var. Çağıran
+    taraf bunu kırmızı bir başarısızlık olarak göstermemeli.
+
+    `extra_env` betiğe ek ortam verir (geri yüklemede ASSUME_YES=yes).
+    script_env()'in ÜZERİNE yazılır, yerine geçmez — parolalar oradan gelir;
+    yerine geçseydi geri yükleme boş parolayla "Access denied" alırdı.
 
     `bash` ŞART: betik dizi, PIPESTATUS ve `<<<` kullanıyor; busybox sh ile
     çalıştırılırsa hata bile vermeden YANLIŞ davranır — ve bu ürünün yedekleme
@@ -2930,20 +3020,29 @@ def _backup_run(args, jl):
     if not shutil.which("bash"):
         return 1, ("Bu container'da `bash` yok. scripts/backup.sh saf bash "
                    "betiğidir ve busybox sh ile çalıştırılamaz; controller "
-                   "imajına bash eklenmeli (controller/Dockerfile).")
+                   "imajına bash eklenmeli (controller/Dockerfile)."), False
+    env = script_env()
+    if extra_env:
+        env.update(extra_env)
     rc, out, err = run(["bash", BACKUP_SCRIPT] + list(args), cwd=PROJECT_DIR,
-                       timeout=BACKUP_TIMEOUT, env=script_env())
+                       timeout=BACKUP_TIMEOUT, env=env)
     text = (out + err).strip()
     for line in text.splitlines()[-120:]:
         jl(line)
     if rc == RC_TIMEOUT:
         return rc, ("Yedekleme %d saniyede bitmedi ve kesildi; yarım kalmış "
                     "bir dosya kalmış olabilir (backup.sh doğrulamayı "
-                    "geçemeyeni .bozuk diye kenara alır)." % BACKUP_TIMEOUT)
+                    "geçemeyeni .bozuk diye kenara alır)." % BACKUP_TIMEOUT), \
+            False
+    if rc != 0 and BACKUP_LOCK_TEXT in text:
+        return rc, ("Başka bir yedekleme ya da geri yükleme sürüyor "
+                    "(state/backup.lock). Bu koşum veriye HİÇ dokunmadan "
+                    "ertelendi; kilit, iki ağır işin aynı container'da "
+                    "çakışmasını önlüyor."), True
     if rc != 0:
         return rc, ("backup.sh çıkış %d: %s"
-                    % (rc, text[-500:] or "(çıktı yok)"))
-    return 0, None
+                    % (rc, text[-500:] or "(çıktı yok)")), False
+    return 0, None, False
 
 
 def do_backup(jid, eid):
@@ -2989,7 +3088,18 @@ def do_backup(jid, eid):
             before_at = before_latest["epoch"] if before_latest else 0
             basladi = time.time()
             job_log(jid, "%s yedekleniyor…" % engine["name"])
-            rc, err = _backup_run([eid], lambda *m: job_log(jid, *m))
+            rc, err, ertelendi = _backup_run([eid],
+                                             lambda *m: job_log(jid, *m))
+            if ertelendi:
+                # Kilit devredeydi: koşum başlamadı bile. "Başarısız" demek
+                # yanlış alarm olurdu (bkz. BACKUP_LOCK_TEXT); "başarılı" da
+                # diyemeyiz, ortada yeni bir kurtarma noktası yok. İş
+                # ayrı bir bayrakla kapanıyor, panel bunu ayrı gösterir.
+                record_event("backup_deferred", eid,
+                             "%s yedeklenmedi, ertelendi: sunucuda başka bir "
+                             "yedekleme ya da geri yükleme sürüyor. Bittiğinde "
+                             "tekrar deneyin." % engine["name"])
+                return job_done(jid, False, err, {"deferred": True})
             tag_new_backups("elle", basladi, [eid])
             count, _t, latest, _f = backup_stats(eid)
             yeni = (count > before_count
@@ -3022,6 +3132,194 @@ def do_backup(jid, eid):
         lock.release()
 
 
+def backup_script_can_restore(eid):
+    """backup.sh'ta bu motor için gerçekten bir restore_<motor>() var mı?
+
+    Katalogda backup.supported olan her motorun geri yüklemesi YAZILMIŞ
+    değil: Cassandra/Elasticsearch/MinIO gibi motorların snapshot'ları elle
+    geri alınıyor ve betiğin `restore-*` dalı bu durumda 1 ile ölüyor. Çıkış
+    kodu bu ayrımı taşımıyor — 1, "veritabanı yarım kaldı" ile aynı kod. O
+    yüzden fonksiyonu dosyada arıyoruz (script_has_phase ile aynı gerekçe):
+    yoksa hiç çağırmıyor, kullanıcıya yıkıcı olmayan bir cevap veriyoruz.
+
+    Betik okunamıyorsa True: burada karar vermek uydurmak olurdu, cevabı
+    çalıştırma denemesi versin.
+    """
+    try:
+        with open(BACKUP_SCRIPT, encoding="utf-8") as f:
+            return ("restore_%s()" % eid) in f.read()
+    except OSError as e:
+        log("backup.sh okunamadı:", e)
+        return True
+
+
+BACKUP_NO_RESTORE_MSG = (
+    "%s için otomatik geri yükleme yok: scripts/backup.sh'ta restore_%s "
+    "yordamı tanımlı değil (bu motorun anlık görüntüsü elle geri alınır). "
+    "Adımlar için docs/BACKUP.md.")
+
+
+def resolve_backup_file(eid, name):
+    """Uçtan gelen dosya adını backups/<motor>/ altında çözer: (yol, hata).
+
+    Buradaki kontrollerin hepsi, geri yüklemenin VERİ SİLDİĞİ için var:
+    backup.sh'a hangi yolu verirsek onu `gzip -dc … | docker exec …` ile
+    veritabanının üstüne yazıyor. Yani bu fonksiyon, panelden gelen bir
+    dizgenin dosya sisteminde nereye bakabileceğini belirleyen kapıdır.
+
+    • Ad YALNIZ dosya adıdır: basename'i kendisine eşit değilse (a/../b),
+      "." ya da ".." ise reddedilir.
+    • Yol realpath ile çözülür ve backups/<motor>/ altında kaldığı DOĞRULANIR.
+      Dizgi karşılaştırması tek başına yetmez: dizinin içine konmuş bir
+      sembolik link, adında hiç "/" olmadan dışarıyı gösterebilir.
+    • Yalnız .gz kabul edilir. Doğrulamayı geçemeyip ".bozuk" diye kenara
+      alınmış dosya kurtarma noktası DEĞİLDİR; onunla geri yüklemeye başlamak
+      veriyi geri getirmez, sadece yok eder (backup.sh verify_backup'ın
+      varlık sebebi de bu).
+    """
+    ad = name.strip() if isinstance(name, str) else ""
+    if not ad:
+        return None, "Geri yüklenecek dosyanın adı ('file') gerekli."
+    if ad in (".", "..") or ad != os.path.basename(ad) or "\\" in ad \
+            or "\x00" in ad:
+        return None, ("Dosya adı yalnız dosya adı olabilir; dizin ayracı ya "
+                      "da '..' içeremez.")
+    # backups_dir() .env'den GÖRELİ bir yol da dönebilir; betik /project'ten
+    # çalıştığı için (do_backup'taki cwd) göreli yol oraya göre çözülür.
+    # Controller'ın kendi dizini (/app) referans alınsaydı iki taraf farklı
+    # dizine bakardı ve "dosya yok" derken dosya diskte dururdu.
+    kok = os.path.realpath(os.path.join(PROJECT_DIR, backups_dir(), eid))
+    yol = os.path.realpath(os.path.join(kok, ad))
+    if not yol.startswith(kok + os.sep):
+        return None, ("Dosya %s dizininin dışına çıkıyor; geri yükleme yalnız "
+                      "o motorun kendi yedekleriyle yapılır." % kok)
+    if not ad.endswith(".gz"):
+        return None, ("Yalnız .gz uzantılı yedekler geri yüklenir. "
+                      "Doğrulamayı geçemediği için '.bozuk' diye kenara "
+                      "alınmış bir dosya kurtarma noktası değildir.")
+    if not os.path.isfile(yol):
+        return None, "Yedek dosyası bulunamadı: %s" % ad
+    return yol, None
+
+
+def do_restore(jid, eid, filename):
+    """Bir yedek dosyasından geri yükler — do_backup ile aynı iş mekanizması.
+
+    Ayrım şu: bu yol MEVCUT VERİYİ SİLİYOR. backup.sh önce veritabanını
+    düşürüp dosyadan yeniden kuruyor; yarıda kalırsa elde ne eskisi ne
+    yenisi kalır. Bu yüzden kapılar dar: ad doğrulanır, motorun açık olması
+    aranır ve HEM engine_lock HEM BACKUP_LOCK alınır. İkincisi olmasaydı
+    geri yükleme sürerken 02:00 turu yarı yüklenmiş veritabanını "geçerli
+    yedek" diye dosyalayıp uzağa senkronlardı — backup.sh'ın kendi flock'u
+    da tam bu yüzden restore dalında alınıyor.
+    """
+    engine = CATALOG.engine(eid)
+    # HTTP ucu bunları zaten doğruluyor; buradaki kontroller, doğrudan
+    # çağrılan bir iş thread'inin sessizce "devam ediyor" kalmasını önler.
+    if not engine:
+        return job_done(jid, False, "Bilinmeyen motor: %s" % eid)
+    bk = engine.get("backup") or {}
+    if not bk.get("supported"):
+        # Yedeklenmeyen motorun geri yükleyeceği bir dosyası da yoktur.
+        # Sebebi katalog yazıyor; kendi cümlemizi değil onu veriyoruz.
+        return job_done(jid, False, "%s yedeklenmiyor: %s" % (
+            engine["name"],
+            bk.get("note") or "bu motorda yedekleme desteklenmiyor."))
+    if not backup_script_can_restore(eid):
+        return job_done(jid, False,
+                        BACKUP_NO_RESTORE_MSG % (engine["name"], eid))
+    # Ad, uçta doğrulandıktan sonra burada TEKRAR çözülüyor: aradaki
+    # saniyelerde saklama temizliği dosyayı silmiş olabilir ve o dosyayı
+    # betiğe vermek "Dosya yok" ile ölen bir geri yükleme demek.
+    yol, hata = resolve_backup_file(eid, filename)
+    if hata:
+        return job_done(jid, False, hata)
+
+    lock = engine_lock(eid)
+    if not lock.acquire(blocking=False):
+        return job_done(jid, False, BUSY_MSG % engine["name"])
+    try:
+        # Geri yükleme çalışan bir container'ın İÇİNE yazar; kapalı motorda
+        # `docker exec` hedefi yoktur. Ana kopya devirden sonra başka bir
+        # container olabilir, o yüzden topolojiden soruyoruz.
+        prim = current_primary(engine)
+        pstat, _phealth = _health_of(prim)
+        if pstat != "running":
+            return job_done(jid, False,
+                            "%s kapalı (%s) — geri yükleme çalışan bir "
+                            "veritabanına yapılır. Önce motoru aktif edin."
+                            % (engine["name"], pstat))
+        if not BACKUP_LOCK.acquire(blocking=False):
+            return job_done(jid, False, BACKUP_BUSY_MSG)
+        try:
+            ad = os.path.basename(yol)
+            # Olay ÖNCEDEN yazılıyor. İş yarıda kalırsa (container OOM,
+            # controller yeniden başlarsa) günlükte "şu dosyadan geri yükleme
+            # başlatıldı" satırı yine de durur; sonradan yazsaydık tam da
+            # açıklanması gereken durumda hiçbir kayıt olmazdı.
+            record_event("restore_started", eid,
+                         "%s için geri yükleme başlatıldı: %s — mevcut "
+                         "veriler ÜZERİNE YAZILIYOR."
+                         % (engine["name"], ad), level="warning")
+            job_log(jid, "%s geri yükleniyor: %s" % (engine["name"], ad))
+            # ASSUME_YES: betik terminalden "evet" bekler (confirm_restore);
+            # burada okunacak bir terminal yok ve onayı kullanıcı panelde
+            # verdi. Bu değişkeni yalnız bu çağrıya veriyoruz — script_env'e
+            # kalıcı koymak, onay isteyen HER yolu sessizce onaylardı.
+            rc, err, ertelendi = _backup_run(
+                ["restore-%s" % eid, yol], lambda *m: job_log(jid, *m),
+                {"ASSUME_YES": "yes"})
+            if ertelendi:
+                # Kilide takıldı: betik veriye dokunmadan çıktı. Kullanıcıya
+                # "geri yükleme başarısız" demek burada özellikle yanlış
+                # olurdu — veritabanının bozulduğunu düşündürür.
+                record_event("restore_deferred", eid,
+                             "%s geri yüklenmedi, ertelendi: başka bir "
+                             "yedekleme ya da geri yükleme sürüyor. Veriye "
+                             "dokunulmadı." % engine["name"])
+                return job_done(jid, False, err, {"deferred": True})
+            if rc == 0:
+                record_event("restore", eid,
+                             "%s %s dosyasından geri yüklendi; önceki veriler "
+                             "bu dosyanın içeriğiyle değiştirildi."
+                             % (engine["name"], ad), level="warning")
+                return job_done(jid, True)
+            # Başarısız geri yükleme, başarısız yedekten daha ağırdır: yedek
+            # düşerse elde eski kurtarma noktası kalır, burada veritabanının
+            # kendisi yarım kalmış olabilir. "critical" seviyesi bildirimi de
+            # tetikler; bu, sabahı beklemeyecek bir haberdir.
+            record_event("restore_failed", eid,
+                         "%s geri yüklenemedi: %s — veritabanı YARIM kalmış "
+                         "olabilir, durumunu hemen kontrol edin."
+                         % (engine["name"], err), level="critical")
+            return job_done(jid, False, err)
+        finally:
+            BACKUP_LOCK.release()
+    except Exception as e:
+        job_log(jid, "HATA:", repr(e))
+        job_done(jid, False, repr(e))
+    finally:
+        lock.release()
+
+
+def _mark_backup_deferred(cfg, neden):
+    """Zamanlanmış turu 'ertelendi' diye işaretler ve kaydeder.
+
+    last_ok'a DOKUNMAZ: erteleme bir sonuç değil, sıraya girme. Panelde
+    "BAŞARISIZ" yazan kırmızı satır tam olarak bu ayrımın olmamasından
+    doğuyordu — kilit görevini yapmışken kullanıcı yedeğinin bozulduğunu
+    sanıyordu.
+    """
+    cfg = dict(cfg)
+    cfg["last_deferred"] = int(time.time())
+    save_backup_cfg(cfg)
+    record_event("backup_deferred", "tümü",
+                 "Zamanlanmış yedekleme ertelendi: %s. Tur koşmuş sayılmıyor; "
+                 "en geç %d dakika sonra yeniden denenecek."
+                 % (neden, max(1, BACKUP_RETRY_AFTER // 60)))
+    return cfg
+
+
 def _run_scheduled_backup(cfg):
     """Zamanlanmış tur: önce tüm AKTİF motorlar, sonra saklama temizliği.
 
@@ -3033,16 +3331,33 @@ def _run_scheduled_backup(cfg):
     tam da gece bakım penceresinde yapılıyor) aynı gün İKİNCİ bir tur
     başlardı — iki paralel dump, aynı container'ın cgroup'unda çift bellek
     baskısı, yani backup.sh'ın başında anlatılan OOM demek.
+
+    Tek istisna ERTELEME: betik kilide takılıp iş yapmadan çıkarsa tur hiç
+    koşmamıştır ve last_run geri alınır. Aksi halde "aynı gün bir kez"
+    kuralı o günü harcar; kilidi tutan uzun iş bittiğinde bile o gece yedek
+    alınmaz — kaydı tutulan tek şey yanlış bir "BAŞARISIZ" satırı olurdu.
     """
+    onceki_run = cfg.get("last_run")
     cfg = dict(cfg)
     cfg.update({"last_run": int(time.time()), "last_ok": None,
-                "last_error": None})
+                "last_error": None, "last_deferred": None})
     save_backup_cfg(cfg)
     log("zamanlanmış yedekleme başlıyor (saklama: %d gün)"
         % cfg["retention_days"])
 
     basladi = time.time()
-    rc, err = _backup_run(["all"], log)
+    rc, err, ertelendi = _backup_run(["all"], log)
+    if ertelendi:
+        # Ne dosya oluştu ne de temizlik anlamlı: tur başlamadı. Saklama
+        # temizliğini de atlıyoruz, çünkü kilidi tutan iş bir geri yükleme
+        # olabilir ve o sırada dosya silmek işi zorlaştırmaktan başka bir işe
+        # yaramaz — tur yeniden denendiğinde temizlik de onunla gelecek.
+        cfg["last_run"] = onceki_run
+        cfg["last_ok"] = None
+        cfg["last_error"] = None
+        _mark_backup_deferred(cfg, "başka bir yedekleme ya da geri yükleme "
+                                   "state/backup.lock kilidini tutuyordu")
+        return
     # Bu turda oluşan dosyaları "zamanlı" diye işaretle. Panelde elle alınanla
     # gecenin turu ayrı görünsün diye: "dün gece yedek alındı mı" sorusunun
     # cevabı, elle alınmış bir yedeğin varlığıyla karışmamalı.
@@ -3064,8 +3379,13 @@ def _run_scheduled_backup(cfg):
 
     # Temizlik, yedekleme düşse bile çalışır: yedeğin düşme sebebi çoğu zaman
     # diskin dolmasıdır ve tam o durumda temizliği atlamak işi kötüleştirir.
-    rc2, err2 = _backup_run(["clean", str(cfg["retention_days"])], log)
-    if rc2 != 0:
+    rc2, err2, ertelendi2 = _backup_run(["clean", str(cfg["retention_days"])],
+                                        log)
+    # `ertelendi2` de sessizce geçilir: temizlik kilide takıldıysa hiçbir
+    # dosya silinmemiştir ve bu bir arıza değil, sıradır. Bugün clean_old
+    # kilit almıyor — bu dal, betiğin kilit alanına taşınması hâlinde yanlış
+    # alarm üretmemek için duruyor.
+    if rc2 != 0 and not ertelendi2:
         # last_ok'a YANSITMIYORUZ: elde geçerli kurtarma noktaları var, yalnız
         # eskiler birikiyor. Bunu "gece yedeği alınamadı" diye göstermek
         # alarmı yanlış yere çalardı; uyarı olarak olay günlüğüne düşüyor.
@@ -3097,16 +3417,43 @@ def backup_scheduler():
             hm = _parse_hhmm(cfg.get("time"))
             if not hm:
                 continue
-            lt = time.localtime()
-            if (lt.tm_hour, lt.tm_min) != hm:
-                continue
+            now = time.time()
             # Aynı gün ikinci kez koşmaz: hedef dakika 30 sn'lik turlarla en
             # az iki kez yakalanıyor, tur uzun sürerse daha da fazla.
-            if cfg.get("last_run") and _same_local_day(cfg["last_run"],
-                                                       time.time()):
+            # (Ertelenen tur last_run yazmadığı için bu kapıya takılmaz —
+            # koşmamış bir tur "bugün koştu" sayılamaz.)
+            if cfg.get("last_run") and _same_local_day(cfg["last_run"], now):
+                continue
+            dfr = cfg.get("last_deferred") or 0
+            if dfr and now - dfr < BACKUP_RETRY_AFTER:
+                # Az önce ertelendi. Hemen tekrar denemek aynı kilide 30
+                # saniyede bir toslamak ve olay günlüğünü doldurmaktır;
+                # kilidi tutan iş dakikalar sürüyor.
+                continue
+            lt = time.localtime(now)
+            zamani = (lt.tm_hour, lt.tm_min) == hm
+            # İKİNCİ ŞANS: hedef dakika geçmiş olabilir ama tur ertelendiği
+            # için hiç koşmadı. O günün yedeği, kilidi tutan iş bittikten
+            # sonra hâlâ alınabilmeli. Pencere sınırlı: öğleden sonra alınan
+            # bir "gece yedeği" kullanıcının sandığı şey değildir.
+            tekrar = False
+            if dfr and not zamani and _same_local_day(dfr, now):
+                try:
+                    hedef = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday,
+                                         hm[0], hm[1], 0, 0, 0, -1))
+                except (OverflowError, ValueError):
+                    hedef = now
+                tekrar = 0 <= (now - hedef) <= BACKUP_DEFER_WINDOW
+            if not (zamani or tekrar):
                 continue
             if not BACKUP_LOCK.acquire(blocking=False):
-                log("zamanlanmış yedek atlandı: başka bir yedekleme sürüyor")
+                # Controller'ın kendi içinde bir yedek/geri yükleme sürüyor.
+                # Eskiden yalnız log satırıydı: tur sessizce düşüyor, hedef
+                # dakika geçiyor ve o günün yedeği alınmıyordu. Artık bu da
+                # ERTELEME — panel görüyor, zamanlayıcı yeniden deniyor.
+                cfg = _mark_backup_deferred(
+                    cfg, "controller içinde başka bir yedekleme ya da geri "
+                         "yükleme sürüyordu")
                 continue
             try:
                 _run_scheduled_backup(cfg)
@@ -3373,6 +3720,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 jid = new_job("backup", eid)
                 threading.Thread(target=do_backup, daemon=True,
                                  args=(jid, eid)).start()
+                return self._send(202, {"job": jid})
+            if action == "restore":
+                # Geri yükleme VERİ SİLER; gövde İŞ BAŞLAMADAN doğrulanıyor.
+                # Doğrulama do_restore'da da var (doğrudan çağrılabilir), ama
+                # hatalı bir istek "202, iş başladı" cevabı almamalı:
+                # kullanıcı sebebi ekranda görsün.
+                engine = CATALOG.engine(eid)
+                bk = engine.get("backup") or {}
+                if not bk.get("supported"):
+                    return self._send(400, {"error": "%s yedeklenmiyor: %s" % (
+                        engine["name"],
+                        bk.get("note")
+                        or "bu motorda yedekleme desteklenmiyor.")})
+                if not backup_script_can_restore(eid):
+                    return self._send(400, {
+                        "error": BACKUP_NO_RESTORE_MSG % (engine["name"],
+                                                          eid)})
+                _yol, hata = resolve_backup_file(eid, body.get("file"))
+                if hata:
+                    return self._send(400, {"error": hata})
+                jid = new_job("restore", eid)
+                threading.Thread(target=do_restore, daemon=True,
+                                 args=(jid, eid, body.get("file"))).start()
                 return self._send(202, {"job": jid})
             if action in ("replication-enable", "replication-disable"):
                 jid = new_job(action, eid)

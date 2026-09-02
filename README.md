@@ -181,6 +181,7 @@ Hepsi TLS + parola arkasından geçer.
 | Adres | Ne |
 |---|---|
 | `https://<sunucu>/` | Yönetim paneli |
+| `https://<sunucu>/yedekler` | Yedekler ve geri yükleme |
 | `https://<sunucu>:8081…8091` | Veritabanı panelleri (kapalıysa "pasif" sayfası) |
 | `https://<sunucu>:9443/metrics/<motor>` | Prometheus metrikleri |
 | `<sunucu>:3306, 5432, 27017 …` | Uygulamanızın bağlanacağı veritabanı portları |
@@ -213,17 +214,23 @@ Panelin yaptığı her şeyi yapar; aynı otomatik boyutlandırma çalışır.
 
 ## Yedekleme
 
-```bash
-./stack.sh backup                # aktif motorlar (kapalı olanlar atlanır)
-./stack.sh backup mariadb        # tek motor
-./scripts/backup.sh list         # yedekleri listele
-./stack.sh restore mariadb backups/mariadb/full/mariadb_full_20260901.sql.gz
-```
+Panelde **kendi sayfası** var: `https://<sunucu>/yedekler`. Panelin üstündeki
+**Araçlar** satırındaki *Yedekler* bağlantısından açılır; sayfanın başındaki
+**← Yönetim paneli** ile geri dönersiniz. Aynı parolanın, aynı kapının
+arkasındadır — panel neyse o.
 
-**Zamanlama panelden yönetilir.** Panelin altındaki *Yedekler* bölümünden
-açarsınız: saat, saklama süresi ve son koşunun sonucu orada. Zamanlayıcı
-controller'ın içinde çalışır — host'ta root yetkisi, cron kurulumu ya da
-systemd birimi gerektirmez.
+Ayrı sayfa olmasının sebebi şu: yedek listesi motor başına dosya dosya
+büyüyen bir liste. Yönetim panelinin altına sıkıştırıldığında, "dün gece
+yedek alındı mı?" sorusunun cevabı on iki kartın altında, sayfanın
+görünmeyen kısmında kalıyordu.
+
+### Otomatik yedek
+
+Günlük yedek saati ve saklama süresi bu sayfadan ayarlanır; açıp kapatmak tek
+düğme. Zamanlayıcı **controller'ın içinde** çalışır — host'ta root yetkisi,
+cron kurulumu ya da systemd birimi gerektirmez. Son koşumun sonucu
+(başarılıysa ne zaman, başarısızsa **sebebiyle birlikte**) ve sıradakinin
+zamanı aynı yerde yazar.
 
 > Bu, ölçülmüş bir arızanın sonucudur. Önceden `install.sh` yalnız
 > `state/crontab` dosyasını *üretiyor* ve "yüklemek için `crontab state/crontab`"
@@ -232,16 +239,62 @@ systemd birimi gerektirmez.
 > hiç alınmıyordu — bir yedekleme sisteminin verebileceği en kötü sonuç.
 > `./stack.sh doctor` artık zamanlama kapalıysa bunu açıkça söylüyor.
 
-Her motorun kartında ve *Yedekler* bölümünde **"Yedek al"** düğmesi var; elle
-alınan yedek gecelik turu iptal etmez, ek bir kurtarma noktası oluşturur.
+Saklama süresinden eski yedekler temizlik turunda silinir, ama her motorun
+**en yeni birkaç kopyası yaşı ne olursa olsun korunur**: kapalı kalmış bir
+motorun yedeği yenilenmediği için tarih eşiğini geçiyor ve eski sürüm onun
+son kurtarma noktasını da siliyordu.
+
+### Elle yedek
+
+Her motor satırında **Yedek al** düğmesi var (aynısı yönetim panelindeki
+kartlarda da duruyor). Elle alınan yedek gecelik turu iptal etmez, ek bir
+kurtarma noktası oluşturur. Motor kapalıyken düğme tıklanmaz: döküm araçları
+veritabanına bağlanır, kapalı motorda yapacakları bir şey yoktur.
+
 Listede her dosyanın tarihi, boyutu ve **kaynağı** yazar: `elle`, `zamanlı`
-ya da `dış` (host cron'u veya komut satırı).
+ya da `dış` (host cron'u veya komut satırı). Kaynak dosya adından tahmin
+edilmez — controller kendi başlattığı koşumdan sonra oluşan dosyaları
+deftere yazar, deftere girmemiş dosya `dış`tır.
+
+### Geri yükleme
+
+**Artık panelden yapılabiliyor.** Motorun satırındaki **Son yedeğe dön**
+düğmesi en yeni kopyaya döner; belirli bir güne dönmek için **Yedekleri
+göster** ile dosya listesini açıp o satırdaki **Bu yedeğe dön** düğmesini
+kullanırsınız. "Son yedek" her zaman istenen yedek değildir — veriyi bozan
+işlem dün öğlen olmuşsa dönülecek yer ondan önceki kopyadır.
+
+Düğme işi hemen başlatmaz. Açılan onay penceresi ne olacağını yazar —
+*mevcut veriler silinir, veritabanı o dosyadaki hâline döner, o tarihten
+sonra yazılan her şey kaybolur* — ve dönülecek dosyanın adını, tarihini,
+yaşını, boyutunu gösterir. Devam etmek için **motorun adını elinizle
+yazmanız** gerekir; **Geri Yükle** düğmesi doğru yazılana kadar kapalıdır.
+Terminalde `evet` yazarak verdiğiniz onayın panel karşılığı budur: yan yana
+duran düğmeler arasından yanlışına basarak yapılabilecek bir işlem değil.
+
+Dosya, veriye dokunulmadan **önce** doğrulanır. Bozuk ya da yarım bir yedekle
+başlanan geri yükleme veriyi geri getirmez, yalnızca yok eder.
+
+Otomatik geri yükleme beş motorda vardır: **MariaDB, PostgreSQL, MongoDB,
+Redis, SQL Server.** Diğerlerinin yedeği alınır ama geri dönüş motora özgü
+elle bir işlemdir; hangisinde ne yapılacağı [docs/BACKUP.md](docs/BACKUP.md)
+içinde yazıyor.
+
+### Komut satırından
+
+Panel ne yapıyorsa aynısı; ikisi de aynı `scripts/backup.sh`i çağırır.
+
+```bash
+./stack.sh backup                # aktif motorlar (kapalı olanlar atlanır)
+./stack.sh backup mariadb        # tek motor
+./scripts/backup.sh list         # yedekleri listele
+./stack.sh restore mariadb backups/mariadb/full/mariadb_full_20260901.sql.gz
+```
 
 Host cron'unu tercih ederseniz `state/crontab` hâlâ üretiliyor; ikisi birlikte
-koşarsa `backup.sh` kendi kilidiyle çakışmayı önler.
-
-Geri yükleme **panelde yoktur** ve bu bilerek: veriyi silip yerine koyan bir
-işlemdir, sunucuda bilerek çalıştırılır (yukarıdaki `restore` komutu).
+koşarsa `backup.sh` kendi kilidiyle çakışmayı önler. Aynı kilit geri yüklemede
+de tutulur — 02:00 turu, yarım geri yüklenmiş bir veritabanını "geçerli yedek"
+diye döküp uzağa senkronlamasın diye.
 
 Ayrıntı ve motor başına yöntemler: [docs/BACKUP.md](docs/BACKUP.md).
 Uzak depo (Google Drive / S3 / SFTP): [docs/GOOGLE-DRIVE.md](docs/GOOGLE-DRIVE.md).
