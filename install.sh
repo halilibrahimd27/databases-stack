@@ -196,7 +196,21 @@ mkdir -p state certs overrides backups logs \
 #   • mongod (uid 999) replica set keyfile'ını okuyamaz → replica set açılmaz
 # Bu yüzden dizinler geçilebilir; GİZLİ dosyalar tek tek kısıtlanır
 # (server.key 600, mongo-keyfile 400).
-chmod 755 state certs
+chmod 755 certs
+# state/ ve logs/ SETGID (2775). Bu iki dizine İKİ AYRI KİMLİK yazar:
+# controller container'ın içinde root olarak (docker soketine erişmek
+# zorunda), siz ve cron ise buradaki yönetici kullanıcı olarak. Setgid
+# yoksa root'un açtığı dosya root:root/0644 olur ve yönetici o dosyaya bir
+# daha ASLA yazamaz. Sonucu SESSİZDİR: crontab'daki gece işleri
+# ("backup.sh", "pitr.sh taban", "restore-drill.sh") "Kilit dosyası
+# açılamadı" ile düşer, panel kendi yolundan çalışmaya devam ettiği için
+# de kimse fark etmez. Setgid grubu miras verir; grup-yazma bitini
+# betiklerin umask 0002'si ve controller'ın os.umask(0o002)'si sağlar.
+chmod 2775 state logs
+# Kilit dosyası veri TAŞIMAZ; iki kimliğin paylaşabilmesi için 0666. Şimdi
+# açıyoruz ki ilk yazan root olsa bile mod doğru kalsın.
+[ -f state/backup.lock ] || : > state/backup.lock
+chmod 0666 state/backup.lock
 # Yönlendirme tablosu gateway'e dosya olarak bağlanır. Yoksa docker onun yerine
 # bir DİZİN yaratır ve nginx açılmaz — bu yüzden boş da olsa şimdi oluşturuluyor.
 # İçeriğini controller açılışta üretir.

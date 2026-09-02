@@ -268,6 +268,61 @@ print()
 PY
 }
 
+# state/ ve logs/ altındaki dosyalara İKİ AYRI KİMLİK yazar: controller
+# (container'ın içinde root) ve sunucudaki yönetici. Kim önce yazarsa dosya
+# onun olur; 0644/root:root bir dosyaya yönetici bir daha yazamaz. Bunun
+# sonucu SESSİZDİR ve tam olarak şudur: crontab'daki gece işleri
+# (backup.sh, pitr.sh taban, restore-drill.sh, failover-drill.sh) "Kilit
+# dosyası açılamadı" ile düşer, panel kendi yolundan yedek almayı sürdürdüğü
+# için de kimse aylarca fark etmez.
+#
+# Kontrol dosyanın MODUNA değil, GERÇEKTEN YAZILABİLİRLİĞİNE bakar: mod
+# doğru görünüp grup üyeliği eksikse yine yazamayız.
+_paylasilan_yollar() {
+    printf '%s\n' "$STACK_ROOT/state" "$STACK_ROOT/logs"
+    find "$STACK_ROOT/state" "$STACK_ROOT/logs" -maxdepth 1 -type f 2>/dev/null
+}
+
+_yazilamayanlar() {
+    local y
+    while IFS= read -r y; do
+        [ -e "$y" ] || continue
+        [ -w "$y" ] || printf '%s\n' "$y"
+    done < <(_paylasilan_yollar)
+}
+
+cmd_doctor_duzelt() {
+    heading "Paylaşılan dosya izinleri onarılıyor"
+    local grup S=""
+    # Grup, kök dizinin grubu: kurulumda yöneticinin ait olduğu grup budur
+    # (docker host'unda tipik olarak 'docker').
+    grup="$(stat -c '%G' "$STACK_ROOT" 2>/dev/null)" || grup=""
+    [ -n "$grup" ] || die "Kök dizinin grubu okunamadı: $STACK_ROOT"
+    # Root'a ait dosyaları ancak root düzeltebilir.
+    if [ "$(id -u)" != "0" ]; then
+        command -v sudo >/dev/null 2>&1             || die "Bazı dosyalar root'a ait; düzeltmek için root gerekiyor ve sudo yok."
+        S="sudo"
+        log "root'a ait dosyalar var — sudo ile düzeltiliyor"
+    fi
+    # setgid: bundan SONRA açılacak dosyalar grubu miras alır. Tek başına
+    # yetmez (yazma bitini vermez), umask 0002 ile birlikte çalışır.
+    $S chgrp -R "$grup" "$STACK_ROOT/state" "$STACK_ROOT/logs" 2>/dev/null || true
+    $S chmod 2775 "$STACK_ROOT/state" "$STACK_ROOT/logs" || die "Dizin izni değiştirilemedi."
+    $S find "$STACK_ROOT/state" "$STACK_ROOT/logs" -maxdepth 1 -type f         -exec chmod g+w {} + 2>/dev/null || true
+    # Kilit dosyaları veri TAŞIMAZ; iki kimliğin paylaşabilmesi için en geniş
+    # modu hak ederler. Paylaşamazlarsa kilit hiçbir şeyi engellemez olur.
+    $S find "$STACK_ROOT/state" -maxdepth 1 -name '*.lock'         -exec chmod 0666 {} + 2>/dev/null || true
+    local kalan
+    kalan="$(_yazilamayanlar | wc -l)"
+    if [ "$kalan" -eq 0 ]; then
+        ok "paylaşılan dosyaların hepsi yazılabilir"
+    else
+        err "$kalan dosya hâlâ yazılamıyor:"
+        _yazilamayanlar | sed 's/^/    /' >&2
+        return 1
+    fi
+}
+
 cmd_doctor() {
     heading "Sistem kontrolü"
     require_docker && ok "Docker çalışıyor"
@@ -521,6 +576,27 @@ print("__SCHED__ %d" % (1 if s.get("enabled") else 0))
             rm -f /tmp/.bk.$$
         fi
     fi
+
+    # --- Paylaşılan dosyalar gerçekten yazılabilir mi? -----------------------
+    local _kotu
+    _kotu="$(_yazilamayanlar)"
+    if [ -z "$_kotu" ]; then
+        ok "state/ ve logs/ altındaki paylaşılan dosyalar yazılabilir"
+    else
+        err "Bu dosyalara YAZAMIYORSUNUZ (controller root olarak yazmış):"
+        printf '%s\n' "$_kotu" | while IFS= read -r _f; do
+            printf '    %s  (%s)\n' "$_f" "$(stat -c '%U:%G %a' "$_f" 2>/dev/null || echo '?')" >&2
+        done
+        cat >&2 <<'HINT'
+
+    Sonucu sessizdir: crontab'daki gece işleri (backup.sh, pitr.sh taban,
+    restore-drill.sh, failover-drill.sh) "Kilit dosyası açılamadı" ile
+    düşer. Panel kendi yolundan çalışmayı sürdürdüğü için hata görünmez.
+
+    Onarım:  ./stack.sh doctor --duzelt
+
+HINT
+    fi
 }
 
 cmd_help() {
@@ -559,7 +635,8 @@ ${BOLD}Bakım${NC}
   ./stack.sh app-user             Uygulama için kısıtlı kullanıcı oluştur
   ./stack.sh logs <servis>        Son 200 satır log
   ./stack.sh licenses             Motorların lisansları ve kısıtları
-  ./stack.sh doctor               Kurulum sağlık kontrolü
+  ./stack.sh doctor [--duzelt]    Kurulum sağlık kontrolü (--duzelt: paylaşılan
+                                  dosya izinlerini onarır)
   ./stack.sh selftest             Boyutlandırma + API + nginx testleri (docker gerekmez)
   ./stack.sh e2e [paket]          Uçtan uca doğrulama — ÇALIŞAN kuruluma karşı
                                   (veri yazar/siler, devir tetikler; test ortamı için)
@@ -603,7 +680,9 @@ case "${1:-help}" in
                      cmd_failover "$1" "${2:-}" ;;
     events)          cmd_events ;;
     licenses|lisans) cmd_licenses ;;
-    doctor)          cmd_doctor ;;
+    doctor)          shift
+                     if [ "${1:-}" = "--duzelt" ]; then cmd_doctor_duzelt
+                     else cmd_doctor; fi ;;
     selftest|test)   PYTHONIOENCODING=utf-8 python3 scripts/selftest.py ;;
     e2e)             shift; ./scripts/e2e/run.sh "$@" ;;
     up)              compose up -d gateway controller adminer ;;

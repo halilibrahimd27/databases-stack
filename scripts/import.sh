@@ -46,6 +46,10 @@ BACKUP_DIR="${BACKUP_DIR:-$STACK_ROOT/backups}"
 LOG_DIR="${LOG_DIR:-$STACK_ROOT/logs}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/import_$(date +%Y%m%d).log"
+# Günlük dosyası GÜN ADIYLA açılır ve ona hem controller (container'da
+# root) hem de buradaki kullanıcı yazar. İlk yazan sahibi olur; mod
+# açılmazsa ikinci yazan o gün boyunca hiç çalışamaz.
+paylasilan_dosya "$LOG_FILE"
 
 ilog() { printf '[%s] %s\n' "$(date '+%F %T')" "$*" >> "$LOG_FILE"; }
 # Hata + ÇIKIŞ KODU tek yerde. die() her zaman 1 ile çıkar; burada kodun
@@ -1115,7 +1119,8 @@ aktar_mssql() {
 import_kilidi() {
     local f="$STACK_ROOT/state/import-$MOTOR.lock"
     mkdir -p "$(dirname "$f")" 2>/dev/null || true
-    exec 8>>"$f" || cik "$KOD_HATA" "Kilit dosyası açılamadı: $f"
+    paylasilan_dosya "$f" 0666
+    exec 8>>"$f" || cik "$KOD_HATA" "Kilit dosyası açılamadı: $f (sahibi $(stat -c '%U:%G %a' "$f" 2>/dev/null || echo bilinmiyor), siz $(id -un)). Onarım: ./stack.sh doctor --duzelt"
     flock -n 8 || cik "$KOD_HATA" \
         "$MOTOR motoruna süren bir aktarma var. Bitmesini bekleyin:" \
         "$f"

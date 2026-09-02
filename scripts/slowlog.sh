@@ -110,6 +110,10 @@ load_env
 LOG_DIR="${LOG_DIR:-$STACK_ROOT/logs}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/slowlog_$(date +%Y%m%d).log"
+# Günlük dosyası GÜN ADIYLA açılır ve ona hem controller (container'da
+# root) hem de buradaki kullanıcı yazar. İlk yazan sahibi olur; mod
+# açılmazsa ikinci yazan o gün boyunca hiç çalışamaz.
+paylasilan_dosya "$LOG_FILE"
 
 slog() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" \
          | tee -a "$LOG_FILE"; }

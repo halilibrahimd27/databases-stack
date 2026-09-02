@@ -30,6 +30,10 @@ COMPRESSION_LEVEL="${COMPRESSION_LEVEL:-6}"
 BACKUP_EXCLUDE_TABLE_PATTERNS="${BACKUP_EXCLUDE_TABLE_PATTERNS:-telescope% pulse%}"
 LOG_FILE="$LOG_DIR/backup_$(date +%Y%m%d).log"
 mkdir -p "$LOG_DIR"
+# Günlük dosyası GÜN ADIYLA açılır ve ona hem controller (container'da
+# root) hem de buradaki kullanıcı yazar. İlk yazan sahibi olur; mod
+# açılmazsa ikinci yazan o gün boyunca hiç çalışamaz.
+paylasilan_dosya "$LOG_FILE"
 
 # Yedekleme ağır I/O üretir. nice + ionice ile canlı DB trafiği öncelikli kalır
 # (özellikle dönen disk / RAID üzerinde fark eder).

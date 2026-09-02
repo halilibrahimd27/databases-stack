@@ -61,6 +61,10 @@ BACKUP_DIR="${BACKUP_DIR:-$STACK_ROOT/backups}"
 LOG_DIR="${LOG_DIR:-$STACK_ROOT/logs}"
 LOG_FILE="$LOG_DIR/pitr_$(date +%Y%m%d).log"
 mkdir -p "$LOG_DIR"
+# Günlük dosyası GÜN ADIYLA açılır ve ona hem controller (container'da
+# root) hem de buradaki kullanıcı yazar. İlk yazan sahibi olur; mod
+# açılmazsa ikinci yazan o gün boyunca hiç çalışamaz.
+paylasilan_dosya "$LOG_FILE"
 
 # Arşiv ve taban dizinleri YEDEKLERİN ALTINDA. Ayrı bir kök seçseydik
 # (/var/lib/… gibi) iki şey bozulurdu: backup.sh'ın `stats` disk uyarısı
@@ -903,7 +907,11 @@ kilit_al() {
     command -v flock >/dev/null 2>&1 \
         || olcum_yok "flock (util-linux) yok — yedekleme kilidi alınamadı."
     mkdir -p "$(dirname "$KILIT")" 2>/dev/null || true
-    exec 9>>"$KILIT" || olcum_yok "Kilit dosyası açılamadı: $KILIT"
+    # Kilidi controller (container'da root) ile PAYLAŞIYORUZ; modu
+    # açılmazsa iki taraf ayrı kilit tutar ve kilit hiçbir şeyi
+    # engellemez olur.
+    paylasilan_dosya "$KILIT" 0666
+    exec 9>>"$KILIT" || olcum_yok "Kilit dosyası açılamadı: $KILIT (sahibi $(stat -c '%U:%G %a' "$KILIT" 2>/dev/null || echo bilinmiyor), siz $(id -un)). Onarım: ./stack.sh doctor --duzelt"
     flock -n 9 || olcum_yok "Yedekleme kilidi başkasında ($KILIT) — yedekleme, prova ya da geri yükleme sürüyor. HİÇBİR ŞEY YAPILMADI."
 }
 

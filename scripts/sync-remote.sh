@@ -24,6 +24,9 @@ BACKUP_DIR="${BACKUP_DIR:-$STACK_ROOT/backups}"
 LOG_DIR="${LOG_DIR:-$STACK_ROOT/logs}"
 SYNC_LOG="$LOG_DIR/sync_$(date +%Y%m%d).log"
 mkdir -p "$LOG_DIR"
+# Bu günlüğe controller (container'da root) da yazabilir; ilk yazan
+# sahibi olur ve mod açılmazsa ikinci yazan o gün hiç çalışamaz.
+paylasilan_dosya "$SYNC_LOG"
 
 REMOTE_SYNC_ENABLED="${REMOTE_SYNC_ENABLED:-false}"
 RCLONE_REMOTE_NAME="${RCLONE_REMOTE_NAME:-gdrive}"

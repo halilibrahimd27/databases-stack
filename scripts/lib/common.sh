@@ -29,6 +29,34 @@ while [ -L "$_lib" ]; do _lib="$(readlink "$_lib")"; done
 STACK_ROOT="$(cd "$(dirname "$_lib")/../.." && pwd -P)"
 export STACK_ROOT
 
+# ------------------------------------------------- PAYLAŞILAN DOSYA İZNİ ---
+# state/ ve logs/ altındaki dosyaları İKİ AYRI KİMLİK yazar:
+#   • controller — container'ın İÇİNDE root (docker soketine erişmek için)
+#   • siz / cron  — sunucudaki yönetici kullanıcı
+# Kim önce yazarsa dosya onun olur. Varsayılan umask 022 ile root'un açtığı
+# dosya 0644/root:root olur ve yöneticinin o dosyaya bir daha ASLA yazamaz.
+# Ölçülmüş sonuçları:
+#   • state/backup.lock root'a geçince `backup.sh`, `pitr.sh taban`,
+#     `restore-drill.sh`, `failover-drill.sh` — hepsi "Kilit dosyası
+#     açılamadı" ile ÖLÇÜLEMEDİ döner. Yani gece cron'u sessizce hiç
+#     yedek almaz; panel yedek aldığı için de kimse fark etmez.
+#   • logs/ altındaki günlük dosyaları GÜN ADIYLA açılır
+#     (restore-drill_20260902.log). Controller o gün provayı bir kez
+#     çalıştırdıysa, aynı gün elle çalıştırılan prova log dosyasını
+#     açamaz ve düşer.
+# Çözüm iki parçalı: yeni dosyalar grup-yazılabilir doğsun (umask 0002) ve
+# dizinler setgid olsun (install.sh / stack.sh doctor) ki grup ortak kalsın.
+umask 0002
+
+# Paylaşılan bir dosyayı yaratır ve modunu açar. Sahibi değilsek chmod
+# sessizce düşer — bu bir hata değildir, o durumda zaten yazabiliyoruzdur.
+paylasilan_dosya() {   # <yol> [mod]
+    local f="$1" mod="${2:-0664}"
+    mkdir -p "$(dirname "$f")" 2>/dev/null || true
+    [ -e "$f" ] || : >> "$f" 2>/dev/null || true
+    chmod "$mod" "$f" 2>/dev/null || true
+}
+
 ENV_FILE="${ENV_FILE:-$STACK_ROOT/.env}"
 TUNING_ENV="$STACK_ROOT/state/tuning.env"
 ROLES_ENV="$STACK_ROOT/state/roles.env"
@@ -163,9 +191,19 @@ HINT
 # görür — /tmp container'da ayrı bir dosya sistemidir, orada görmezlerdi.
 acquire_lock() {
     local lockfile="${1:-${STACK_ROOT:-/tmp}/state/databases-stack.lock}"
-    mkdir -p "$(dirname "$lockfile")" 2>/dev/null || true
     command -v flock >/dev/null 2>&1 || die "flock (util-linux) gerekli."
-    exec 9>>"$lockfile" || die "Kilit dosyası açılamadı: $lockfile"
+    # Kilit dosyasının İÇİNDE veri yoktur; herkese yazılabilir olması bir
+    # sır sızdırmaz. Buradaki tek amaç, controller (root) ile yöneticinin
+    # AYNI kilidi paylaşabilmesi — paylaşamazlarsa ikisi aynı anda yedek
+    # alır ve kilidin var olma sebebi ortadan kalkar.
+    paylasilan_dosya "$lockfile" 0666
+    if ! exec 9>>"$lockfile"; then
+        die "Kilit dosyası açılamadı: $lockfile
+  Sahibi: $(stat -c '%U:%G %a' "$lockfile" 2>/dev/null || echo bilinmiyor) · siz: $(id -un)
+  Bu dosyaya controller (container'da root) da yazar; kim önce yazarsa
+  dosya onun olur ve diğeri bir daha açamaz. Onarım:
+    ./stack.sh doctor --duzelt"
+    fi
     if ! flock -n 9; then
         die "Başka bir işlem kilidi tutuyor ($lockfile). Çıkılıyor."
     fi

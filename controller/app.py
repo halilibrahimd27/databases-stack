@@ -5348,7 +5348,28 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
 
 
+def paylasilan_izin(yol, mod=0o664):
+    """state/ ve logs/ altındaki dosyaları controller (container'da root) ile
+    sunucudaki yönetici PAYLAŞIR. Kim önce yazarsa dosya onun olur; varsayılan
+    umask ile root'un açtığı dosya 0644/root:root olur ve yönetici o dosyaya
+    bir daha ASLA yazamaz. Ölçülen sonucu: state/backup.lock root'a geçtiğinde
+    `backup.sh`, `pitr.sh taban`, `restore-drill.sh` ve `failover-drill.sh`
+    "Kilit dosyası açılamadı" ile düşüyor — yani crontab'daki gece işleri
+    sessizce hiç çalışmıyor, panel kendi yolundan yedek aldığı için de kimse
+    fark etmiyor. Sahibi biz değilsek chmod düşer; sorun değil, o durumda
+    dosya zaten bizim değildir."""
+    try:
+        os.chmod(yol, mod)
+    except OSError:
+        pass
+
+
 def main():
+    # Yeni dosyalar GRUP-YAZILABİLİR doğsun. Dizinler setgid olduğu için
+    # (install.sh / stack.sh doctor --duzelt) grup ortak kalır ve iki kimlik
+    # aynı dosyaya yazabilir. Tek başına umask yetmez, tek başına setgid de
+    # yetmez — ikisi birlikte gerekir.
+    os.umask(0o002)
     log("backend=%s project=%s stack_dir=%s" % (BACKEND, PROJECT, STACK_DIR or "(boş)"))
     err = preflight()
     if err:

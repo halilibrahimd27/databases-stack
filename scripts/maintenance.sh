@@ -64,6 +64,10 @@ load_env
 LOG_DIR="${LOG_DIR:-$STACK_ROOT/logs}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/maintenance_$(date +%Y%m%d).log"
+# Günlük dosyası GÜN ADIYLA açılır ve ona hem controller (container'da
+# root) hem de buradaki kullanıcı yazar. İlk yazan sahibi olur; mod
+# açılmazsa ikinci yazan o gün boyunca hiç çalışamaz.
+paylasilan_dosya "$LOG_FILE"
 
 # Bakım, yedeklemeyle AYNI kilidi alır. Sebep somut: agresif bakım tabloyu
 # yeniden kurar, mariadb-dump ise --single-transaction ile tutarlı bir
@@ -732,7 +736,11 @@ kilit_al() {
         || olcum_yok "flock (util-linux) yok — bakım ile yedeklemenin" \
                      "çakışmadığı garanti edilemez."
     mkdir -p "$(dirname "$KILIT")" 2>/dev/null || true
-    exec 9>>"$KILIT" || olcum_yok "Kilit dosyası açılamadı: $KILIT"
+    # Kilidi controller (container'da root) ile PAYLAŞIYORUZ; modu
+    # açılmazsa iki taraf ayrı kilit tutar ve kilit hiçbir şeyi
+    # engellemez olur.
+    paylasilan_dosya "$KILIT" 0666
+    exec 9>>"$KILIT" || olcum_yok "Kilit dosyası açılamadı: $KILIT (sahibi $(stat -c '%U:%G %a' "$KILIT" 2>/dev/null || echo bilinmiyor), siz $(id -un)). Onarım: ./stack.sh doctor --duzelt"
     flock -n 9 || olcum_yok "Yedekleme/bakım kilidi başkasında" \
         "($KILIT) — yedekleme, geri yükleme ya da başka bir bakım" \
         "sürüyor. HİÇBİR ŞEY YAPILMADI."
