@@ -144,10 +144,21 @@ HATA=""
 json_bas() {
     [ "$JSON_BASILDI" -eq 1 ] && return 0
     JSON_BASILDI=1
-    printf '{"engine":%s,"file":%s,"ok":%s,"seconds":%s,"restored_tables":%s,"restored_rows":%s,"prod_tables":%s,"prod_rows":%s,"match":%s,"cleanup":%s,"detail":%s}\n' \
-        "$(js "$MOTOR")" "$(js "$DOSYA")" "$OK" "$SANIYE" \
-        "$R_TABLO" "$R_SATIR" "$P_TABLO" "$P_SATIR" "$ESLESME" \
-        "$TEMIZ" "$(js "$DETAY")"
+    local _satir
+    _satir="$(
+        printf '{"engine":%s,"file":%s,"ok":%s,"seconds":%s,"restored_tables":%s,"restored_rows":%s,"prod_tables":%s,"prod_rows":%s,"match":%s,"cleanup":%s,"detail":%s}\n' \
+            "$(js "$MOTOR")" "$(js "$DOSYA")" "$OK" "$SANIYE" \
+            "$R_TABLO" "$R_SATIR" "$P_TABLO" "$P_SATIR" "$ESLESME" \
+            "$TEMIZ" "$(js "$DETAY")"
+    )"
+    printf '%s\n' "$_satir"
+    # SONUÇ TEK DEFTERE DE YAZILIR. Bu satır olmadan komut satırından
+    # koşan prova panelde HİÇ GÖRÜNMÜYORDU: ölçüm yapılmış, sayı
+    # bulunmuş, ama defteri yalnız controller yazdığı için sonuç
+    # kayboluyordu. Kaynağı da yazıyoruz (elle / zamanlı) — yedek
+    # listesindeki kaynak etiketinin aynısı.
+    sonuc_defterine_yaz "$STACK_ROOT/state/drill.json" "$MOTOR" "$_satir" \
+        "${DEFTER_KAYNAK:-elle}" 2>/dev/null || true
 }
 
 # ----------------------------------------------------------------- temizlik -

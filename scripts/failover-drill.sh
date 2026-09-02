@@ -238,9 +238,20 @@ TEMIZ=true
 json_bas() {
     [ "$JSON_BASILDI" -eq 1 ] && return 0
     JSON_BASILDI=1
-    printf '{"engine":%s,"ok":%s,"downtime_seconds":%s,"data_loss":%s,"new_primary":%s,"detail":%s}\n' \
-        "$(js "$MOTOR")" "$OK" "$KESINTI" "$KAYIP" \
-        "$(js_ya_da_null "$YENI_ANA")" "$(js "$DETAY")"
+    local _satir
+    _satir="$(
+        printf '{"engine":%s,"ok":%s,"downtime_seconds":%s,"data_loss":%s,"new_primary":%s,"detail":%s}\n' \
+            "$(js "$MOTOR")" "$OK" "$KESINTI" "$KAYIP" \
+            "$(js_ya_da_null "$YENI_ANA")" "$(js "$DETAY")"
+    )"
+    printf '%s\n' "$_satir"
+    # SONUÇ TEK DEFTERE DE YAZILIR. Bu satır olmadan komut satırından
+    # koşan prova panelde HİÇ GÖRÜNMÜYORDU: ölçüm yapılmış, sayı
+    # bulunmuş, ama defteri yalnız controller yazdığı için sonuç
+    # kayboluyordu. Kaynağı da yazıyoruz (elle / zamanlı) — yedek
+    # listesindeki kaynak etiketinin aynısı.
+    sonuc_defterine_yaz "$STACK_ROOT/state/ha-drill.json" "$MOTOR" "$_satir" \
+        "${DEFTER_KAYNAK:-elle}" 2>/dev/null || true
 }
 
 # =============================================================================

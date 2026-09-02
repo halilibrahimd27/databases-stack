@@ -2570,12 +2570,19 @@ ck("plan rezerveyi motorun gerçek davranışına göre bildiriyor "
 head("8. Yedek zamanlayıcısı — bir sonraki DENEME")
 
 app.BACKUP_CFG_FILE = "/tmp/dbstack-selftest/backup-plan.json"
-_simdi = time.time()
+# ZAMAN ENJEKTE EDİLİYOR, DUVAR SAATİNE BAKILMIYOR. Eskiden _simdi=time.time()
+# idi ve "hedef dakika 2 dk önce geçti" önkoşulu gece yarısını geçerken ÖNCEKİ
+# GÜNE düşüyordu; o zaman "bugün geçti" durumu kurulamıyor ve kontrol ürünü
+# haksız yere suçluyordu. Günde iki dakikalık bir pencerede herkeste kırılan
+# bir test, testin kendi hatasıdır. Sabit bir öğlen anı seçiyoruz: gün sınırı
+# hiçbir yönde işin içine girmiyor.
+_gun_ortasi = time.mktime((2026, 6, 15, 12, 0, 0, 0, 0, -1))
+_simdi = _gun_ortasi
 _lt = time.localtime(_simdi - 120)        # hedef dakika 2 dk önce geçti
 _saat = "%02d:%02d" % (_lt.tm_hour, _lt.tm_min)
 app.save_backup_cfg({"enabled": True, "time": _saat, "retention_days": 7,
                      "last_deferred": int(_simdi - 60)})
-_sch = app.backups_overview().get("schedule", {})
+_sch = app.backups_overview(now=_simdi).get("schedule", {})
 _na, _nr = _sch.get("next_attempt"), _sch.get("next_run")
 _sinir = app.BACKUP_RETRY_AFTER + 120
 ck("ertelenen turdan sonra bir sonraki DENEME yakında (24 saat sonrası değil)",
@@ -2595,7 +2602,7 @@ ck("ertelemenin sebebi kullanıcıya yazılıyor (attempt_note)",
 # denenecek" yazan bir panel, aslında ertesi güne kadar hiçbir şey
 # yapmayacakken kullanıcıyı bekletir.
 app.save_backup_cfg({"enabled": True, "time": _saat, "retention_days": 7})
-_sch2 = app.backups_overview().get("schedule", {})
+_sch2 = app.backups_overview(now=_simdi).get("schedule", {})
 ck("erteleme yokken sonraki deneme = zamanlanmış koşum",
    _sch2.get("next_attempt") == _sch2.get("next_run")
    and _sch2.get("attempt_note") is None,

@@ -3841,6 +3841,10 @@ def backup_stats(eid, root=None):
 # sürdü" diyebilsin. Bir yedekleme sisteminin verebileceği en değerli cümle bu.
 DRILL_SCRIPT = os.path.join(PROJECT_DIR, "scripts", "restore-drill.sh")
 DRILL_FILE = os.path.join(STATE_DIR, "drill.json")
+# İş kimliği → kaynak etiketi. Haftalık zamanlayıcı "zamanlı", panelden
+# tetiklenen "panel", komut satırından koşan (betiğin kendi varsayılanı)
+# "elle" olur. Tek defter, kaynağı yazılı.
+DRILL_KAYNAK = {}
 DRILL_TIMEOUT = int(os.environ.get("DRILL_TIMEOUT", "3600"))
 # Haftalık: prova ucuz değil (ikinci bir veritabanı açıp veri yüklüyor) ama
 # ayda bir de yetmez — iki prova arasında bozulan bir yedek zinciri fark
@@ -3900,8 +3904,13 @@ def do_drill(jid, eid):
     try:
         basladi = time.time()
         job_log(jid, "%s kurtarma provası başlıyor…" % engine["name"])
+        # KAYNAK ETİKETİ. Betik sonucu ortak deftere kendi yazıyor; kimin
+        # tetiklediğini biz söylüyoruz ki panelde "elle mi, zamanlı mı"
+        # ayrımı yedek listesindeki etiketle aynı anlamı taşısın.
+        drill_env = script_env()
+        drill_env["DEFTER_KAYNAK"] = DRILL_KAYNAK.get(jid, "panel")
         rc, out, err = run(["bash", DRILL_SCRIPT, eid], cwd=PROJECT_DIR,
-                           timeout=DRILL_TIMEOUT, env=script_env())
+                           timeout=DRILL_TIMEOUT, env=drill_env)
         metin = (out + err).strip()
         for satir in metin.splitlines()[-120:]:
             job_log(jid, satir)
@@ -4133,13 +4142,15 @@ def do_ha_drill(jid, eid):
         record_event("ha_drill_started", eid,
                      "%s devir provası başlatıldı (gerçek devir)." % engine["name"],
                      level="warning")
+        ha_env = script_env()
+        ha_env["DEFTER_KAYNAK"] = "panel"
         rc, out, err = run(["bash", HADRILL_SCRIPT, eid, "--onayla"],
-                           cwd=PROJECT_DIR, timeout=1800, env=script_env())
+                           cwd=PROJECT_DIR, timeout=1800, env=ha_env)
         metin = (out + err).strip()
         for satir in metin.splitlines()[-150:]:
             job_log(jid, satir)
         d = _son_satir_json(metin)
-        kayit = {"at": int(time.time()), "engine": eid,
+        kayit = {"at": int(time.time()), "engine": eid, "kaynak": "panel",
                  "ok": bool(d) and bool(d.get("ok")),
                  "downtime_seconds": (d or {}).get("downtime_seconds"),
                  "data_loss": (d or {}).get("data_loss"),
@@ -4283,8 +4294,16 @@ def maintenance_refresher():
         time.sleep(600)
 
 
-def backups_overview():
-    """GET /api/backups gövdesi: zamanlama + motor başına yedek özeti."""
+def backups_overview(now=None):
+    """GET /api/backups gövdesi: zamanlama + motor başına yedek özeti.
+
+    `now` yalnız ölçüm içindir. Alt katmanlar (backup_next_run,
+    backup_pending_attempt) zamanı zaten parametre olarak alıyordu; burası
+    almadığı için zamanlama kontrolleri GERÇEK duvar saatine bağlıydı ve
+    gece yarısını geçerken kırılıyordu: hedef dakika 'iki dakika önce'
+    diye kurulduğunda ÖNCEKİ GÜNE düşüyor, 'bugün geçti' önkoşulu
+    kurulamıyor ve kontrol ürünü haksız yere suçluyordu. Günde iki dakikalık
+    bir pencerede herkeste kırılan bir test, testin kendi hatasıdır."""
     cfg = load_backup_cfg()
     root = backups_dir()
     drills = load_drills()
@@ -4312,16 +4331,16 @@ def backups_overview():
             "last_deferred": cfg["last_deferred"],
             "last_success": cfg["last_success"],
             "attempts": int(cfg["attempts"] or 0),
-            "next_run": backup_next_run(cfg),
+            "next_run": backup_next_run(cfg, now),
             # Bir sonraki DENEME. Bekleyen bir deneme (taban yedeği ya da
             # ertelenen/başarısız turun tekrarı) varsa O gösterilir; yoksa
             # zamanlı turun kendisi. "24 saat sonra" ancak gerçekten başarılı
             # bir turdan sonra doğrudur — ölçülen olayda tek deneme kilide
             # takılmıştı ve panel yine de 24 saat sonrasını gösteriyordu.
-            "next_attempt": (backup_pending_attempt(cfg)[0]
-                             or backup_next_run(cfg)),
+            "next_attempt": (backup_pending_attempt(cfg, now)[0]
+                             or backup_next_run(cfg, now)),
             "attempt_note": (cfg["attempt_note"]
-                             or backup_pending_attempt(cfg)[1]),
+                             or backup_pending_attempt(cfg, now)[1]),
             "running": BACKUP_LOCK.locked(),
         },
         "engines": engines,
@@ -4873,8 +4892,12 @@ def _haftalik_prova():
         if simdi - son < DRILL_EVERY_DAYS * 86400:
             continue
         jid = new_job("drill", eid)
+        DRILL_KAYNAK[jid] = "zamanlı"
         log("haftalık kurtarma provası: %s (iş %s)" % (eid, jid))
-        do_drill(jid, eid)      # sırayla: iki prova aynı anda koşmasın
+        try:
+            do_drill(jid, eid)  # sırayla: iki prova aynı anda koşmasın
+        finally:
+            DRILL_KAYNAK.pop(jid, None)
 
 
 def backup_scheduler():

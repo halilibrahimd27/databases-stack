@@ -63,6 +63,49 @@ ROLES_ENV="$STACK_ROOT/state/roles.env"
 COMPOSE_FILE="$STACK_ROOT/docker-compose.yml"
 CATALOG="$STACK_ROOT/catalog.json"
 
+# ------------------------------------------------- ÖLÇÜM SONUCU DEFTERİ ---
+# Bir ölçümü KİMİN çalıştırdığı, sonucun nereye yazılacağını değiştirmemeli.
+# Ölçüldü: `./stack.sh devir-provasi mariadb --onayla` GEÇTİ dedi ve 3.06 sn
+# kesinti ölçtü, ama panel bunu hiç görmedi — state/ha-drill.json yalnız
+# controller yazdığı için komut satırından koşan prova sessizce kayboluyordu.
+# Aynısı kurtarma provası için de geçerliydi. Yedeklerde bu sorun zaten
+# çözülmüştü (kaynak etiketi: elle / zamanlı / dış); provalar da aynı
+# kurala giriyor: TEK DEFTER, kaynağı yazılı.
+#
+# Yazma atomik (geçici dosya + mv) ve dosya PAYLAŞILAN: aynı deftere
+# controller da (container içinde root) yazıyor.
+sonuc_defterine_yaz() {   # <defter-dosyası> <motor> <json-satırı> [kaynak]
+    local dosya="$1" motor="$2" satir="$3" kaynak="${4:-elle}"
+    [ -n "$dosya" ] && [ -n "$motor" ] && [ -n "$satir" ] || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+    paylasilan_dosya "$dosya" 0664
+    DEFTER="$dosya" MOTOR="$motor" SATIR="$satir" KAYNAK="$kaynak" python3 - <<'PY' || return 1
+import json, os, time
+defter = os.environ["DEFTER"]
+motor  = os.environ["MOTOR"]
+kaynak = os.environ["KAYNAK"]
+try:
+    yeni = json.loads(os.environ["SATIR"])
+except ValueError:
+    raise SystemExit(1)
+try:
+    with open(defter, encoding="utf-8") as fh:
+        d = json.load(fh)
+    if not isinstance(d, dict):
+        d = {}
+except Exception:
+    d = {}
+yeni["at"] = int(time.time())
+yeni["engine"] = motor
+yeni["kaynak"] = kaynak
+d[motor] = yeni
+gecici = defter + ".tmp"
+with open(gecici, "w", encoding="utf-8") as fh:
+    json.dump(d, fh, ensure_ascii=False)
+os.replace(gecici, defter)
+PY
+}
+
 # ------------------------------------------------------------ .env okuma ---
 # .env'i SOURCE ETMEZ — içindeki keyfi kabuk kodu çalışmasın diye satır satır
 # ayrıştırır. Ayrıca:
