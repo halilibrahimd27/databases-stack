@@ -1073,6 +1073,20 @@ _dorep = _ctrl_src[_dorep_i:_dorep_i + 6000]
 ck("replika kontrolü plan_engine'in budget_mb'sini KULLANMIYOR",
    "free_budget_mb()" in _dorep and 'p.get("budget_mb"' not in _dorep)
 
+# PITR ARŞİVİ, DEVİRDEN SONRA DA ÇALIŞMALI. Ana kopya devirde replikaya
+# geçiyor ve yazmaları o üretmeye başlıyor; binlog arşiv bağlaması yalnız
+# birincil serviste kalırsa PITR tam da en gerekli anda sessizce durur —
+# arşive hiçbir şey düşmez ve "ne kadar geriye dönebilirim" penceresi devir
+# anında donar. e2e/pitr.sh bunu sahada yakaladı.
+_dc_ham = io.open("docker-compose.yml", encoding="utf-8").read()
+_cfg_yml = _yaml.safe_load(_dc_ham)
+_binlog_olan = [ad for ad, sv in (_cfg_yml.get("services") or {}).items()
+                if any("/binlog-archive" in str(v)
+                       for v in (sv.get("volumes") or []))]
+ck("binlog arşivi hem ana kopyada hem replikada bağlı (devir sonrası da çalışsın)",
+   "mariadb" in _binlog_olan and "mariadb-replica" in _binlog_olan,
+   "bağlı olanlar: %s" % (", ".join(sorted(_binlog_olan)) or "yok"))
+
 # ŞİFRELİ YEDEK ZİNCİRİ TEK PARÇA OLMALI. Şifreleme açıkken dosyalar
 # '.gz.enc' uzantısıyla yazılıyor; zincirin herhangi bir halkası yalnız '.gz'
 # ararsa o kurulum SESSİZCE görünmez olur — panelde "hiç yedek yok", geri

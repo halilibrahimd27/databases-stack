@@ -344,6 +344,14 @@ services:
       --max-connections=${MARIADB_MAX_CONNECTIONS:-200}
     volumes:
       - mariadb_replica_data:/var/lib/mysql
+      # BİNLOG ARŞİVİ REPLİKADA DA ŞART. Devirden sonra ana kopya BU düğüm
+      # olur ve yazmaları o üretir; bağlama yalnız 'mariadb' servisinde
+      # kalırsa PITR tam da en gerekli anda — devirden sonra — sessizce
+      # çalışmaz olur: arşive hiçbir şey düşmez, "ne kadar geriye
+      # dönebilirim" penceresi devir anında donar. e2e/pitr.sh bunu
+      # "mariadb-replica container'ında /binlog-archive bağlaması yok"
+      # diyerek yakaladı.
+      - ${STACK_DIR:-.}/backups/mariadb/binlog:/binlog-archive
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect"]
       interval: 30s
