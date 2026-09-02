@@ -395,7 +395,12 @@ function cardHtml(engine, st) {
     } else if (st.replication_flowing === true) {
       facts.push('yedek kopya akıyor');
     } else {
-      facts.push('yedek kopya çalışıyor');
+      /* ÜÇÜNCÜ DEĞER "İYİ" DEĞİL. Burada eskiden "yedek kopya çalışıyor"
+         yazıyordu; oysa null "henüz ölçemedim" demek. Ölçülmemiş bir
+         güvenceyi olumlu bir cümleyle sunmak, bu panelin engellemeye
+         çalıştığı hatanın ta kendisi — "bilmiyorum" ile "iyi" aynı şey
+         değil. Ölçüm gelene kadar dürüst olan cümle bu. */
+      facts.push('yedek kopya durumu ölçülmedi');
     }
   }
   if (st.auto_failover) facts.push('otomatik devir açık');

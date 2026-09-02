@@ -2854,6 +2854,22 @@ else:
 _ctrl_py = io.open("controller/app.py", encoding="utf-8").read()
 ck("verify_standby zaman aşımında container durumunu da söylüyor",
    "Container ŞU AN ÇALIŞMIYOR" in _ctrl_py and "_son_gunluk" in _ctrl_py)
+
+# --- Replikasyon açıkken yedek YOKSA panel bunu SÖYLEMELİ --------------------
+# Ölçüldü: e2e turundan sonra replikasyon profilleri açık kaldı ama yedek
+# container'lar silinmişti. measure_replication_health o motoru atlıyordu
+# ("yedek kopya yok: söylenecek bir şey de yok"), panel de flowing=null'ı
+# "yedek kopya çalışıyor" diye gösteriyordu — ortada tek bir yedek düğüm
+# yokken. Kullanıcı korunduğunu sanıyor, otomatik devir yükseltecek düğüm
+# bulamıyor. Üçüncü değer ("bilmiyorum") ile "iyi" aynı şey değildir.
+ck("yedek kopya çalışmıyorken 'akmıyor' olarak ölçülüyor",
+   "ÇALIŞMIYOR — replikasyon" in _ctrl_py and '"flowing": False' in _ctrl_py)
+ck("topoloji belirsizken üçüncü değer (null) yazılıyor",
+   "topoloji kaydından yedek düğüm belirlenemedi" in _ctrl_py)
+_pnl = io.open("gateway/html/app.js", encoding="utf-8").read()
+ck("panel ölçülmemiş replikasyonu 'çalışıyor' diye göstermiyor",
+   "yedek kopya durumu ölçülmedi" in _pnl
+   and "facts.push('yedek kopya çalışıyor')" not in _pnl)
 ck("doctor içe aktarma geçici dizinini de kapsıyor",
    ".ice-aktarma" in _st)
 ck("install.sh içe aktarma geçici dizinini açıyor",

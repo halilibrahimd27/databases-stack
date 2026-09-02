@@ -3990,10 +3990,33 @@ def measure_replication_health():
         betik = os.path.join(PROJECT_DIR, "scripts", "failover", eid + ".sh")
         if not os.path.exists(betik) or not shutil.which("bash"):
             continue
+        # REPLİKASYON AÇIKKEN YEDEK KOPYA YOKSA, SÖYLENECEK ÇOK ŞEY VAR.
+        # Eski hâli burada `continue` diyordu ("yedek kopya yok: söylenecek bir
+        # şey de yok"). Sonucu ölçüldü: e2e turundan sonra profiller açık
+        # kalmış ama yedek container'lar silinmişti ve panel
+        # replication_flowing=null gördüğü için "yedek kopya çalışıyor"
+        # yazıyordu — ortada tek bir yedek düğüm yokken. Kullanıcı korunduğunu
+        # sanıyor; otomatik devir de yükseltecek düğüm bulamayacak.
+        acik = rep.get("profile") in load_state().get("profiles", [])
+        if not acik:
+            continue          # replikasyon zaten kurulu değil, iddia da yok
         prim = current_primary(e)
         stby = _standby_service(e, prim)
-        if not stby or stby not in calisan:
-            continue          # yedek kopya yok: söylenecek bir şey de yok
+        if not stby:
+            # Topoloji tutarsız: hangi düğümün yedek olduğunu söyleyemiyoruz.
+            # Bu "iyi" değil, "bilmiyorum" — üçüncü değer olarak yazılıyor.
+            out[eid] = {"at": int(time.time()), "standby": None, "flowing": None,
+                        "detail": "topoloji kaydından yedek düğüm belirlenemedi "
+                                  "(ana kopya: %s) — state/topology.json'a bakın"
+                                  % prim}
+            continue
+        if stby not in calisan:
+            out[eid] = {"at": int(time.time()), "standby": stby, "flowing": False,
+                        "detail": "yedek kopya (%s) ÇALIŞMIYOR — replikasyon "
+                                  "açık görünüyor ama yükseltilecek düğüm yok. "
+                                  "Kurmak için: ./stack.sh replica on %s"
+                                  % (stby, eid)}
+            continue
         rc, o, er = run(["bash", betik, "ready", stby], cwd=PROJECT_DIR,
                         timeout=60, env=script_env())
         out[eid] = {"at": int(time.time()), "standby": stby,
