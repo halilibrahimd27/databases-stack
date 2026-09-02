@@ -2877,6 +2877,26 @@ _pnl = io.open("gateway/html/app.js", encoding="utf-8").read()
 ck("panel ölçülmemiş replikasyonu 'çalışıyor' diye göstermiyor",
    "yedek kopya durumu ölçülmedi" in _pnl
    and "facts.push('yedek kopya çalışıyor')" not in _pnl)
+
+# --- Prova sonuçları TEK DEFTERDE, kaynağı yazılı ----------------------------
+# Ölçüldü: komut satırından koşan devir provası 3.06 sn kesinti ölçtü ama
+# panel görmedi — defteri yalnız controller yazıyordu.
+_ortak = io.open("scripts/lib/common.sh", encoding="utf-8").read()
+ck("common.sh ortak sonuç defteri yazıcısı sunuyor",
+   "sonuc_defterine_yaz()" in _ortak and "os.replace(gecici, defter)" in _ortak)
+for _ad, _dosya in (("failover-drill", "ha-drill.json"), ("restore-drill", "drill.json")):
+    _src = io.open("scripts/%s.sh" % _ad, encoding="utf-8").read()
+    ck("%s.sh sonucunu ortak deftere yazıyor" % _ad,
+       ("state/" + _dosya) in _src and "sonuc_defterine_yaz" in _src)
+# REDDETME BİR SONUÇ DEĞİLDİR: onay verilmediği için yapılmayan prova deftere
+# ok=false diye düşerse panel kırmızı "başarısız" rozeti gösterir — oysa
+# hiçbir şey denenmemiştir. (Bu tam olarak yaşandı ve ölçülerek düzeltildi.)
+_fd = io.open("scripts/failover-drill.sh", encoding="utf-8").read()
+ck("onaysız/kapsam dışı prova sonuç defterine YAZILMIYOR",
+   'case "${CIKIS_KODU:-0}" in 2|5)' in _fd)
+_rd = io.open("scripts/restore-drill.sh", encoding="utf-8").read()
+ck("kapsam dışı kurtarma provası sonuç defterine YAZILMIYOR",
+   'case "${CIKIS_KODU:-0}" in 2)' in _rd)
 ck("doctor içe aktarma geçici dizinini de kapsıyor",
    ".ice-aktarma" in _st)
 ck("install.sh içe aktarma geçici dizinini açıyor",

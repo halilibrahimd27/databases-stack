@@ -157,6 +157,7 @@ json_bas() {
     # bulunmuş, ama defteri yalnız controller yazdığı için sonuç
     # kayboluyordu. Kaynağı da yazıyoruz (elle / zamanlı) — yedek
     # listesindeki kaynak etiketinin aynısı.
+    case "${CIKIS_KODU:-0}" in 2) return 0 ;; esac
     sonuc_defterine_yaz "$STACK_ROOT/state/drill.json" "$MOTOR" "$_satir" \
         "${DEFTER_KAYNAK:-elle}" 2>/dev/null || true
 }
@@ -212,6 +213,10 @@ trap 'DETAY="prova kullanıcı tarafından kesildi (Ctrl+C)"; exit 130' INT TERM
 bitir() {   # bitir <çıkış kodu>
     local kod="$1"
     if ! temizle; then [ "$kod" -eq 0 ] && kod=4; fi
+    # Çıkış kodu json_bas tarafından okunur: KAPSAM DIŞI (2) bir prova
+    # sonucu değildir ve sonuç defterine girmemeli. Ölçülemedi (3) ise
+    # gerçek bir sonuçtur — "bilmiyorum" da bir cevaptır ve yazılır.
+    CIKIS_KODU="$kod"
     json_bas
     exit "$kod"
 }

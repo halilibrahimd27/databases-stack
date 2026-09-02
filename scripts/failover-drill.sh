@@ -249,7 +249,9 @@ json_bas() {
     # koşan prova panelde HİÇ GÖRÜNMÜYORDU: ölçüm yapılmış, sayı
     # bulunmuş, ama defteri yalnız controller yazdığı için sonuç
     # kayboluyordu. Kaynağı da yazıyoruz (elle / zamanlı) — yedek
-    # listesindeki kaynak etiketinin aynısı.
+    # listesindeki kaynak etiketinin aynısı. Reddetme hâllerinde (2, 5)
+    # YAZILMAZ: denenmemiş bir prova sonuç defterine girmemeli.
+    case "${CIKIS_KODU:-0}" in 2|5) return 0 ;; esac
     sonuc_defterine_yaz "$STACK_ROOT/state/ha-drill.json" "$MOTOR" "$_satir" \
         "${DEFTER_KAYNAK:-elle}" 2>/dev/null || true
 }
@@ -330,6 +332,12 @@ trap 'DETAY="prova kullanıcı tarafından kesildi (Ctrl+C) — devir başlamı�
 bitir() {   # bitir <çıkış kodu>
     local kod="$1"
     if ! temizle; then [ "$kod" -eq 0 ] && kod=4; fi
+    # ÇIKIŞ KODUNU json_bas BİLMELİ: REDDETME BİR SONUÇ DEĞİLDİR.
+    # Deftere yalnız gerçekten DENENEN prova yazılır. "Onay verilmedi"
+    # (5) ya da "kapsam dışı" (2) hâlleri ok=false ile deftere düşerse
+    # panel kırmızı "prova başarısız" rozeti gösterir — oysa hiçbir şey
+    # denenmemiştir. Ölçülemedi (3) ise gerçek bir sonuçtur ve yazılır.
+    CIKIS_KODU="$kod"
     json_bas
     exit "$kod"
 }
