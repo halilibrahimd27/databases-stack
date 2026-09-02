@@ -133,7 +133,7 @@ async function activate(engine) {
       <div style="margin-top:8px">${rows}</div>
     </details>
     <p class="note">İlk açılışta veritabanı imajı indirileceği için birkaç dakika sürebilir.</p>`,
-    'Aç');
+    'Aktif Et');
   if (!ok) return;
 
   const r = await api('/engines/' + engine.id + '/activate', { method: 'POST' });
@@ -144,7 +144,7 @@ async function deactivate(engine) {
   const ok = await confirmBox(engine.name + ' kapatılsın mı?', `
     <p>Veritabanı durdurulur ve belleği serbest kalır.</p>
     <p class="note"><b>Verileriniz silinmez.</b> Diskte kalır; tekrar
-    “Aç” dediğinizde her şey yerinde olur.</p>`, 'Kapat');
+    “Aktif Et” dediğinizde her şey yerinde olur.</p>`, 'Kapat');
   if (!ok) return;
   const r = await api('/engines/' + engine.id + '/deactivate', { method: 'POST' });
   watchJob(r.job, engine.name + ' kapatılıyor…');
@@ -422,7 +422,7 @@ function rowHtml(engine, plan) {
     <div class="row-side">
       ${mem}
       <button class="btn btn-open" data-act="on" data-id="${esc(engine.id)}"
-        ${blocked ? 'title="Sunucuda yeterli bellek yok — sebebini görmek için tıklayın"' : ''}>Aç</button>
+        ${blocked ? 'title="Sunucuda yeterli bellek yok — sebebini görmek için tıklayın"' : ''}>Aktif Et</button>
     </div>
   </li>`;
 }

@@ -93,7 +93,7 @@ Bu kadar. Soru sormaz. Parolaları, TLS sertifikalarını ve sunucu adresini ken
 üretir/algılar, sonuçları ekrana ve `credentials.txt`e yazar.
 
 Sonra tarayıcıdan `https://<sunucu-ip>/` adresine gidin ve ihtiyacınız olan
-veritabanının satırındaki **Aç** düğmesine basın.
+veritabanının satırındaki **Aktif Et** düğmesine basın.
 
 > **Tarayıcı "güvenli değil" diyorsa:** `http://<sunucu-ip>/ca.crt` adresinden
 > sertifikayı indirip bilgisayarınıza kurun, uyarı kalkar. Bu iç ağa özel bir
@@ -109,7 +109,7 @@ giriş kapısı (nginx), kontrol servisi ve Adminer. Toplam ~450 MB.
 Panelde bir veritabanını açtığınızda arka planda şunlar olur:
 
 ```
-"Aç"        →  Kontrol servisi sunucuyu ölçer
+"Aktif Et"  →  Kontrol servisi sunucuyu ölçer
                  ├─ Toplam RAM, boş RAM, boş disk, CPU
                  ├─ Zaten açık veritabanlarının taahhüdü
                  └─ İşletim sistemi ve çekirdek servisler için ayrılan pay
@@ -233,7 +233,7 @@ Açtığınız veritabanlarının nasıl çalıştığını grafiklerle gösteri
 da yapılandırma gerektirmez:
 
 ```bash
-./stack.sh enable monitoring     # ya da panelden "İzleme" kartındaki Aç
+./stack.sh enable monitoring     # ya da panelden "İzleme" kartındaki Aktif Et
 ./stack.sh panel monitoring      # adresi yazar
 ```
 
