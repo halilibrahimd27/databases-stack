@@ -263,6 +263,22 @@ async function showConnection(engine) {
    işlem controller'da bir "job"a dönüşür, panel de log'u canlı gösterir.
    Ayrı bir bekleme akışı yazmak, kullanıcıya iki farklı "sürüyor" ekranı
    göstermek olurdu. */
+/* BAKIM. Varsayılan güvenli yol: tabloyu kilitlemez, onay istemiyoruz.
+   Agresif bakım (yeri gerçekten geri veren) tabloyu KİLİTLER; onu panelden
+   sunmuyoruz çünkü kilit süresi tahmini komut satırında gösteriliyor ve o
+   kararı ekranda tek tıkla vermek doğru değil. */
+async function runMaintenance(engine) {
+  const r = await api('/engines/' + engine.id + '/maintenance',
+                      { method: 'POST' });
+  await watchJob(r.job, engine.name + ' bakımı…',
+    'Güvenli bakım tabloyu kilitlemez; veritabanı çalışmaya devam eder. '
+    + 'Ölçülen boşluğun tamamı geri gelmeyebilir — yeri diske geri vermek '
+    + 'tabloyu kilitleyen agresif bakım ister.');
+  bakimSonCagri = 0;      // ölçümü hemen tazele
+  await refreshBakim();
+  render();
+}
+
 async function takeBackup(engine) {
   const r = await api('/engines/' + engine.id + '/backup', { method: 'POST' });
   await watchJob(r.job, engine.name + ' yedekleniyor…',
@@ -417,6 +433,26 @@ function cardHtml(engine, st) {
       <button class="btn btn-danger" data-act="off" data-id="${esc(engine.id)}"
         aria-label="${esc(engine.name)} veritabanını kapat">Kapat</button>
     </div>`;
+
+  /* BAKIM. Şişkinlik ölçülmüşse ve bu motorda varsa gösteriyoruz. Sayı
+     YOKSA satırı hiç çizmiyoruz: "0 bayt şişkinlik" demek, ölçüm yapılmamış
+     bir motorda yanlış bir güvence verirdi (bkz. ok=None ayrımı). */
+  const bkm = (BAKIM && Array.isArray(BAKIM.tables))
+    ? BAKIM.tables.filter((t) => String(t.name || '').startsWith(engine.id + ':')
+                                 || (BAKIM.engine === engine.id))
+    : [];
+  const bkmBayt = bkm.reduce((a, t) => a + (t.bloat_bytes || 0), 0);
+  if (bkmBayt > 0) {
+    more += `
+    <div class="act">
+      <div class="act-txt"><b>Bakım — ${esc(mb(Math.round(bkmBayt / 1048576)))} boşa gidiyor</b>
+        <span>Sil-yaz döngüsü tabloları şişirir; bu alan diskte duruyor ama
+          kullanılmıyor. Güvenli bakım tabloyu <b>kilitlemez</b>.
+          En şişkin: ${esc((bkm[0] && bkm[0].name) || '?')}.</span></div>
+      <button class="btn" data-act="maintenance" data-id="${esc(engine.id)}"
+        aria-label="${esc(engine.name)} için bakım yap">Bakım yap</button>
+    </div>`;
+  }
 
   /* ŞİMDİ YEDEK AL — kartın kendi üstünde. Aynı düğme /yedekler sayfasında
      da var ama oraya GİTMEK gerekiyor; oysa "bu veritabanına dokunmadan önce
@@ -1108,7 +1144,21 @@ function renderEvents(events) {
     </div>`).join('');
 }
 
+/* BAKIM (şişkinlik). Ayrı bir uçtan ve SEYREK okunuyor: şişkinlik günler
+   içinde birikir, 5 saniyede bir sormanın anlamı yok. Controller da zaten
+   önbellekten cevap veriyor. */
+let BAKIM = null;
+let bakimSonCagri = 0;
+
+async function refreshBakim() {
+  if (Date.now() - bakimSonCagri < 300000) return;   // 5 dakika
+  bakimSonCagri = Date.now();
+  try { BAKIM = await api('/maintenance'); } catch (e) { /* sessiz: bakım
+    bilgisi olmadan da panel çalışır, hata basmak paniğe değmez */ }
+}
+
 async function refresh() {
+  refreshBakim();
   try {
     const [st, plans, ev] = await Promise.all([
       api('/status'), api('/plans'), api('/events').catch(() => ({ events: [] }))]);
@@ -1175,6 +1225,7 @@ document.addEventListener('click', (ev) => {
     case 'fo-off':  p = toggleAutoFailover(engine, false); break;
     case 'rebuild': p = rebuildStandby(engine); break;
     case 'backup':  p = takeBackup(engine); break;
+    case 'maintenance': p = runMaintenance(engine); break;
     // Motora bağlı değil: dataset.id yok, engine undefined kalır.
     case 'rebalance': p = rebalance(); break;
     case 'panel': {

@@ -3876,6 +3876,124 @@ def do_drill(jid, eid):
         BACKUP_LOCK.release()
 
 
+# =============================================================================
+# BAKIM (tablo şişkinliği)
+# =============================================================================
+# Şişkinlik YAVAŞ değişen bir büyüklüktür: sil-yaz döngüsüyle günler içinde
+# birikir. Her /api/status çağrısında ölçmek, panelin 5 saniyelik yenilemesini
+# her motorda bir sistem katalogu sorgusuna çevirirdi. Bu yüzden arka planda
+# seyrek ölçüp önbelleğe yazıyoruz — panel hazır sayıyı okuyor.
+MAINT_SCRIPT = os.path.join(PROJECT_DIR, "scripts", "maintenance.sh")
+MAINT_FILE = os.path.join(STATE_DIR, "maintenance.json")
+MAINT_EVERY_HOURS = int(os.environ.get("MAINT_EVERY_HOURS", "6"))
+MAINT_TIMEOUT = int(os.environ.get("MAINT_TIMEOUT", "900"))
+
+
+def load_maintenance():
+    try:
+        with open(MAINT_FILE, encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_maintenance(d):
+    try:
+        tmp = MAINT_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(d, fh, ensure_ascii=False)
+        os.replace(tmp, MAINT_FILE)
+    except OSError as e:
+        log("bakım defteri yazılamadı: %r" % e)
+
+
+def _maint_json(metin):
+    """Betiğin son satırındaki TEK SATIR JSON — sözleşme betikte de yazılı."""
+    for satir in reversed((metin or "").splitlines()):
+        satir = satir.strip()
+        if satir.startswith("{") and satir.endswith("}"):
+            try:
+                return json.loads(satir)
+            except ValueError:
+                return None
+    return None
+
+
+def measure_bloat():
+    """Tüm motorlarda şişkinliği ölçer ve önbelleğe yazar. HİÇBİR ŞEY değiştirmez."""
+    if not shutil.which("bash") or not os.path.exists(MAINT_SCRIPT):
+        return None
+    rc, out, err = run(["bash", MAINT_SCRIPT, "durum"], cwd=PROJECT_DIR,
+                       timeout=MAINT_TIMEOUT, env=script_env())
+    d = _maint_json(out + err)
+    kayit = {"at": int(time.time()),
+             # ok=None: ölçemedik. "şişkinlik yok" ile "bakamadık" AYRI şeyler;
+             # ikisini birleştirmek, ölçüm bozulduğunda paneli sessizce
+             # "her şey yolunda" gösterirdi.
+             "ok": bool(d.get("ok")) if d else None,
+             "total_bloat_bytes": (d or {}).get("total_bloat_bytes"),
+             "tables": (d or {}).get("tables") or [],
+             "detail": (d or {}).get("detail") or
+                       ("bakım betiği çıkış %d, JSON okunamadı" % rc)}
+    _save_maintenance(kayit)
+    return kayit
+
+
+def do_maintenance(jid, eid, agresif=False):
+    """Bakım işi. Varsayılan GÜVENLİ: tabloyu kilitlemez."""
+    engine = CATALOG.engine(eid)
+    if not engine:
+        return job_done(jid, False, "Bilinmeyen motor: %s" % eid)
+    if not shutil.which("bash"):
+        return job_done(jid, False, "Bu container'da bash yok.")
+    lock = engine_lock(eid)
+    if not lock.acquire(blocking=False):
+        return job_done(jid, False, BUSY_MSG % engine["name"])
+    try:
+        args = [MAINT_SCRIPT, "bakim", eid]
+        if agresif:
+            # --onayla'yı BURADA veriyoruz çünkü onay zaten panelde alındı;
+            # betiğin kendi onayı terminal içindir. Agresif bakım tabloyu
+            # KİLİTLER ve bunu kullanıcı panelde okuyup kabul etti.
+            args += ["--agresif", "--onayla"]
+        job_log(jid, "%s bakımı başlıyor%s…"
+                % (engine["name"], " (agresif — tablo kilitlenecek)" if agresif else ""))
+        rc, out, err = run(["bash"] + args, cwd=PROJECT_DIR,
+                           timeout=MAINT_TIMEOUT, env=script_env())
+        metin = (out + err).strip()
+        for satir in metin.splitlines()[-120:]:
+            job_log(jid, satir)
+        d = _maint_json(metin)
+        if d and d.get("ok"):
+            record_event("maintenance", eid,
+                         "%s bakımı tamamlandı: %s"
+                         % (engine["name"], d.get("detail") or ""))
+            measure_bloat()          # panel taze sayıyı görsün
+            return job_done(jid, True)
+        return job_done(jid, False,
+                        (d or {}).get("detail")
+                        or "bakım başarısız (çıkış %d): %s" % (rc, metin[-300:]))
+    except Exception as e:
+        job_log(jid, "HATA:", repr(e))
+        return job_done(jid, False, repr(e))
+    finally:
+        lock.release()
+
+
+def maintenance_refresher():
+    """Şişkinliği seyrek ölç, önbelleğe yaz. prometheus_target_refresher deseni."""
+    while True:
+        try:
+            kayit = load_maintenance()
+            son = kayit.get("at") or 0
+            if time.time() - son >= MAINT_EVERY_HOURS * 3600:
+                measure_bloat()
+        except Exception as e:
+            log("bakım ölçümü hatası: %r" % e)
+        time.sleep(600)
+
+
 def backups_overview():
     """GET /api/backups gövdesi: zamanlama + motor başına yedek özeti."""
     cfg = load_backup_cfg()
@@ -4741,6 +4859,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/topology":
             return self._send(200, {"topology": load_topology(),
                                     "auto_failover": sorted(auto_failover_engines())})
+        if path == "/api/maintenance":
+            return self._send(200, load_maintenance())
         if path == "/api/backups":
             return self._send(200, backups_overview())
         if path.startswith("/api/engines/") and path.endswith("/connection"):
@@ -4867,6 +4987,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 jid = new_job("backup", eid)
                 threading.Thread(target=do_backup, daemon=True,
                                  args=(jid, eid)).start()
+                return self._send(202, {"job": jid})
+            if action == "maintenance":
+                # Agresif bakım TABLOYU KİLİTLER. Varsayılan güvenli; agresif
+                # ancak gövdede açıkça istenirse. Onayı panel alıyor: kilit
+                # süresi TAHMİNİ orada gösteriliyor ve kullanıcı ona bakarak
+                # karar veriyor.
+                jid = new_job("maintenance", eid)
+                threading.Thread(target=do_maintenance, daemon=True,
+                                 args=(jid, eid, bool(body.get("agresif")))).start()
                 return self._send(202, {"job": jid})
             if action == "drill":
                 # Prova YIKICI DEĞİLDİR: tek kullanımlık bir kopyada çalışır,
@@ -5011,6 +5140,7 @@ def main():
         # dump'ları `docker exec` ile alıyor, K8s'te karşılığı yok. Orada
         # başlatmak, her gece "container bulunamadı" ile düşen bir tur demek.
         threading.Thread(target=backup_scheduler, daemon=True).start()
+        threading.Thread(target=maintenance_refresher, daemon=True).start()
 
     Server(("0.0.0.0", LISTEN_PORT), Handler).serve_forever()
 
