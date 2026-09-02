@@ -715,7 +715,7 @@ backup_neo4j() {
 # TÜMÜ
 # =============================================================================
 backup_all() {
-    acquire_lock /tmp/databases-stack-backup.lock
+    acquire_lock "$STACK_ROOT/state/backup.lock"
     check_disk || exit 1
 
     heading "Yedekleme — $(date '+%Y-%m-%d %H:%M')"
@@ -1042,7 +1042,7 @@ stats() {
 case "${1:-help}" in
     all)        backup_all ;;
     mariadb|postgresql|mongodb|redis|mssql|cassandra|elasticsearch|clickhouse|rabbitmq|minio|neo4j)
-                acquire_lock /tmp/databases-stack-backup.lock
+                acquire_lock "$STACK_ROOT/state/backup.lock"
                 primary="$(primary_of "$1")"
                 container_running "$primary" || die "$1 çalışmıyor. Önce: ./stack.sh enable $1"
                 check_disk || exit 1
@@ -1054,7 +1054,7 @@ case "${1:-help}" in
                 # senkronluyordu; üstelik iki ağır iş aynı container'ın
                 # cgroup'unda çakışınca dosyanın başında anlatılan OOM riski de
                 # geri geliyordu.
-                acquire_lock /tmp/databases-stack-backup.lock
+                acquire_lock "$STACK_ROOT/state/backup.lock"
                 "restore_${1#restore-}" "${2:-}" ;;
     restore-*)           die "Bu motor için otomatik geri yükleme yok: ${1#restore-}. docs/BACKUP.md bakın." ;;
     clean)      clean_old "${2:-}" ;;

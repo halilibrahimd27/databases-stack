@@ -153,8 +153,17 @@ HINT
 # çekirdek tarafından bırakılır. Yaş bakan eski mantık, sahibi hâlâ çalışırken
 # kilidi kırıp ikinci bir yedek başlatabiliyordu (iki paralel dump = DB
 # container'ında çift bellek baskısı = OOM).
+# KİLİT DOSYASI /tmp'DE DEĞİL, YIĞININ KENDİ DİZİNİNDE durur. /tmp herkese
+# yazılabilir ama dosya SAHİBİ onu ilk yaratan kullanıcıdır: root olarak bir kez
+# koşan yedek, /tmp/databases-stack-backup.lock'u root'a ait 0644 bırakıyor ve
+# ondan sonra normal kullanıcının HER yedeği "Permission denied" ile ölüyordu.
+# (Gerçek olay: e2e yedek paketi bu yüzden komple başarısız oldu.) state/
+# dizini yığının kendisine ait olduğu için sahiplik sorunu doğurmaz; hem de
+# panelden (controller container'ı) ve host'tan gelen koşular AYNI kilidi
+# görür — /tmp container'da ayrı bir dosya sistemidir, orada görmezlerdi.
 acquire_lock() {
-    local lockfile="${1:-/tmp/databases-stack.lock}"
+    local lockfile="${1:-${STACK_ROOT:-/tmp}/state/databases-stack.lock}"
+    mkdir -p "$(dirname "$lockfile")" 2>/dev/null || true
     command -v flock >/dev/null 2>&1 || die "flock (util-linux) gerekli."
     exec 9>>"$lockfile" || die "Kilit dosyası açılamadı: $lockfile"
     if ! flock -n 9; then

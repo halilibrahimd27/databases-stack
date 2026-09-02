@@ -1032,6 +1032,20 @@ except ImportError:
     ck("postgres ayarlarının hepsi `-c` ile veriliyor", True, "(PyYAML yok — atlandı)")
 
 
+# Kilit dosyası /tmp'de OLMAMALI. /tmp herkese yazılabilir ama dosyanın SAHİBİ
+# onu ilk yaratandır: root olarak bir kez koşan yedek, kilidi root'a ait bırakıp
+# ondan sonraki her kullanıcı koşusunu "Permission denied" ile öldürüyordu —
+# e2e yedek paketi tam olarak böyle komple başarısız oldu. Ayrıca panelden gelen
+# koşu container'ın İÇİNDEN gelir; /tmp orada ayrı bir dosya sistemidir ve iki
+# taraf birbirinin kilidini göremezdi.
+_bk = io.open("scripts/backup.sh", encoding="utf-8").read()
+_lib = io.open("scripts/lib/common.sh", encoding="utf-8").read()
+ck("yedek kilidi /tmp'de değil", "/tmp/databases-stack" not in _bk,
+   "backup.sh hâlâ /tmp kullanıyor" if "/tmp/databases-stack" in _bk else "")
+ck("kilit yığının state/ dizininde (host ve container aynı dosyayı görür)",
+   'acquire_lock "$STACK_ROOT/state/backup.lock"' in _bk)
+ck("acquire_lock varsayılanı da /tmp değil", "/tmp/databases-stack.lock" not in _lib)
+
 # MariaDB'de 'healthcheck' hesabı DÜĞÜME ÖZELDİR: imaj ilk açılışta rastgele
 # bir parola üretip hem hesabı hem de o düğümün $datadir/.my-healthcheck.cnf
 # dosyasını aynı parolayla yazar. Hesap taşınırken kaynağınki hedefe yazılınca
