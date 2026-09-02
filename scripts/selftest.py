@@ -2716,6 +2716,54 @@ ck("install.sh şablonu state/crontab olarak üretiyor",
    "crontab.template" in _kur and "state/crontab" in _kur)
 
 # =============================================================================
+head("10. Ölçüm paketleri — kendi hatasını ürüne yıkmasın")
+# =============================================================================
+# İki kez aynı sınıf hata yaşandı: paket kendi varsayımı yüzünden ölçemedi ve
+# sonucu ÜRÜNÜN hatası gibi raporladı. Buradaki kontroller o iki tuzağı
+# kapatıyor.
+_rep_e2e = io.open("scripts/e2e/replication.sh", encoding="utf-8").read()
+# 1) Devirden sonra roller KALICI takas olur; katalog adına bakan bir paket
+#    ana kopya sanıp yedeğe yazmaya çalışır ve "READONLY" alır — sonra bunu
+#    ürünün hatası diye yazar.
+ck("replication paketi rolleri topolojiden alıyor (katalogdan değil)",
+   'if [ "$CUR_PRIM" = "$rep_svc" ]; then' in _rep_e2e
+   and 'cat_prim="$rep_svc"' in _rep_e2e)
+ck("replication paketi devir sonrası ön koşulu ürünün komutuyla kuruyor",
+   "failover rebuild" in _rep_e2e and "E2E_KUR" in _rep_e2e)
+
+# 2) "Kilit dosyası açılamadı" ile "kilidi başkası tutuyor" AYNI ŞEY DEĞİLDİR.
+#    Birincisi ölçüm yapılamadı (t_unknown), ikincisi meşru bir atlama
+#    (t_skip). Tek dala sıkıştırıldığında paket, hiç yedekleme koşmazken
+#    "yedekleme sürüyor" deyip kendini yeşile boyuyordu.
+_fo_e2e = io.open("scripts/e2e/failover.sh", encoding="utf-8").read()
+_acilamadi = _fo_e2e.find("yedekleme kilidi AÇILAMADI")
+_tutuyor = _fo_e2e.find("başka bir işlem TUTUYOR")
+ck("failover paketi 'kilit açılamadı' ile 'kilidi başkası tutuyor'u ayırıyor",
+   _acilamadi > 0 and _tutuyor > 0 and _acilamadi < _tutuyor,
+   "açılamadı@%d tutuyor@%d" % (_acilamadi, _tutuyor))
+ck("'kilit açılamadı' ÖLÇÜLEMEDİ sayılıyor (atlandı değil)",
+   "t_unknown" in _fo_e2e[max(_acilamadi - 200, 0):_acilamadi])
+
+# 3) Paylaşılan dosya kuralı betiklerde gerçekten uygulanıyor mu?
+for _ad in ("backup", "pitr", "restore-drill", "failover-drill",
+            "maintenance", "slowlog", "import", "sync-remote"):
+    _src = io.open("scripts/%s.sh" % _ad, encoding="utf-8").read()
+    ck("scripts/%s.sh günlüğünü paylaşılan olarak açıyor" % _ad,
+       "paylasilan_dosya" in _src)
+_ortak = io.open("scripts/lib/common.sh", encoding="utf-8").read()
+ck("common.sh umask 0002 kuruyor (yeni dosyalar grup-yazılabilir)",
+   "umask 0002" in _ortak)
+ck("install.sh state/ ve logs/ dizinlerini setgid yapıyor",
+   "chmod 2775 state logs" in io.open("install.sh", encoding="utf-8").read())
+_st = io.open("stack.sh", encoding="utf-8").read()
+ck("stack.sh doctor --duzelt var (hata mesajları oraya yönlendiriyor)",
+   "cmd_doctor_duzelt" in _st and "--duzelt" in _st)
+ck("doctor moda değil GERÇEK yazılabilirliğe bakıyor ([ -w ])",
+   "[ -w " in _st)
+_app = io.open("controller/app.py", encoding="utf-8").read()
+ck("controller açılışta umask 0o002 kuruyor", "os.umask(0o002)" in _app)
+
+# =============================================================================
 print()
 if FAILS:
     print("\033[31m✗ %d test başarısız:\033[0m %s" % (len(FAILS), ", ".join(FAILS)))

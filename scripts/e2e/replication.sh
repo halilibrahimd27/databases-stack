@@ -1210,6 +1210,29 @@ run_engine() {
             return 0
         fi
         t_info "$eid: yedek kopya yeniden kuruldu, ölçüme devam"
+        # Rebuild rolleri GERİ ÇEVİRMEZ; yalnız eskimiş düğümü ana kopyadan
+        # baştan kopyalar. Topolojiyi yeniden okuyoruz ki aşağıdaki eşleme
+        # varsayıma değil ölçüme dayansın.
+        current_primary "$eid" "$cat_prim" || true
+    fi
+
+    # ROLLERİ TOPOLOJİDEN AL, KATALOGDAN DEĞİL.
+    # Bir devirden sonra kataloğun "primary_service"i artık YEDEK,
+    # "replica_service"i ise CANLI ANA KOPYADIR ve bu kalıcıdır. Paket
+    # katalog adlarına baktığı için devir yaşamış bir kurulumda ölçümlerin
+    # yönü tersine dönüyordu: ana kopya sanılan düğüme yazmaya çalışıp
+    # "READONLY You can't write against a read only replica" alıyor,
+    # kaldırılmış düğüme komut gönderip "No such container" diyor, kaldırılan
+    # düğümün adını yanlış bildiği için de "kapatmadan sonra container ayakta
+    # değil" diye ÜRÜNÜ suçluyordu. Ölçülen dördü de paketin kendi hatasıydı.
+    #
+    # Gateway zaten ROLE göre yönlendiriyor (replica_port her zaman YEDEĞE
+    # çıkar), o yüzden port çevrilmiyor — yalnız container adları.
+    if [ "$CUR_PRIM" = "$rep_svc" ]; then
+        t_info "$eid: roller takas — ana kopya '$CUR_PRIM', yedek '$cat_prim' (ölçüm buna göre)"
+        local _takas="$cat_prim"
+        cat_prim="$rep_svc"
+        rep_svc="$_takas"
     fi
 
     running_state "$cat_prim"; rs=$?

@@ -1595,9 +1595,21 @@ if ! command -v flock >/dev/null 2>&1; then
               "flock yok — yedekleme kilidi alınamaz; rebuild çalışan bir yedeklemeyle çakışıp ürünü haksız yere suçlayabilirdi"
     bitir
 fi
-if ! exec 9>>"$KILIT_DOSYASI" 2>/dev/null || ! flock -n 9; then
+# ÜÇ AYRI DURUM, ÜÇ AYRI SONUÇ. Eskiden "dosya açılamadı" ile "kilidi başkası
+# tutuyor" aynı dala düşüyordu ve paket, AÇAMADIĞI bir dosya için "yedekleme
+# sürüyor" diyordu. Sunucuda tam olarak bu oldu: kilit dosyası controller
+# tarafından root:root 0644 yaratılmıştı, hiçbir yedekleme koşmuyordu, paket
+# yine de kendini "atlandı" ilan etti. Ölçememeyi ölçmüş gibi göstermek, bu
+# projenin engellemeye çalıştığı hatanın ta kendisi.
+chmod 0666 "$KILIT_DOSYASI" 2>/dev/null || true
+if ! exec 9>>"$KILIT_DOSYASI" 2>/dev/null; then
+    t_unknown "otomatik devir zinciri" \
+              "yedekleme kilidi AÇILAMADI: $KILIT_DOSYASI (sahibi $(stat -c '%U:%G %a' "$KILIT_DOSYASI" 2>/dev/null || echo bilinmiyor), siz $(id -un)). Bu dosyaya controller da (container'da root) yazar; kim önce yazarsa diğeri açamaz. Onarım: ./stack.sh doctor --duzelt"
+    bitir
+fi
+if ! flock -n 9; then
     t_skip "otomatik devir zinciri" \
-           "yedekleme kilidini ($KILIT_DOSYASI) başka bir işlem tutuyor — yedekleme sürerken devir testi ürünü haksız yere suçlar"
+           "yedekleme kilidini ($KILIT_DOSYASI) başka bir işlem TUTUYOR — yedekleme sürerken devir testi ürünü haksız yere suçlar"
     bitir
 fi
 

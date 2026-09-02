@@ -307,7 +307,12 @@ cmd_doctor_duzelt() {
     # setgid: bundan SONRA açılacak dosyalar grubu miras alır. Tek başına
     # yetmez (yazma bitini vermez), umask 0002 ile birlikte çalışır.
     $S chgrp -R "$grup" "$STACK_ROOT/state" "$STACK_ROOT/logs" 2>/dev/null || true
-    $S chmod 2775 "$STACK_ROOT/state" "$STACK_ROOT/logs" || die "Dizin izni değiştirilemedi."
+    if ! $S chmod 2775 "$STACK_ROOT/state" "$STACK_ROOT/logs"; then
+        die "Dizin izni değiştirilemedi.
+  Dosyaların bir kısmı root'a ait ve sudo parola isteyemedi (tty yok).
+  Doğrudan root olarak çalıştırın:
+    sudo ./stack.sh doctor --duzelt"
+    fi
     $S find "$STACK_ROOT/state" "$STACK_ROOT/logs" -maxdepth 1 -type f         -exec chmod g+w {} + 2>/dev/null || true
     # Kilit dosyaları veri TAŞIMAZ; iki kimliğin paylaşabilmesi için en geniş
     # modu hak ederler. Paylaşamazlarsa kilit hiçbir şeyi engellemez olur.
