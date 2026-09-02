@@ -1189,10 +1189,27 @@ run_engine() {
                   "state/topology.json okunamadı — devir yapılmış mı BİLİNMİYOR; bu belirsizlikte 'replica on' denemek yanlış düğümü yedek yapabilir. ./stack.sh doctor"
         return 0
     fi
+    # ROLLER TAKASSA ÖNCE DÜZELT, SONRA ÖLÇ. Bir devirden sonra ürün
+    # 'replica on'u bilerek reddediyor (hangi düğümün güncel veriyi taşıdığı
+    # belirsizken yedek kurmak yanlış düğümü silebilir); doğru komut
+    # 'failover rebuild'. Paket bunu bilmediği için, bir kez devir yaşamış
+    # her kurulumda replikasyon SONSUZA KADAR ölçülemez kalıyordu: tur
+    # "atlandı" diyor ve replikasyonun çalıştığını kimse bir daha
+    # doğrulamıyordu. Artık ön koşulu ürünün KENDİ komutuyla kuruyoruz.
     if [ "$CUR_PRIM" != "$cat_prim" ]; then
-        t_skip "$N_CYCLE" \
-               "devir yapılmış — güncel ana kopya '$CUR_PRIM'. Bu durumda 'replica on' bilerek reddedilir; önce ./stack.sh failover rebuild $eid"
-        return 0
+        if [ "${E2E_KUR:-1}" != "1" ]; then
+            t_skip "$N_CYCLE" \
+                   "devir yapılmış (ana kopya '$CUR_PRIM') ve E2E_KUR=0 — düzeltmek için: ./stack.sh failover rebuild $eid"
+            return 0
+        fi
+        t_info "$eid: roller takas (ana kopya $CUR_PRIM) — ön koşul 'failover rebuild' ile kuruluyor"
+        if ! timeout "${E2E_REBUILD_TIMEOUT:-1800}" ./stack.sh failover rebuild "$eid" \
+                > "/tmp/e2e_rebuild_$eid.log" 2>&1; then
+            t_unknown "$N_CYCLE" \
+                      "ön koşul kurulamadı: './stack.sh failover rebuild $eid' başarısız"
+            return 0
+        fi
+        t_info "$eid: yedek kopya yeniden kuruldu, ölçüme devam"
     fi
 
     running_state "$cat_prim"; rs=$?
