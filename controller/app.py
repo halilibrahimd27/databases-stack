@@ -3877,6 +3877,135 @@ def do_drill(jid, eid):
 
 
 # =============================================================================
+# PITR DURUMU ve DEVİR PROVASI
+# =============================================================================
+# İkisi de "ölçülmüş güvence" ailesinden: biri "ne kadar geriye dönebilirim",
+# öteki "devir gerçekten kaç saniye sürüyor". Panelin bunları göstermesi,
+# vaat ile ölçüm arasındaki farkın tek görünür yeri.
+PITR_SCRIPT = os.path.join(PROJECT_DIR, "scripts", "pitr.sh")
+HADRILL_SCRIPT = os.path.join(PROJECT_DIR, "scripts", "failover-drill.sh")
+PITR_FILE = os.path.join(STATE_DIR, "pitr.json")
+HADRILL_FILE = os.path.join(STATE_DIR, "ha-drill.json")
+PITR_EVERY_MIN = int(os.environ.get("PITR_STATUS_EVERY_MIN", "30"))
+
+
+def _son_satir_json(metin):
+    for satir in reversed((metin or "").splitlines()):
+        satir = satir.strip()
+        if satir.startswith("{") and satir.endswith("}"):
+            try:
+                return json.loads(satir)
+            except ValueError:
+                return None
+    return None
+
+
+def _oku_json_dosya(yol):
+    try:
+        with open(yol, encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _yaz_json_dosya(yol, d):
+    try:
+        tmp = yol + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(d, fh, ensure_ascii=False)
+        os.replace(tmp, yol)
+    except OSError as e:
+        log("%s yazılamadı: %r" % (os.path.basename(yol), e))
+
+
+def load_pitr():
+    return _oku_json_dosya(PITR_FILE)
+
+
+def measure_pitr():
+    """PITR penceresini ölçer: ne kadar geriye dönülebilir. Hiçbir şey değiştirmez."""
+    if not shutil.which("bash") or not os.path.exists(PITR_SCRIPT):
+        return None
+    rc, out, err = run(["bash", PITR_SCRIPT, "durum", "--json"], cwd=PROJECT_DIR,
+                       timeout=300, env=script_env())
+    d = _son_satir_json(out + err)
+    kayit = {"at": int(time.time()), "ok": bool(d) and bool(d.get("ok")),
+             "rapor": d,
+             "detail": (d or {}).get("detail")
+                       or ("pitr.sh çıkış %d, JSON okunamadı" % rc)}
+    _yaz_json_dosya(PITR_FILE, kayit)
+    return kayit
+
+
+def pitr_refresher():
+    """PITR penceresi seyrek ölçülür: arşiv dosya sistemine bakmak ucuz değil
+    ve pencere dakikalar mertebesinde değişir."""
+    while True:
+        try:
+            son = (load_pitr().get("at") or 0)
+            if time.time() - son >= PITR_EVERY_MIN * 60:
+                measure_pitr()
+        except Exception as e:
+            log("PITR ölçümü hatası: %r" % e)
+        time.sleep(300)
+
+
+def do_ha_drill(jid, eid):
+    """DEVİR PROVASI — bu YIKICI bir iştir: gerçek bir devir yapar.
+
+    Onay HTTP ucunda alınıyor (gövdede açık bayrak); burada ayrıca --onayla
+    veriyoruz çünkü betiğin kendi onayı terminal içindir. Kilit sırası
+    aktivasyon/devirle AYNI: prova sırasında motorun kapatılması ya da ikinci
+    bir devirin başlaması, elde tek çalışan kopya bırakmayabilirdi.
+    """
+    engine = CATALOG.engine(eid)
+    if not engine:
+        return job_done(jid, False, "Bilinmeyen motor: %s" % eid)
+    if not shutil.which("bash"):
+        return job_done(jid, False, "Bu container'da bash yok.")
+    lock = engine_lock(eid)
+    if not lock.acquire(blocking=False):
+        return job_done(jid, False, BUSY_MSG % engine["name"])
+    try:
+        job_log(jid, "%s devir provası başlıyor — GERÇEK bir devir yapılacak."
+                % engine["name"])
+        record_event("ha_drill_started", eid,
+                     "%s devir provası başlatıldı (gerçek devir)." % engine["name"],
+                     level="warning")
+        rc, out, err = run(["bash", HADRILL_SCRIPT, eid, "--onayla"],
+                           cwd=PROJECT_DIR, timeout=1800, env=script_env())
+        metin = (out + err).strip()
+        for satir in metin.splitlines()[-150:]:
+            job_log(jid, satir)
+        d = _son_satir_json(metin)
+        kayit = {"at": int(time.time()), "engine": eid,
+                 "ok": bool(d) and bool(d.get("ok")),
+                 "downtime_seconds": (d or {}).get("downtime_seconds"),
+                 "data_loss": (d or {}).get("data_loss"),
+                 "new_primary": (d or {}).get("new_primary"),
+                 "detail": (d or {}).get("detail") or
+                           ("failover-drill.sh çıkış %d" % rc)}
+        hepsi = _oku_json_dosya(HADRILL_FILE); hepsi[eid] = kayit
+        _yaz_json_dosya(HADRILL_FILE, hepsi)
+        if kayit["ok"]:
+            record_event("ha_drill", eid,
+                         "%s devir provası GEÇTİ — ölçülen kesinti %s sn, veri kaybı: %s"
+                         % (engine["name"], kayit["downtime_seconds"],
+                            "yok" if kayit["data_loss"] is False else kayit["data_loss"]))
+            return job_done(jid, True)
+        record_event("ha_drill_failed", eid,
+                     "%s devir provası BAŞARISIZ: %s" % (engine["name"], kayit["detail"]),
+                     level="critical")
+        return job_done(jid, False, kayit["detail"])
+    except Exception as e:
+        job_log(jid, "HATA:", repr(e))
+        return job_done(jid, False, repr(e))
+    finally:
+        lock.release()
+
+
+# =============================================================================
 # BAKIM (tablo şişkinliği)
 # =============================================================================
 # Şişkinlik YAVAŞ değişen bir büyüklüktür: sil-yaz döngüsüyle günler içinde
@@ -4859,6 +4988,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/topology":
             return self._send(200, {"topology": load_topology(),
                                     "auto_failover": sorted(auto_failover_engines())})
+        if path == "/api/pitr":
+            return self._send(200, load_pitr())
+        if path == "/api/ha-drill":
+            return self._send(200, _oku_json_dosya(HADRILL_FILE))
         if path == "/api/maintenance":
             return self._send(200, load_maintenance())
         if path == "/api/backups":
@@ -4986,6 +5119,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if action == "backup":
                 jid = new_job("backup", eid)
                 threading.Thread(target=do_backup, daemon=True,
+                                 args=(jid, eid)).start()
+                return self._send(202, {"job": jid})
+            if action == "ha-drill":
+                # DEVİR PROVASI GERÇEK BİR DEVİRDİR. Onay gövdede AÇIKÇA
+                # istenmeli; bunu varsayılan yapmak, bir düğmeyi yanlışlıkla
+                # tıklayan operatöre üretimde kesinti yaşatmak olurdu.
+                if not body.get("onayla"):
+                    return self._send(400, {"error":
+                        "Devir provası GERÇEK bir devir yapar ve kısa bir "
+                        "kesinti oluşur. Onay için gövdede {\"onayla\": true} "
+                        "gönderin."})
+                jid = new_job("ha-drill", eid)
+                threading.Thread(target=do_ha_drill, daemon=True,
                                  args=(jid, eid)).start()
                 return self._send(202, {"job": jid})
             if action == "maintenance":
@@ -5141,6 +5287,7 @@ def main():
         # başlatmak, her gece "container bulunamadı" ile düşen bir tur demek.
         threading.Thread(target=backup_scheduler, daemon=True).start()
         threading.Thread(target=maintenance_refresher, daemon=True).start()
+        threading.Thread(target=pitr_refresher, daemon=True).start()
 
     Server(("0.0.0.0", LISTEN_PORT), Handler).serve_forever()
 
