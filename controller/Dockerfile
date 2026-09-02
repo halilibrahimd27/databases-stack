@@ -26,7 +26,13 @@ FROM python:3.12-alpine
 # bu tür sessiz yanlışlara yeğliyoruz: yedekte sessiz yanlış, yedeğin hiç
 # olmamasından beterdir.
 RUN apk add --no-cache \
-        docker-cli \
+        # openssl: şifreli yedek AÇMAK ve ALMAK için şart. Panelden ve
+        # gecelik zamanlayıcıdan alınan yedekler bu container'da
+        # üretiliyor; openssl olmadan şifreleme sessizce devre dışı
+        # kalır ve dökümler şifresiz diske yazılır. e2e bunu yakaladı:
+        # "controller container'ında openssl YOK — panelden ve gecelik
+        # zamanlayıcıdan şifreli yedek ALINAMAZ".
+        openssl \n        docker-cli \
         docker-cli-compose \
         kubectl \
         tini \

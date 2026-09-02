@@ -394,6 +394,21 @@ services:
       # yolundaki bir betiği motorun kendisi değiştirebilseydi, kurtarmanın
       # doğruluğu container'ın bütünlüğüne bağlı olurdu.
       - ${STACK_DIR:-.}/config/postgresql:/etc/pitr:ro
+      # --- Yavaş sorgu ölçümü (docs/SLOWLOG.md) -----------------------------
+      # pg_stat_statements'ı açan ayar dosyası. TEK DOSYA olarak bağlanıyor,
+      # yukarıdaki /etc/pitr dizin bağlaması yeniden kullanılmıyor: o mount
+      # PITR'a ait ve PITR kapatıldığı gün oradan kaldırılabilir; yavaş sorgu
+      # ölçümünün o kararla birlikte sessizce ölmesi kabul edilemez. Ayrı ad,
+      # ayrı ömür.
+      #
+      # BAĞLI OLMASI ÖLÇÜMÜ AÇMAZ. Dosya postgresql.conf'a bir
+      # `include_if_exists` satırı yazılana kadar okunmaz; o satırı
+      #     ./scripts/slowlog.sh kur postgresql
+      # yazar ve YENİDEN BAŞLATMA gerektiğini söyler (shared_preload_libraries
+      # postmaster parametresidir, reload yetmez). Buraya doğrudan
+      # `-c shared_preload_libraries=…` yazmadık: o zaman ölçüm herkeste açık
+      # gelirdi ve "açtım" diyen komutun yapacak bir işi kalmazdı.
+      - ${STACK_DIR:-.}/config/postgresql/slowlog.conf:/etc/postgresql/slowlog.conf:ro
     # ROL SABİT DEĞİL — PG_STANDBY_OF ile belirlenir:
     #   boş     → bu düğüm PRIMARY
     #   dolu    → o düğümden klonlanıp STANDBY olarak açılır

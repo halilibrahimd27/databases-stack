@@ -445,11 +445,19 @@ if [ -z "$DUZ_DOSYA" ]; then
 else
     gzip -dc "$DUZ_DOSYA" 2>>"$E2E_LOG" | grep -qaF "$KANIT"
     ps=("${PIPESTATUS[@]}")
-    if [ "${ps[0]}" -ne 0 ]; then
-        t_unknown "KONTROL GRUBU: kanıt şifresiz dump'ın İÇİNDE" "dosya sonuna kadar açılamadı (gzip rc=${ps[0]})"
-    elif [ "${ps[1]}" -eq 0 ]; then
+    # SIGPIPE (141) BURADA BEKLENEN SONUÇTUR, ARIZA DEĞİL: `grep -q` aradığını
+    # bulunca hemen çıkar ve boruyu kapatır; gzip yazacak yer bulamayıp
+    # sinyalle ölür. Eskiden yalnız ps[0]'a bakılıyordu ve kontrol
+    # "dosya sonuna kadar açılamadı (gzip rc=141)" diyerek ÖLÇÜLEMEDİ
+    # sayılıyordu — kontrol grubu hiç kurulamıyor, arkasındaki bütün
+    # şifreleme ölçümleri anlamsız kalıyordu. Doğru sıra: önce grep NE BULDU
+    # diye sor; bulduysa veri zaten okunmuş demektir.
+    if [ "${ps[1]}" -eq 0 ]; then
         KONTROL_GRUBU=1
         t_ok "KONTROL GRUBU: kanıt şifresiz dump'ın İÇİNDE (yani aşağıdaki 'bulunamadı' ölçümleri anlamlı)"
+    elif [ "${ps[0]}" -ne 0 ] && [ "${ps[0]}" -ne 141 ]; then
+        t_unknown "KONTROL GRUBU: kanıt şifresiz dump'ın İÇİNDE" \
+                  "dosya sonuna kadar açılamadı (gzip rc=${ps[0]})"
     else
         t_fail "KONTROL GRUBU: kanıt şifresiz dump'ın İÇİNDE" \
                "değer dump'ta yok — şifreli dosyada aranması da hiçbir şey kanıtlamaz"

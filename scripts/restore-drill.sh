@@ -347,7 +347,12 @@ en_yeni_yedek() {
     local d="$BACKUP_DIR/$1"
     [ -d "$d" ] || return 1
     local y
-    y="$(find "$d" -type f -name '*.gz' ! -name '*.bozuk' -printf '%T@\t%p\n' \
+    # ŞİFRELİ YEDEKLER DE ADAY. Yalnız '*.gz' aranınca '.gz.enc' uzantılı
+    # şifreli yedekler SESSİZCE atlanıyordu: şifrelemeyi açan kullanıcının
+    # provası "yedek yok" deyip geçiyor — yani en çok güvence isteyen kurulum
+    # en az güvence alıyordu. (e2e/encrypt.sh yakaladı.)
+    y="$(find "$d" -type f \( -name '*.gz' -o -name '*.gz.enc' \) \
+         ! -name '*.bozuk' -printf '%T@\t%p\n' \
          2>/dev/null | sort -rn | head -1 | cut -f2-)"
     [ -n "$y" ] || return 1
     printf '%s' "$y"
