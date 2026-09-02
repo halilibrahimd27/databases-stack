@@ -1073,6 +1073,32 @@ _dorep = _ctrl_src[_dorep_i:_dorep_i + 6000]
 ck("replika kontrolü plan_engine'in budget_mb'sini KULLANMIYOR",
    "free_budget_mb()" in _dorep and 'p.get("budget_mb"' not in _dorep)
 
+# KURTARMA PROVASI, verify_backup'ın YAPAMADIĞI şeyi yapmalı: yedeği gerçekten
+# geri yükleyip süreyi ölçmek. Buradaki kontroller provanın VARLIĞINI değil,
+# sözleşmesini koruyor — çünkü panel ve zamanlayıcı o sözleşmeye bağlı.
+_drill_i = _ctrl_src.find("def do_drill")
+_drill = _ctrl_src[_drill_i:_drill_i + 4000] if _drill_i >= 0 else ""
+ck("kurtarma provası işi var (do_drill)", _drill_i >= 0)
+ck("prova, üretim yedeğiyle AYNI kilidi alıyor (iki ağır iş çakışmasın)",
+   "BACKUP_LOCK.acquire" in _drill)
+ck("prova sonucu ÖLÇÜLEMEDİĞİNDE 'başarısız' denmiyor (ok=None ayrı tutuluyor)",
+   '"ok": None' in _drill)
+ck("prova düşerse olay CRITICAL (felaket gününden önce duyulmalı)",
+   'level="critical"' in _drill)
+ck("prova sonucu API'de yayınlanıyor (panel okuyabilsin)",
+   '"drill": prova' in _ctrl_src and '"drill_supported"' in _ctrl_src)
+ck("haftalık prova gecelik yedekten SONRA koşuyor",
+   "_haftalik_prova()" in _ctrl_src and "def _haftalik_prova" in _ctrl_src)
+# Kapsam listesi ELLE yazılmamalı: katalog büyüdüğünde sessizce eksik kalır.
+ck("prova kapsamı backup.sh'ın kendi gerçeğinden okunuyor",
+   'restore_%s()' in _ctrl_src)
+
+_yed_js = io.open("gateway/html/yedekler.js", encoding="utf-8").read()
+ck("panel prova sonucunu gösteriyor (üç durum: geçti/kaldı/yapılmadı)",
+   "bk-drill-ok" in _yed_js and "bk-drill-err" in _yed_js
+   and "bk-drill-yok" in _yed_js)
+ck("panelde 'Prova yap' düğmesi var", "data-act=\"drill\"" in _yed_js)
+
 # docker inspect şablonu ".Id" KULLANMAMALI. ".Id" docker'ı ham JSON (map)
 # yoluna düşürüyor; o yolda sağlık kontrolü olmayan container'da
 # ".State.Health" "olmayan anahtar" hatası veriyor ve docker o container'ı
