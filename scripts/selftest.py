@@ -2814,6 +2814,22 @@ for _svc_ad, _svc in _dc_rmq["services"].items():
     _cmd_s = " ".join(_cmd) if isinstance(_cmd, list) else str(_cmd)
     ck("%s command'ında kaçak '#' yok (YAML yorum sanılmaz)" % _svc_ad,
        "#" not in _cmd_s, _cmd_s[:60])
+
+# --- "Soramadım" ile "yedek değil" ayrı şeylerdir -----------------------------
+# redis.sh ready, boş bir INFO cevabını (container kapalı / crash-loop'ta /
+# parola yanlış) "replika olarak yapılandırılmamış" diye raporluyordu. Gerçek
+# olayda düğüm bir compose hatasıyla hiç açılmıyordu; mesaj replikasyon
+# ayarını suçlayıp insanı yanlış yere gönderdi.
+_rds_fo = io.open("scripts/failover/redis.sh", encoding="utf-8").read()
+ck("redis ready: cevapsız düğüm 'yedek değil' sayılmıyor (çıkış 3)",
+   'if [ -z "$info" ]' in _rds_fo and "exit 3" in _rds_fo)
+# Ve doğrulama zaman aşımında container'ın durumu da söyleniyor: sebep çoğu
+# zaman kopyalamada değil, düğümün hiç açılmamış olmasında.
+# _app bu noktada gateway/html/app.js'i tutuyor (1680. satır); controller'ı
+# ayrı adla okuyoruz ki hangi dosyaya baktığımız isminden belli olsun.
+_ctrl_py = io.open("controller/app.py", encoding="utf-8").read()
+ck("verify_standby zaman aşımında container durumunu da söylüyor",
+   "Container ŞU AN ÇALIŞMIYOR" in _ctrl_py and "_son_gunluk" in _ctrl_py)
 ck("doctor içe aktarma geçici dizinini de kapsıyor",
    ".ice-aktarma" in _st)
 ck("install.sh içe aktarma geçici dizinini açıyor",

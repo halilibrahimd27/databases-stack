@@ -2074,6 +2074,15 @@ def volume_of(service):
 STANDBY_VERIFY_TIMEOUT = int(os.environ.get("STANDBY_VERIFY_TIMEOUT", "900"))
 
 
+def _son_gunluk(service, satir=6):
+    """Container'ın son log satırları — tanı mesajına eklemek için.
+    Ölçemezsek boş döneriz; tanı ipucu olmaması, yanlış ipucu vermekten iyidir."""
+    rc, out, err = run(["docker", "logs", "--tail", str(satir), service],
+                       timeout=20)
+    metin = " | ".join(x.strip() for x in (out + err).splitlines() if x.strip())
+    return metin[-400:] if rc == 0 or metin else ""
+
+
 def verify_standby(engine, service, jl):
     """Yeni kurulan düğüm GERÇEKTEN yedek mi? (ok, açıklama)
 
@@ -2116,13 +2125,30 @@ def verify_standby(engine, service, jl):
                                "KOPYA olarak açıldı (betik: %s)" % (service, last))
             return True, last
         if time.time() >= deadline:
-            # Bu düğüm yarım kalmış bir kopya taşıyor olabilir; ne yapılacağını
-            # söylemek zorundayız (durum bildirmek yetmiyor).
-            return False, ("%s %d saniyede yedek konumuna geçmedi. Son durum: %s. "
+            # CONTAINER'IN DURUMUNU DA SÖYLE. Betiğin cevabı "yedek değil"
+            # olduğunda sebep çoğu zaman düğümün HİÇ AÇILMAMASIDIR ve o bilgi
+            # yalnız docker'da durur. Gerçek bir olayda redis, compose'daki bir
+            # yapılandırma hatası yüzünden her açılışta ölüyordu; kullanıcıya
+            # 900 saniye sonra "yedek konumuna geçmedi" deniyor, "container
+            # ayakta bile değil" denmiyordu. İnsan yanlış yerde arıyor.
+            cstat, chealth = _health_of(service)
+            ipucu = ""
+            if cstat != "running":
+                ipucu = (" Container ŞU AN ÇALIŞMIYOR (durum: %s) — sorun "
+                         "kopyalamada değil, düğümün kendisinde. `docker logs "
+                         "%s` çıktısına bakın." % (cstat, service))
+                gunluk = _son_gunluk(service)
+                if gunluk:
+                    ipucu += " Son satırlar: %s" % gunluk
+            elif chealth and chealth != "healthy":
+                ipucu = (" Container çalışıyor ama sağlık durumu '%s'. `docker "
+                         "logs %s` çıktısına bakın." % (chealth, service))
+            return False, ("%s %d saniyede yedek konumuna geçmedi. Son durum: %s.%s "
                            "Büyük veritabanlarında ilk kopyalama bu süreyi aşabilir: "
                            "STANDBY_VERIFY_TIMEOUT değerini .env'de artırıp tekrar "
                            "deneyebilirsiniz."
-                           % (service, STANDBY_VERIFY_TIMEOUT, last or "(çıktı yok)"))
+                           % (service, STANDBY_VERIFY_TIMEOUT,
+                              last or "(çıktı yok)", ipucu))
         turn += 1
         if turn % 6 == 1:
             jl("   yedek kopya hâlâ senkronlanıyor…", last)

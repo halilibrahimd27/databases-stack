@@ -18,6 +18,15 @@ ready)
   # SIRA ÖNEMLİ: önce replika mı diye bakarız, "zaten master" kısayolu sonra
   # gelir; aksi halde hiç senkron olmamış bozuk bir düğüm hazır sanılır.
   info="$(r INFO replication || true)"
+  # SORAMAMAK, "yedek değil" DEMEK DEĞİLDİR. Boş cevap (container kapalı,
+  # crash-loop'ta, parola yanlış) eskiden aşağıdaki son dala düşüyor ve
+  # "replika olarak yapılandırılmamış" diye raporlanıyordu. Gerçek bir
+  # olayda düğüm bir yapılandırma hatasıyla hiç açılmıyordu; mesaj ise
+  # replikasyon ayarını suçluyor, insanı yanlış yere gönderiyordu.
+  if [ -z "$info" ]; then
+      echo "[redis] ✗ $SVC sorgulanamadı (INFO replication cevapsız) — açık mı, parola doğru mu? 'docker logs $SVC'" >&2
+      exit 3
+  fi
   if printf '%s\n' "$info" | grep -q 'role:slave'; then
       off="$(printf '%s\n' "$info" | grep -o 'slave_repl_offset:[0-9-]*' | cut -d: -f2 | tr -d '[:space:]')"
       if [ -z "$off" ] || [ "$off" -le 0 ] 2>/dev/null; then
