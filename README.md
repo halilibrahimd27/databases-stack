@@ -464,6 +464,84 @@ Uzak depo (Google Drive / S3 / SFTP): [docs/GOOGLE-DRIVE.md](docs/GOOGLE-DRIVE.m
 
 ---
 
+## Zaman noktasına dönüş (PITR)
+
+"Dünkü yedeğe dön" çoğu zaman istenen şey değildir: veriyi bozan `UPDATE`
+dün öğlen çalıştıysa, dönülecek yer **o andan bir dakika öncesidir**. Tam
+yedek + o andan sonraki WAL/binlog kayıtları bunu mümkün kılar.
+
+```bash
+./scripts/pitr.sh durum                      # ne kadar geriye dönebilirim?
+./scripts/pitr.sh kur postgresql             # arşivlemeyi aç
+./scripts/pitr.sh taban postgresql           # taban yedeği al
+./scripts/pitr.sh don mariadb "2026-09-02 15:30:00" --prova
+```
+
+`--prova` üretime dokunmaz: tek kullanımlık bir kopyada dener. Pencere
+**tahmin edilmiyor, arşivden hesaplanıyor** — en eski kullanılabilir taban
+ile arşivdeki son kayıt arası; arşivde boşluk varsa üst sınır boşluktan
+öncesine çekiliyor. Aralık dışına dönme denemesi reddediliyor.
+
+Ölçülmüş kanıt (sunucuda, gerçek MariaDB):
+
+```
+T1'de A satırı yazıldı · T2'de B satırı yazıldı · aradaki bir ana dönüldü
+[GEÇTİ] A-VAR-B-YOK — 15:30:00 anına dönüldü, kopyada yalnız A var (13 sn)
+```
+
+PostgreSQL ve MariaDB destekleniyor. Diğerlerinde neden desteklenmediği
+yazılı: Redis'in AOF'unda zaman damgası yok ("14:32'ye dön" ifade edilemez),
+MSSQL işlem günlüğü yedeği ister, MongoDB oplog ile mümkün ama bu turda
+yapılmadı. Ayrıntı: [docs/PITR.md](docs/PITR.md).
+
+## Şifreli yedek
+
+Yedekler uzak depoya (Google Drive / S3 / SFTP) gönderiliyorsa şifresiz
+gitmemeli: o hesabı ele geçiren biri bütün veriyi okur. `.env`'de bir anahtar
+verirseniz yedekler `openssl aes-256-cbc` + PBKDF2 (600.000 tur) ile
+şifrelenir.
+
+> **Anahtarı kaybederseniz yedekler AÇILAMAZ.** Anahtar, yedeklerden ayrı bir
+> yerde saklanmalı — aynı diskte tutmak, kilidi kapının üstünde bırakmaktır.
+
+Geriye uyumlu: şifresiz eski yedekler çalışmaya devam eder, listeleme ve
+geri yükleme ikisini de tanır. Şifreleme açıkken uzak depoya şifresiz dosya
+gönderilmez. `openssl enc` bütünlük etiketi (AEAD) taşımaz — gizlilik sağlar,
+kurcalanmaya karşı imza sağlamaz; bu bilinerek seçildi ve
+[docs/BACKUP.md](docs/BACKUP.md)'de yazılı.
+
+## Devir provası
+
+Kurtarma provasının ikizi. "Yüksek erişilebilirlik var" demek yerine
+**"geçen hafta 6 saniyede devrettik ve tek satır kaybetmedik"** demek:
+
+```bash
+./scripts/failover-drill.sh mariadb --onayla
+```
+
+Gerçek bir devir yapar ve **uygulamanın gördüğü adresten** yazma yeniden
+mümkün olana kadar geçen süreyi ölçer — container'ın içinden değil, gateway
+portundan. Devir öncesi commit edilen kanıt satırının kaybolmadığını
+doğrular. Panelden de başlatılabilir ama gövdede açık onay ister: gerçek bir
+kesinti oluşur, yanlışlıkla tıklanacak bir düğme olamaz.
+
+## Bakım — tablo şişkinliği
+
+Sil-yaz döngüsü tabloları şişirir: PostgreSQL'de autovacuum yetişemediğinde
+ölü satırlar birikir, InnoDB'de silinen satırların yeri geri verilmez. Disk
+sessizce dolar.
+
+```bash
+./scripts/maintenance.sh durum               # ölç, hiçbir şey değiştirme
+./scripts/maintenance.sh bakim postgresql    # güvenli: tabloyu KİLİTLEMEZ
+./scripts/maintenance.sh bakim postgresql --agresif --onayla   # yeri geri verir, KİLİTLER
+```
+
+Agresif bakımın **kilit süresi tahmin ediliyor** ve tahmin kendi kendini
+kalibre ediyor: her bakımdan sonra gerçekleşen hız ölçülüp kaydediliyor
+(ölçülen: 47 MB/sn). Kullanıcı o sayıya bakıp kesintiyi kabul edip
+etmeyeceğine karar veriyor. Panel yalnız güvenli bakımı sunar.
+
 ## İzleme
 
 Açtığınız veritabanlarının nasıl çalıştığını grafiklerle gösterir. Kurulum ya
