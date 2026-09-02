@@ -94,14 +94,31 @@ p = app.plan_engine("mariadb")
 ck("128 GB sunucuda tek motor tavanı aşmaz (max_mb)",
    p["limit_mb"] <= 16384, "limit=%s" % mb(p["limit_mb"]))
 
+# Açık motorlar bütçeden düşülür. AMA hangi bütçeden: bu ürün artık TAVAN ile
+# REZERVE'yi ayırıyor. Tavanların toplamının dağıtılabiliri aşması tek başına
+# ret sebebi değil (tavanlar aynı anda dolmaz); ret, motorun AÇILIŞTA ayırdığı
+# belleğin sığmamasından gelir. İki senaryo da burada:
 HOST["total"] = 8192
-RUNNING["list"] = [{"service": "mariadb", "memory_mb": 2457},
-                   {"service": "postgresql", "memory_mb": 1638},
-                   {"service": "mongodb", "memory_mb": 1638}]
+app.save_tuning({})          # defter boş: rezerve, tavandan hesaplanır
+# Burada sınanan YUMUŞAK kuraldır (tavan bütçesi): açık motorların tavanları
+# bütçeyi doldurunca yeni motor reddedilir, bütçe boşken açılır. SERT kural
+# (rezerve) 7. bölümde, aşırı taahhüt katsayısı YALITILARAK sınanıyor: 1.5
+# katsayısı ve %60'lık en yüksek rezerve oranıyla tavan kuralı her zaman daha
+# sıkı olduğu için burada rezerveyi ölçmeye çalışmak yanıltıcı olurdu.
+RUNNING["list"] = [{"service": "mariadb", "memory_mb": 5000},
+                   {"service": "cassandra", "memory_mb": 6000}]
 p = app.plan_engine("elasticsearch")
-ck("Açık motorlar bütçeden düşülür → yer kalmayınca reddedilir",
-   not p.get("ok"), (p.get("reason") or "")[:60])
+ck("Açık motorların tavanları bütçeyi doldurunca yeni motor reddedilir",
+   not p.get("ok") and p.get("ceiling_ok") is False,
+   (p.get("reason") or "")[:70])
+RUNNING["list"] = [{"service": "mariadb", "memory_mb": 1500},
+                   {"service": "cassandra", "memory_mb": 1500}]
+p = app.plan_engine("elasticsearch")
+ck("(negatif) aynı motorlar küçük tavanlarla açıkken KABUL ediliyor "
+   "— ret bütçeden geliyor, motorların varlığından değil",
+   p.get("ok") is True, (p.get("reason") or "")[:70])
 RUNNING["list"] = []
+app.save_tuning({})
 
 head("   Değişmezler — motorun iç ayarı container limitini aşmamalı")
 CHECKS = [("mariadb", "MARIADB_BUFFER_POOL", lambda v: int(v.rstrip("M"))),
@@ -2075,6 +2092,396 @@ exit 0
        "rc=%d iz=%s" % (rc, _kisa(iz)))
 
     _shutil.rmtree(_mdir, ignore_errors=True)
+
+# =============================================================================
+# 7. BELLEK MODELİ — TAVAN, REZERVE VE ÇEKİRDEK BASKISI
+# =============================================================================
+# Ölçülen olay (16 GB test sunucusu): free -m 15984 MB toplam / 1508 MB
+# kullanılan, /proc/pressure/memory some avg10=0.00 · full avg10=0.00 —
+# makine %91 boş ve çekirdek SIFIR bellek baskısı bildiriyor. Panel aynı
+# anda "AYRILAN BELLEK 15 GB / 12 GB · %122 aşım" yazıyor, kapalı
+# motorların hepsinde "bellek yetmiyor" diyordu.
+#
+# Sebep model hatasıydı: docker --memory bir TAVANDIR, rezervasyon değil.
+# Tavanları toplayıp RAM ile kıyaslamak, yoldaki arabaların azami hızlarını
+# toplayıp "yol kapasitesi aşıldı" demeye benzer. Ölçülen gerçek kullanım
+# tavanların %4-7'siydi: mariadb 3196 MB tavan → 243 MB, postgresql 2397 MB
+# tavan → 98 MB, redis 1278 MB tavan → 5 MB.
+#
+# Sınanan üç kural:
+#   SERT     Σ rezerve + yeni_rezerve ≤ dağıtılabilir   (asla ihlal edilmez)
+#   YUMUŞAK  Σ tavan   + yeni_tavan   ≤ dağıtılabilir × aşırı_taahhüt
+#   KEMER    MemAvailable ≥ yeni_rezerve + emniyet payı
+#
+# Her kural İKİ senaryoyla sınanıyor: aralarındaki TEK fark kuralın baktığı
+# büyüklük. Tek yönlü kontrol ("reddedildi mi") burada hiçbir şey ölçmez —
+# her şeyi reddeden bir controller de onu geçerdi, ürünün ölçülen hâli tam
+# olarak öyleydi.
+head("7. Bellek modeli — tavan ≠ rezerve")
+
+_MEM = {"total": 16384, "avail": 12000}
+_ACIK = {"list": []}
+app.host_memory_mb = lambda: (_MEM["total"], _MEM["avail"])
+app.docker_containers = lambda force=False: [
+    dict(c, name=c["service"], status="running", health="healthy")
+    for c in _ACIK["list"]]
+
+
+def _c(servis, tavan_mb):
+    """Çalışan bir container: adı ve TAVANI (docker --memory)."""
+    return {"service": servis, "memory_mb": tavan_mb}
+
+
+def _cm(eid, tavan_mb):
+    """Motorun ŞU ANKİ ana kopyasını tavanıyla üretir.
+
+    Servis adını elle yazmak sessiz bir ölçüm kaybı veriyordu: yukarıdaki
+    devir testleri topolojiyi değiştirdiği için mariadb'nin ana kopyası
+    artık mariadb-replica ve "mariadb" adlı container hiç sayılmıyordu —
+    rezerve toplamı yarıya iniyor, sınadığımız kural hiç bağlamıyordu.
+    """
+    return _c(app.current_primary(app.CATALOG.engine(eid)), tavan_mb)
+
+
+def _durum(total, avail, acik):
+    """Sahte host: toplam RAM · çekirdeğin MemAvailable'ı · açık tavanlar."""
+    _MEM["total"], _MEM["avail"] = total, avail
+    _ACIK["list"] = list(acik)
+
+
+def _sistem():
+    return app.status().get("system", {})
+
+
+def _sayi(d, ad):
+    """Sözleşmedeki sayısal alanı okur; yoksa None.
+
+    Varsayılan UYDURMUYORUZ: `.get(ad, 0)` yazmak alanın yokluğunu "sıfır"
+    diye okur ve alan hiç üretilmediğinde bütün kontroller sessizce geçer.
+    """
+    v = d.get(ad)
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return v
+
+
+def _eski_karar(eid):
+    """Modelden ÖNCEKİ kararın birebir kopyası: bütçe = RAM − OS payı −
+    çekirdek payı − Σ TAVAN; motorun asgarisi sığmıyorsa ret.
+
+    Burada regresyon kemeri olarak duruyor. Yeni model bununla AYNI cevabı
+    vermeye başladığı gün aşağıdaki kontrol kırılır — panelin "%122 aşım"
+    ekranı geri gelmiş demektir.
+    """
+    e = app.CATALOG.engine(eid)
+    res = e.get("resources", {})
+    total = _MEM["total"]
+    os_payi = min(max(app.OS_RESERVE_MIN_MB,
+                      int(total * app.OS_RESERVE_RATIO)),
+                  int(total * 0.6))
+    tavanlar = sum(x["memory_mb"] for x in _ACIK["list"])
+    butce = total - os_payi - app.CORE_RESERVE_MB - tavanlar
+    ovh = int(res.get("panel_mb", 0)) + int(res.get("exporter_mb", 0))
+    return (butce - ovh) >= int(res.get("min_mb", 256))
+
+
+# --- Defterin kendi içinde tutarlılığı ---------------------------------------
+# Ölçülen durumun birebir kendisi. 15984 MB RAM'de OS payı 3196, çekirdek
+# payı 448 → dağıtılabilir 12340 MB; ayrılan (tavan) toplamı 15087 MB.
+# Dört motorun tavanı ölçüldü; kalan 5020 MB panel/exporter/kontrol
+# düzlemine ait — tek tek ölçülmedi ama TOPLAMI ölçüldü (15087 MB).
+_OLCULEN = [_c("mariadb", 3196), _c("mariadb-replica", 3196),
+            _c("postgresql", 2397), _c("redis", 1278),
+            _c("panel-ve-exporterlar", 5020)]
+_durum(15984, 13987, _OLCULEN)
+_sis = _sistem()
+_alloc = _sayi(_sis, "allocatable_mb")
+_toplam_tavan = sum(x["memory_mb"] for x in _OLCULEN)
+ck("dağıtılabilir bildiriliyor ve defterle tutarlı "
+   "(RAM − OS payı − çekirdek payı)",
+   _alloc is not None
+   and _alloc == _sis.get("mem_total_mb", 0) - _sis.get("os_reserve_mb", 0)
+   - _sis.get("core_reserve_mb", 0),
+   "dağıtılabilir=%s" % mb(_alloc))
+
+_res_top = _sayi(_sis, "stack_reserved_mb")
+ck("açık motorların rezerve toplamı tavan toplamından KÜÇÜK "
+   "(rezerve ile tavan aynı sayı değil)",
+   _res_top is not None and 0 <= _res_top < _toplam_tavan,
+   "rezerve=%s tavan=%s" % (mb(_res_top), mb(_toplam_tavan)))
+
+_oran = _sayi(_sis, "overcommit_ratio")
+_pol = _sayi(_sis, "overcommit_limit")
+ck("aşırı taahhüt oranı bildiriliyor (tavan toplamı / dağıtılabilir)",
+   _oran is not None and _pol is not None and _oran > 1.0,
+   "oran=%s politika=%s" % (_oran, _pol))
+
+_psi = _sis.get("pressure")
+ck("çekirdek baskı sinyali sözleşmedeki biçimde bildiriliyor",
+   isinstance(_psi, dict)
+   and all(k in _psi for k in ("some10", "some60", "full10", "full60"))
+   and _psi.get("seviye") in ("yok", "orta", "yuksek", "bilinmiyor"),
+   "seviye=%s" % (_psi or {}).get("seviye"))
+
+# --- YUMUŞAK KURAL: tavan aşımı TEK BAŞINA ret sebebi değil ------------------
+# Ölçülen durumun tamamı: tavan toplamı dağıtılabiliri %22 aşıyor, gerçek
+# kullanım 1508 MB, baskı 0.00. Bu hâlde yeni bir motor AÇILABİLMELİ.
+_p_olculen = app.plan_engine("elasticsearch")
+ck("tavan toplamı dağıtılabiliri aşarken de yeni motor açılabiliyor "
+   "(aşım tek başına ret sebebi DEĞİL)",
+   _p_olculen.get("ok") is True,
+   "%s" % ((_p_olculen.get("reason") or "")[:70] or
+           ("limit=%s" % mb(_p_olculen.get("limit_mb")))))
+ck("(negatif deneme) eski model aynı durumda REDDEDİYOR — "
+   "kemer iki davranışı ayırt ediyor",
+   not _eski_karar("elasticsearch"),
+   "eski defter: 15984 − 3196 − 448 − %d = %d MB"
+   % (_toplam_tavan, 15984 - 3196 - 448 - _toplam_tavan))
+ck("tavan kuralı politika sınırına kadar geçerli sayılıyor (ceiling_ok)",
+   _p_olculen.get("ceiling_ok") is True)
+
+# --- SERT KURAL: Σ rezerve dağıtılabiliri aşamaz -----------------------------
+# İki senaryo, AYNI tavan toplamı (11000 MB), farklı rezerve:
+#   (a) mariadb + cassandra → açılışta gerçekten ayırırlar (buffer pool, -Xms)
+#   (b) redis + minio       → tabanları ~0, tavana doğru BÜYÜRLER
+# Karar bu ikisi arasında değişiyorsa kararı veren rezervedir, tavan değil.
+#
+# Yalıtım için aşırı taahhüt politikası geçici olarak gevşetiliyor: kataloğun
+# en yüksek rezerve oranı 0.6 olduğu için, 1.5'lik politika sabiti yürürlükte
+# iken SERT kural hiçbir zaman YUMUŞAK kuraldan önce bağlamaz (0.6 × 1.5 =
+# 0.9 < 1) ve iki kural birbirinden ayrılamaz.
+_OC_ADI = next((n for n in dir(app)
+                if re.search(r"OVERCOM|ASIRI|TAAHH", n, re.I)
+                and isinstance(getattr(app, n), (int, float))
+                and not isinstance(getattr(app, n), bool)), None)
+_oc_eski = getattr(app, _OC_ADI) if _OC_ADI else None
+_yalitim = False
+if _OC_ADI:
+    setattr(app, _OC_ADI, 8.0)
+    _durum(8192, 7000, [])
+    # Sabiti gerçekten patchleyebildik mi? API'nin bildirdiği politika
+    # değişmediyse yalıtım SAHTEDİR ve aşağıdaki çift ölçüm hiçbir şey
+    # kanıtlamaz — bunu bilmeden "geçti" yazmak en kötüsü olurdu.
+    _yalitim = _sayi(_sistem(), "overcommit_limit") == 8.0
+
+if not _yalitim:
+    ck("SERT kural YUMUŞAK kuraldan yalıtılarak sınanabiliyor", False,
+       "aşırı taahhüt politika sabiti app.py'de bulunamadı/patchlenemedi "
+       "(aranan ad: OVERCOM|ASIRI|TAAHH) — iki kural ayrılamadı, "
+       "ölçüm YAPILAMADI")
+else:
+    # Ayar defterini TEMİZLE: aksi hâlde önceki kontrollerden kalan (başka bir
+    # host boyutuna göre hesaplanmış) değerler okunuyor ve sahte
+    # container'ların tavanı ile defter birbirini tutmuyordu — rezerve 6000
+    # yerine 2970 çıkıyor, senaryo sert kuralı hiç çiğnemiyordu.
+    app.save_tuning({})
+    _durum(8192, 7000, [_cm("mariadb", 5000), _cm("cassandra", 6000)])
+    _p_rez = app.plan_engine("elasticsearch")
+    _rez_dolu = _sayi(_sistem(), "stack_reserved_mb")
+    app.save_tuning({})
+    _durum(8192, 7000, [_cm("redis", 5000), _cm("minio", 6000)])
+    _p_bos = app.plan_engine("elasticsearch")
+    _rez_bos = _sayi(_sistem(), "stack_reserved_mb")
+
+    ck("Σ rezerve dağıtılabiliri aşacaksa istek REDDEDİLİYOR",
+       _p_rez.get("ok") is not True and _p_rez.get("reserve_ok") is False,
+       "rezerve=%s dağıtılabilir=%s · %s"
+       % (mb(_rez_dolu), mb(_sayi(_sistem(), "allocatable_mb")),
+          (_p_rez.get("reason") or "")[:50]))
+    ck("(negatif deneme) AYNI tavan toplamı, rezerve etmeyen motorlarla "
+       "KABUL EDİLİYOR — kararı veren rezerve",
+       _p_bos.get("ok") is True and _p_bos.get("reserve_ok") is True,
+       "rezerve=%s · %s" % (mb(_rez_bos),
+                            (_p_bos.get("reason") or "")[:50]))
+    ck("iki senaryonun tavan toplamı aynı, rezervesi farklı "
+       "(karşılaştırma gerçekten yalıtılmış)",
+       _rez_dolu is not None and _rez_bos is not None
+       and _rez_dolu > _rez_bos,
+       "dolu=%s boş=%s" % (mb(_rez_dolu), mb(_rez_bos)))
+    ck("iki senaryoda da tavan kuralı geçiyor "
+       "(ret SERT kuraldan geliyor, yumuşak kuraldan değil)",
+       _p_rez.get("ceiling_ok") is True
+       and _p_bos.get("ceiling_ok") is True)
+
+if _OC_ADI:
+    setattr(app, _OC_ADI, _oc_eski)
+
+# --- Değişmez: kabul edilen hiçbir plan SERT kuralı ihlal etmez --------------
+# Tek senaryo yetmez; kuralın sınır durumlarında da tutması gerekiyor.
+# Kaç karşılaştırma yapıldığı da ölçütün parçası: alanlar hiç üretilmezse
+# döngü sıfır karşılaştırmayla biter ve "ihlal yok" GEÇTİ yazardı.
+_ihlal, _bakilan = [], 0
+for _tot, _av in ((2048, 1800), (4096, 3500), (8192, 7000),
+                  (16384, 14000), (65536, 60000)):
+    for _acik in ([], [_cm("mariadb", 2048)],
+                  [_cm("mariadb", 2048), _cm("postgresql", 1536)],
+                  [_cm("redis", 1024), _cm("minio", 768)]):
+        _durum(_tot, _av, _acik)
+        _s = _sistem()
+        _a = _sayi(_s, "allocatable_mb")
+        _r = _sayi(_s, "stack_reserved_mb")
+        _acik_svc = set(x["service"] for x in _acik)
+        for _e in app.CATALOG.engines:
+            # Zaten açık motoru atlıyoruz: onun rezervesi _r'nin İÇİNDE,
+            # üstüne bir de plan rezervesini eklemek çift sayma olurdu.
+            if _acik_svc & set(_e.get("services", [])):
+                continue
+            _pl = app.plan_engine(_e["id"])
+            if not _pl.get("ok"):
+                continue
+            _pr = _sayi(_pl, "reserved_mb")
+            if _pr is None or _a is None or _r is None:
+                _ihlal.append("%s@%s alan yok" % (_e["id"], mb(_tot)))
+                continue
+            _bakilan += 1
+            if _r + _pr > _a:
+                _ihlal.append("%s@%s: %d+%d > %d"
+                              % (_e["id"], mb(_tot), _r, _pr, _a))
+ck("kabul edilen hiçbir planda Σ rezerve dağıtılabiliri aşmıyor",
+   not _ihlal and _bakilan >= 40,
+   "%d plan denendi%s" % (_bakilan, ("; " + "; ".join(_ihlal[:3]))
+                          if _ihlal else ""))
+
+# --- ÇEKİRDEK KEMERİ: defter "yer var" derken çekirdek "yok" diyorsa ---------
+# İki senaryonun tek farkı MemAvailable. Defter (RAM, tavanlar, rezerveler)
+# ikisinde de birebir aynı: 16 GB boş bir host. Çekirdeğin gerçeği
+# bağlayıcıdır — defter ne derse desin ayrılamayan bellek ayrılamaz.
+_durum(16384, 13987, [])
+_p_bol = app.plan_engine("mariadb")
+_durum(16384, 128, [])
+_p_dar = app.plan_engine("mariadb")
+ck("çekirdek 'yer yok' derken defter 'yer var' dese de REDDEDİLİYOR",
+   _p_dar.get("ok") is not True,
+   "MemAvailable=128M · %s" % (_p_dar.get("reason") or "")[:60])
+ck("(negatif deneme) AYNI defter, MemAvailable 13987 MB iken "
+   "KABUL EDİLİYOR — kemer her şeyi reddetmiyor",
+   _p_bol.get("ok") is True,
+   "limit=%s" % mb(_p_bol.get("limit_mb")))
+
+# --- Katalogda her motorun rezerve tanımı var --------------------------------
+# Rezerve motora özgüdür ve kataloğa yazılır: PostgreSQL shared_buffers,
+# MariaDB innodb_buffer_pool_size, JVM motorlarında -Xms; Redis/MSSQL/
+# MinIO/ClickHouse'ta taban ~0'dır (tavana doğru büyürler). Tanımı olmayan
+# bir motor sessizce "0 rezerve" sayılır ve SERT kural onun için hiç
+# çalışmaz.
+_KAT = json.load(open("catalog.json", encoding="utf-8"))
+
+
+def _rezerve_tanimli(res):
+    """resources ağacında rezerve tanımı var mı (anahtar adına bakar).
+
+    Anahtarın tam adını dayatmıyoruz: tanım ayrı bir alan da olabilir,
+    mevcut bir tuning satırının işaretlenmesi de. Aranan şey NİYETİN
+    katalogda yazılı olması.
+    """
+    yigin = [res]
+    while yigin:
+        d = yigin.pop()
+        if isinstance(d, dict):
+            for k, v in d.items():
+                if re.search(r"reserv|rezerv", str(k), re.I):
+                    return True
+                yigin.append(v)
+        elif isinstance(d, list):
+            yigin.extend(d)
+    return False
+
+
+_tanimsiz = [e["id"] for e in _KAT["engines"]
+             if not _rezerve_tanimli(e.get("resources", {}))]
+ck("catalog.json'daki her motorda rezerve tanımı var",
+   not _tanimsiz and len(_KAT["engines"]) >= 10,
+   "%d motor bakıldı%s" % (len(_KAT["engines"]),
+                           ("; tanımsız: " + ", ".join(_tanimsiz))
+                           if _tanimsiz else ""))
+# Denetimin BOZUK hâli gerçekten yakalıyor mu? Tanımı sökülmüş bir kopya
+# üzerinde aynı fonksiyon "yok" demeli; demezse yukarıdaki satır hiçbir şey
+# ölçmüyor demektir.
+_kirik = json.loads(json.dumps(_KAT["engines"][0].get("resources", {})))
+
+
+def _rezerveyi_sok(d):
+    if isinstance(d, dict):
+        return {k: _rezerveyi_sok(v) for k, v in d.items()
+                if not re.search(r"reserv|rezerv", str(k), re.I)}
+    if isinstance(d, list):
+        return [_rezerveyi_sok(x) for x in d]
+    return d
+
+
+ck("(negatif deneme) rezerve tanımı sökülmüş katalog yakalanıyor",
+   not _rezerve_tanimli(_rezerveyi_sok(_kirik)))
+
+# Tanımın katalogda durması yetmez, plana da yansımalı.
+_durum(65536, 60000, [])
+_ONALLOC = ("postgresql", "mariadb", "elasticsearch", "cassandra",
+            "kafka", "neo4j")          # açılışta gerçekten ayırırlar
+_ONDEMAND = ("redis", "mssql", "minio", "clickhouse")   # tabanı ~0
+_bozuk, _sayilan = [], 0
+for _e in app.CATALOG.engines:
+    _pl = app.plan_engine(_e["id"])
+    if not _pl.get("ok"):
+        continue          # önkoşulu tutmayan motor (ör. AVX'siz CPU'da mongo)
+    _sayilan += 1
+    _pr, _lm = _sayi(_pl, "reserved_mb"), _sayi(_pl, "limit_mb")
+    if _pr is None or _lm is None:
+        _bozuk.append("%s: reserved_mb yok" % _e["id"])
+    elif not 0 <= _pr <= _lm:
+        _bozuk.append("%s: rezerve %d, tavan %d" % (_e["id"], _pr, _lm))
+    elif _e["id"] in _ONALLOC and _pr <= 0:
+        _bozuk.append("%s: açılışta ayırır ama rezerve 0" % _e["id"])
+    elif _e["id"] in _ONDEMAND and _pr > _lm * 0.1:
+        _bozuk.append("%s: tabanı ~0 olmalı, rezerve %d/%d"
+                      % (_e["id"], _pr, _lm))
+ck("plan rezerveyi motorun gerçek davranışına göre bildiriyor "
+   "(0 ≤ rezerve ≤ tavan)",
+   not _bozuk and _sayilan >= 10,
+   "%d plan bakıldı%s" % (_sayilan, ("; " + "; ".join(_bozuk[:3]))
+                          if _bozuk else ""))
+
+# =============================================================================
+# 8. YEDEK ZAMANLAYICISI — "BİR SONRAKİ DENEME" 24 SAAT SONRASI DEĞİL
+# =============================================================================
+# Ertelenen tur (kilit meşguldü) koşmuş sayılmaz ve zamanlayıcı onu en geç
+# BACKUP_RETRY_AFTER sonra yeniden dener. Panel ise "sonraki koşum" diye
+# next_run'ı gösteriyordu: hedef DAKİKA geçtiği için o değer ertesi günün
+# aynı saati, yani ~24 saat sonrasıdır. Kullanıcı "yedek 24 saat alınmayacak"
+# okuyor, oysa deneme 10 dakika sonra yapılacaktı.
+head("8. Yedek zamanlayıcısı — bir sonraki DENEME")
+
+app.BACKUP_CFG_FILE = "/tmp/dbstack-selftest/backup-plan.json"
+_simdi = time.time()
+_lt = time.localtime(_simdi - 120)        # hedef dakika 2 dk önce geçti
+_saat = "%02d:%02d" % (_lt.tm_hour, _lt.tm_min)
+app.save_backup_cfg({"enabled": True, "time": _saat, "retention_days": 7,
+                     "last_deferred": int(_simdi - 60)})
+_sch = app.backups_overview().get("schedule", {})
+_na, _nr = _sch.get("next_attempt"), _sch.get("next_run")
+_sinir = app.BACKUP_RETRY_AFTER + 120
+ck("ertelenen turdan sonra bir sonraki DENEME yakında (24 saat sonrası değil)",
+   isinstance(_na, int) and 0 < _na - _simdi <= _sinir,
+   "deneme +%s sn (sınır %d) · zamanlanmış koşum +%s sn"
+   % (int(_na - _simdi) if isinstance(_na, int) else "yok", _sinir,
+      int(_nr - _simdi) if isinstance(_nr, int) else "yok"))
+ck("(negatif deneme) next_run'ı deneme diye göstermek bu kontrole takılıyor",
+   not (isinstance(_nr, int) and 0 < _nr - _simdi <= _sinir),
+   "next_run +%s sn" % (int(_nr - _simdi) if isinstance(_nr, int) else "yok"))
+ck("ertelemenin sebebi kullanıcıya yazılıyor (attempt_note)",
+   isinstance(_sch.get("attempt_note"), str)
+   and len(_sch["attempt_note"]) >= 10,
+   str(_sch.get("attempt_note"))[:60])
+
+# Erteleme yokken uydurma bir deneme üretilmemeli: "10 dk sonra tekrar
+# denenecek" yazan bir panel, aslında ertesi güne kadar hiçbir şey
+# yapmayacakken kullanıcıyı bekletir.
+app.save_backup_cfg({"enabled": True, "time": _saat, "retention_days": 7})
+_sch2 = app.backups_overview().get("schedule", {})
+ck("erteleme yokken sonraki deneme = zamanlanmış koşum",
+   _sch2.get("next_attempt") == _sch2.get("next_run")
+   and _sch2.get("attempt_note") is None,
+   "deneme=%s koşum=%s not=%s" % (_sch2.get("next_attempt"),
+                                  _sch2.get("next_run"),
+                                  _sch2.get("attempt_note")))
 
 # =============================================================================
 print()

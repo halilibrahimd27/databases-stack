@@ -23,12 +23,22 @@
 #                             gönderir; reddedilmesi beklenir (ve ret çalışmazsa
 #                             betik açılanı kendisi kapatır), ama canlı sistemde
 #                             karar sizin olsun diye kapatılabilir.
+#     SIZING_SKIP_REBALANCE=1 yeniden dengeleme testini atla. O test, açık bir
+#                             motorun TAVANINI `docker update` ile geçici olarak
+#                             şişirip aşırı taahhüt durumunu KENDİSİ yaratır,
+#                             sonra POST /api/rebalance'ın tavanı geri
+#                             indirdiğini ölçer. Tavanı yükseltmek container'ı
+#                             yeniden başlatmaz ve motorun ayırdığı belleği
+#                             değiştirmez; betik çıkarken eski değeri geri
+#                             yazar. Yine de canlı sistemde karar sizin olsun.
 #
 # NE YARATIR / NE SİLER:
 #     Veritabanı, tablo, kullanıcı ya da kalıcı dosya YARATMAZ. Yalnız /tmp
 #     altında geçici bir çalışma dizini açar ve çıkarken siler. Bütçe reddi
 #     testi controller'ın olay günlüğüne bir "activate_refused" kaydı bırakır;
-#     bu bir denetim kaydıdır, silinmez. Betik arka arkaya iki kez
+#     bu bir denetim kaydıdır, silinmez. Yeniden dengeleme testi bir
+#     container'ın bellek TAVANINI geçici olarak değiştirir ve EXIT'te eski
+#     değerine döndürür (trap; Ctrl-C'de de çalışır). Betik arka arkaya iki kez
 #     çalıştırılabilir — ikinci çalıştırma birincisinden farklı davranmaz.
 # =============================================================================
 set -uo pipefail
@@ -1366,6 +1376,343 @@ else
             warn "$hedef için durdurma isteği gönderildi (betik kendi yan etkisini temizliyor)"
         else
             t_ok "reddedilen aktivasyon hiçbir container yaratmadı ($HC hâlâ kapalı)"
+        fi
+    fi
+fi
+
+# =============================================================================
+# 6) AŞIRI TAAHHÜTTE YENİDEN DENGELEME
+# =============================================================================
+# Tavan (docker --memory) bir ÜST SINIRDIR, rezervasyon değil. Bu yüzden
+# tavanların toplamı dağıtılabilir belleği aşabilir — ölçülen test sunucusunda
+# 15984 MB RAM'de tavan toplamı 15087 MB, dağıtılabilir 12340 MB, gerçek
+# kullanım 1508 MB ve çekirdek baskısı 0.00'dı. Aşım kendiliğinden arıza
+# değil; ama POLİTİKA SINIRINI (dağıtılabilir × OVERCOMMIT_LIMIT) geçtiğinde
+# yeniden dengeleme tavanları geri indirmelidir.
+#
+# İki şey birden ölçülüyor, çünkü ikisi de tek başına yanıltıcı:
+#   (1) tavanlar GERÇEKTEN düştü mü — yalnız "iş başarılı döndü" demek yetmez,
+#       cgroup'ta hiçbir şey değişmemiş olabilir;
+#   (2) container'lar YENİDEN BAŞLATILDI MI — tavanı düşürmenin kolay yolu
+#       `compose up -d` ile motoru yeniden yaratmaktır. O yol çalışan
+#       veritabanını kapatır: açık bağlantılar kopar, InnoDB kurtarma başlar,
+#       kullanıcı "bellek ayarı" yaptı sanırken kesinti yaşar. .State.StartedAt
+#       bu farkı gösteren tek ölçüdür.
+#
+# Aşırı taahhüt durumunu betik KENDİSİ yaratıyor: canlı bir yığın çoğu zaman
+# politika sınırının altındadır ve o hâlde "düşürdü mü" sorusu ölçülemez —
+# ölçülemeyeni ATLANDI diye geçmek bu paketin baştan reddettiği kalıptır.
+heading "6) Yeniden dengeleme — tavanı düşürür, container'ı yeniden başlatmaz"
+
+R_ISIM_DUS="aşırı taahhütte yeniden dengeleme tavanları düşürüyor"
+R_ISIM_POL="yeniden dengeleme sonrası tavan toplamı politika sınırına dönüyor"
+R_ISIM_RST="yeniden dengeleme hiçbir container'ı yeniden BAŞLATMIYOR"
+
+# Şişirilen tavanın eski değeri burada durur; EXIT'te geri yazılıyor. Boşsa
+# yapacak bir şey yok (test hiç çalışmadı ya da şişirme tutmadı).
+REBAL_C=""; REBAL_ESKI_MB=""
+
+rebal_temizle() {
+    [ -n "$REBAL_C" ] && [ -n "$REBAL_ESKI_MB" ] || return 0
+    local simdi
+    simdi="$(docker_limit_mb "$REBAL_C" 2>/dev/null)" || simdi=""
+    if [ "$simdi" = "$REBAL_ESKI_MB" ]; then
+        return 0                      # zaten eski değerinde
+    fi
+    local m="${REBAL_ESKI_MB}m"
+    if docker update --memory "$m" --memory-swap "$m" "$REBAL_C" \
+            >/dev/null 2>&1 \
+       || docker update --memory "$m" "$REBAL_C" >/dev/null 2>&1; then
+        warn "$REBAL_C tavanı ${REBAL_ESKI_MB} MB'a geri yazıldı (betik kendi dokunduğunu geri alıyor)"
+    else
+        warn "$REBAL_C tavanı ${REBAL_ESKI_MB} MB'a GERİ YAZILAMADI — şu anki değer: ${simdi:-okunamadı} MB. Elle düzeltin: docker update --memory ${REBAL_ESKI_MB}m $REBAL_C"
+    fi
+}
+# Eski trap yalnız geçici dizini siliyordu; kendi değiştirdiğimiz tavanı geri
+# yazmayan bir test, ölçtüğü sistemi bozuk bırakır.
+trap 'rebal_temizle; rm -rf "$TMP"' EXIT
+
+carp() {   # carp <sayı> <çarpan> → tamsayı (aşağı yuvarlar); çözülemezse rc=1
+    local v
+    v="$(python3 -c '
+import sys
+sys.stdout.write(str(int(float(sys.argv[1]) * float(sys.argv[2]))))' \
+        "$1" "$2" 2>/dev/null)" || return 1
+    [ -n "$v" ] || return 1
+    printf '%s' "$v"
+}
+
+baslangic_of() {   # <container> → .State.StartedAt  (okunamazsa rc=1)
+    local v
+    v="$(TO 20 docker inspect -f '{{.State.StartedAt}}' "$1" \
+         2>/dev/null)" || return 1
+    v="$(printf '%s' "$v" | tr -d '\r')"
+    # "<no value>" ve boş dizge OKUNAMADI demektir. Bunları karşılaştırmaya
+    # sokmak en kötü sonucu verirdi: iki tarafı da boş olan bir eşitlik
+    # "yeniden başlatılmamış" diye GEÇERDİ.
+    case "$v" in ''|'<no value>') return 1 ;; esac
+    printf '%s' "$v"
+}
+
+rebal_is_bekle() {   # <job> <saniye> → "durum|sebep"; okunamazsa rc=1
+    local job="$1" limit="$2" gecen=0 durum="running" sebep="" jc
+    while [ "$durum" = "running" ] && [ "$gecen" -lt "$limit" ]; do
+        sleep 2; gecen=$((gecen + 2))
+        jc="$(api_get "/api/jobs/$job" "$TMP/rjob.json")"
+        [ "$jc" = "200" ] || return 1
+        durum="$(pjq "$TMP/rjob.json" 'd.get("state","")')" || return 1
+        sebep="$(pj "$TMP/rjob.json" 'd.get("reason","")')"
+        [ $((gecen % 20)) -eq 0 ] \
+            && log "  yeniden dengeleme işi bekleniyor (${gecen}s/${limit}s), durum: $durum"
+    done
+    printf '%s|%s' "$durum" "$sebep"
+}
+
+# Ölçüm ÖNCESİ ön koşullar. Her biri ayrı bir sebeple düşer ve hepsinde üç
+# kontrolün üçü de aynı gerekçeyle bildirilir — sessizce geçen tek satır yok.
+r_atla=""; r_bilinmiyor=""
+ST="$TMP/status.json"
+if [ -n "${SIZING_SKIP_REBALANCE:-}" ]; then
+    r_atla="SIZING_SKIP_REBALANCE ayarlı — test istenerek atlandı"
+elif [ -z "$AKTIF_MOTORLAR" ]; then
+    r_atla="açık motor yok; şişirilecek ve yeniden dengelenecek tavan da yok (./stack.sh enable mariadb)"
+else
+    code="$(api_get /api/status "$ST")"
+    if http_cevapsiz "$code"; then
+        r_bilinmiyor="/api/status cevapsız (HTTP $code) — dağıtılabilir bellek ve politika sınırı okunamadı"
+    elif [ "$code" != "200" ]; then
+        r_bilinmiyor="/api/status HTTP $code — $(head -c 160 "$ST" 2>/dev/null | tr -d '\n')"
+    fi
+fi
+
+R_ALLOC=""; R_POL=""
+if [ -z "$r_atla" ] && [ -z "$r_bilinmiyor" ]; then
+    # Varsayılan YOK: alan eksikse sınır sessizce gevşer ve "politikaya döndü"
+    # kontrolü her koşuda geçer. Bkz. bölüm 2'deki os_reserve_mb notu.
+    R_ALLOC="$(pjq "$ST" 'd["system"]["allocatable_mb"]')" || R_ALLOC=""
+    R_POL="$(pjq "$ST" 'd["system"]["overcommit_limit"]')" || R_POL=""
+    if ! tamsayi_mi "${R_ALLOC:-}" || [ "$R_ALLOC" -le 0 ]; then
+        r_bilinmiyor="/api/status system.allocatable_mb üretmiyor (gelen: '${R_ALLOC:-yok}') — politika sınırı hesaplanamıyor"
+    elif [ -z "$R_POL" ]; then
+        r_bilinmiyor="/api/status system.overcommit_limit üretmiyor — aşırı taahhüt politikası bilinmeden 'sınıra döndü' ölçülemez"
+    fi
+fi
+
+# Hedef: AÇIK bir motorun ana kopyası. Kontrol düzlemine (gateway/controller/
+# adminer) dokunmuyoruz; onların tavanını şişirmek paneli riske atardı.
+R_HEDEF=""; R_C=""
+if [ -z "$r_atla" ] && [ -z "$r_bilinmiyor" ]; then
+    for eid in $AKTIF_MOTORLAR; do
+        c="$(primary_container "$eid")" || continue
+        [ -n "$c" ] || continue
+        container_running "$c" || continue
+        R_HEDEF="$eid"; R_C="$c"; break
+    done
+    [ -n "$R_C" ] || \
+        r_bilinmiyor="açık görünen motorların ($AKTIF_MOTORLAR) hiçbirinin ana kopya container'ı çözülemedi"
+fi
+
+R_ILK_MB=""
+if [ -z "$r_atla" ] && [ -z "$r_bilinmiyor" ]; then
+    if ! R_ILK_MB="$(docker_limit_mb "$R_C")"; then
+        r_bilinmiyor="$R_C tavanı okunamadı (docker inspect düştü) — şişirme öncesi değer bilinmeden geri yazılamaz"
+    elif [ "$R_ILK_MB" -le 0 ]; then
+        # Limitsiz container'ı şişirmenin anlamı yok ve geri yazarken
+        # "limitsiz"e döndürmek `docker update` ile mümkün değil: bu testin
+        # sistemi eski hâline bırakacağını garanti edemeyiz.
+        r_bilinmiyor="$R_C limitsiz çalışıyor (tavan 0) — şişirilse geri alınamaz; önce limit uygulanmalı"
+    fi
+fi
+
+if [ -n "$r_atla" ]; then
+    t_skip "$R_ISIM_DUS" "$r_atla"
+    t_skip "$R_ISIM_POL" "$r_atla"
+    t_skip "$R_ISIM_RST" "$r_atla"
+elif [ -n "$r_bilinmiyor" ]; then
+    t_unknown "$R_ISIM_DUS" "$r_bilinmiyor"
+    t_unknown "$R_ISIM_POL" "$r_bilinmiyor"
+    t_unknown "$R_ISIM_RST" "$r_bilinmiyor"
+else
+    # --- aşırı taahhüt durumunu YARAT ------------------------------------
+    # Tek bir tavanı politika sınırının üstüne çıkarmak yetiyor: toplam da
+    # kaçınılmaz olarak aşar. Tavanı YÜKSELTMEK güvenlidir — motor o belleği
+    # ayırmaz, yalnız cgroup'un üst sınırı gevşer.
+    if ! R_SINIR="$(carp "$R_ALLOC" "$R_POL")" || ! tamsayi_mi "$R_SINIR"; then
+        R_SINIR=""
+    fi
+    R_SISIK=""
+    [ -n "$R_SINIR" ] && R_SISIK=$(( R_SINIR + 2048 ))
+
+    sisti=0
+    if [ -z "$R_SISIK" ]; then
+        r_bilinmiyor="politika sınırı hesaplanamadı (dağıtılabilir=$R_ALLOC × $R_POL) — şişirilecek değer bilinmiyor"
+    else
+        REBAL_C="$R_C"; REBAL_ESKI_MB="$R_ILK_MB"   # temizlik artık devrede
+        # --memory-swap'siz `docker update` bazı çekirdeklerde "Memory limit
+        # should be smaller than already set memoryswap limit" ile düşer;
+        # ikisini birlikte vermek o durumu çözer. İkisi de düşerse ŞİŞİREMEDİK.
+        sm="${R_SISIK}m"
+        if docker update --memory "$sm" --memory-swap "$sm" "$R_C" \
+                >/dev/null 2>&1 \
+           || docker update --memory "$sm" "$R_C" >/dev/null 2>&1; then
+            sisti=1
+        else
+            REBAL_ESKI_MB=""    # dokunmadık; temizleyecek bir şey de yok
+            r_bilinmiyor="docker update --memory $R_C üzerinde başarısız — aşırı taahhüt durumu yaratılamadı (eski çekirdeklerde cgroup v1 canlı güncellemeye izin vermeyebilir)"
+        fi
+    fi
+
+    if [ "$sisti" -eq 1 ]; then
+        # Şişirme cgroup'a GERÇEKTEN yazıldı mı? `docker update` 0 dönüp
+        # değeri uygulamadığında aşağıdaki "düştü mü" ölçümü kendi
+        # başlangıç noktasını kaybeder ve anlamsızlaşır.
+        R_DOGRU=""
+        if ! R_DOGRU="$(docker_limit_mb "$R_C")" \
+           || [ "$R_DOGRU" -lt "$R_SISIK" ]; then
+            r_bilinmiyor="tavan şişirildi ama docker $R_C için ${R_DOGRU:-okunamadı} MB bildiriyor (beklenen $R_SISIK MB) — aşırı taahhüt durumu doğrulanamadı"
+            sisti=0
+        fi
+    fi
+
+    if [ "$sisti" -eq 0 ]; then
+        t_unknown "$R_ISIM_DUS" "$r_bilinmiyor"
+        t_unknown "$R_ISIM_POL" "$r_bilinmiyor"
+        t_unknown "$R_ISIM_RST" "$r_bilinmiyor"
+    else
+        log "$R_HEDEF ($R_C) tavanı $R_ILK_MB → $R_SISIK MB'a şişirildi (politika sınırı $R_SINIR MB); yeniden dengeleme bekleniyor"
+
+        # --- ÖNCE: bütün proje container'larının başlangıç zamanı ---------
+        # RUNNING bölüm 2'de docker ps'ten dolduruldu. Okunamayan container
+        # AYRI tutuluyor: karşılaştırmanın bir ucunu ölçemediysek o container
+        # için "yeniden başlatılmadı" DİYEMEYİZ.
+        : > "$TMP/before.txt"
+        onc_okunamayan=""; onc_adet=0
+        for c in $RUNNING; do
+            if s="$(baslangic_of "$c")"; then
+                printf '%s %s\n' "$c" "$s" >> "$TMP/before.txt"
+                onc_adet=$((onc_adet + 1))
+            else
+                onc_okunamayan="$onc_okunamayan $c"
+            fi
+        done
+
+        # --- yeniden dengelemeyi çalıştır --------------------------------
+        RB="$TMP/rebalance.json"
+        code="$(api_post /api/rebalance '{}' "$RB")"
+        job="$(pj "$RB" 'd.get("job","")')"
+        is_durum=""; is_sebep=""; is_hata=""; is_log=""
+        if http_cevapsiz "$code"; then
+            is_hata="POST /api/rebalance cevapsız (HTTP $code)"
+        elif [ "$code" = "404" ]; then
+            is_hata="404"
+        elif [ -z "$job" ]; then
+            is_hata="istek işe dönüşmedi: HTTP $code — $(head -c 160 "$RB" 2>/dev/null | tr -d '\n')"
+        elif ! sonuc="$(rebal_is_bekle "$job" "$JOB_TIMEOUT")"; then
+            is_hata="iş durumu okunamadı (/api/jobs/$job) — yeniden dengeleme yapıldı mı bilinmiyor"
+        else
+            is_durum="${sonuc%%|*}"; is_sebep="${sonuc#*|}"
+            # İş günlüğü kararın GEREKÇESİNİ taşıyor. Controller,
+            # gerçek kullanımı ölçemediği bir container'ın tavanını
+            # BİLEREK küçültmez (körlemesine küçültmek anında OOM
+            # demektir). O durumda "düşürmedi" bir arıza değil,
+            # ölçülemeyen bir koşuldur; ayırt etmezsek ürüne olmayan
+            # bir hata yazarız.
+            is_log="$(pj "$TMP/rjob.json" '" | ".join(d.get("log") or [])')"
+        fi
+
+        if [ "$is_hata" = "404" ]; then
+            # Uç yoksa ürün bu vaadi hiç vermiyor demektir; bu ölçüm hatası
+            # değil, ARIZA.
+            t_fail "$R_ISIM_DUS" "POST /api/rebalance 404 — yeniden dengeleme ucu yok; aşırı taahhüt hâlinde kullanıcının tavanları indirecek bir yolu yok"
+            t_fail "$R_ISIM_POL" "POST /api/rebalance 404"
+            t_skip "$R_ISIM_RST" "yeniden dengeleme hiç çalışmadı; yeniden başlatma da olamazdı"
+        elif [ -n "$is_hata" ]; then
+            t_unknown "$R_ISIM_DUS" "$is_hata"
+            t_unknown "$R_ISIM_POL" "$is_hata"
+            t_unknown "$R_ISIM_RST" "$is_hata"
+        elif [ "$is_durum" = "running" ]; then
+            t_fail "$R_ISIM_DUS" "iş $JOB_TIMEOUT saniyede sonuçlanmadı, hâlâ 'running' — kullanıcı sonuç göremeden bekler"
+            t_unknown "$R_ISIM_POL" "iş bitmeden tavan toplamı ölçülemez"
+            t_unknown "$R_ISIM_RST" "iş bitmeden başlangıç zamanları karşılaştırılamaz"
+        elif [ "$is_durum" != "done" ]; then
+            t_fail "$R_ISIM_DUS" "yeniden dengeleme işi '$is_durum' ile bitti: ${is_sebep:-sebep yok} — tavan $R_SISIK MB'da kaldı"
+            t_unknown "$R_ISIM_POL" "iş başarısız oldu; politikaya dönüş ölçülemedi"
+            # Yeniden başlatma ölçümü burada BİLEREK bildirilmiyor: yarım
+            # kalmış bir dengeleme de container'ı yeniden yaratmış olabilir ve
+            # bunu ölçebiliyoruz. Karşılaştırma aşağıdaki blokta yapılıyor.
+        else
+            # --- (1) hedefin tavanı gerçekten düştü mü? -------------------
+            if ! R_SON_MB="$(docker_limit_mb "$R_C")"; then
+                t_unknown "$R_ISIM_DUS" "$R_C tavanı yeniden dengelemeden sonra okunamadı — düşüp düşmediği bilinmiyor"
+            elif [ "$R_SON_MB" -lt "$R_SISIK" ]; then
+                t_ok "$R_HEDEF tavanı yeniden dengelemeyle $R_SISIK → $R_SON_MB MB'a indirildi (politika sınırı $R_SINIR MB)"
+            elif printf '%s' "$is_log" | grep -q 'ölçülemedi'; then
+                t_unknown "$R_ISIM_DUS" "tavan $R_SISIK MB'da kaldı; iş günlüğü gerçek kullanımın ölçülemediğini söylüyor ve controller o hâlde tavanı bilerek küçültmüyor — kural doğru, ama 'düşürüyor mu' sorusu bu koşuda ÖLÇÜLEMEDİ: ${is_log:0:220}"
+            else
+                t_fail "$R_ISIM_DUS" "tavan $R_SISIK MB'da kaldı (şu an $R_SON_MB MB) — iş 'done' döndü ama cgroup'ta hiçbir şey değişmedi; panel dengelendi der, çekirdek aynı üst sınırla çalışır. İş günlüğü: ${is_log:0:220}"
+            fi
+
+            # --- (2) toplam politika sınırına döndü mü? -------------------
+            # Sınırı TAZE okuyoruz: yeniden dengeleme dağıtılabiliri de
+            # değiştirmiş olabilir (bir motor kapanmış olabilir).
+            ST2="$TMP/status2.json"
+            code="$(api_get /api/status "$ST2")"
+            son_alloc=""; son_pol=""
+            if [ "$code" = "200" ]; then
+                son_alloc="$(pjq "$ST2" 'd["system"]["allocatable_mb"]')" \
+                    || son_alloc=""
+                son_pol="$(pjq "$ST2" 'd["system"]["overcommit_limit"]')" \
+                    || son_pol=""
+            fi
+            son_toplam=0; son_okunamayan=""
+            for c in $RUNNING; do
+                m="$(docker_limit_mb "$c")" || { son_okunamayan="$son_okunamayan $c"; continue; }
+                son_toplam=$((son_toplam + m))
+            done
+            if ! tamsayi_mi "${son_alloc:-}" || [ -z "$son_pol" ]; then
+                t_unknown "$R_ISIM_POL" "/api/status yeniden dengelemeden sonra dağıtılabilir/politika üretmedi (HTTP $code) — sınır bilinmeden 'döndü mü' söylenemez"
+            elif ! son_sinir="$(carp "$son_alloc" "$son_pol")" \
+                 || ! tamsayi_mi "$son_sinir"; then
+                t_unknown "$R_ISIM_POL" "politika sınırı hesaplanamadı ($son_alloc × $son_pol)"
+            elif [ "$son_toplam" -le "$son_sinir" ]; then
+                # Eksik ölçüm burada da bildiriliyor: toplamın bir parçasını
+                # okuyamadıysak "sınırın altında" sonucu eksik veriye dayanır.
+                if [ -n "$son_okunamayan" ]; then
+                    t_unknown "$R_ISIM_POL" "eksik toplam ($son_toplam MB) sınırın ($son_sinir MB) altında görünüyor ama şunların tavanı okunamadı:$son_okunamayan"
+                else
+                    t_ok "yeniden dengeleme sonrası tavan toplamı $son_toplam MB ≤ politika sınırı $son_sinir MB (dağıtılabilir $son_alloc × $son_pol)"
+                fi
+            else
+                t_fail "$R_ISIM_POL" "tavan toplamı $son_toplam MB > politika sınırı $son_sinir MB — yeniden dengeleme aşırı taahhüdü gidermedi${son_okunamayan:+ (okunamayanlar hariç:$son_okunamayan)}"
+            fi
+        fi
+
+        # --- (3) container'lar yeniden başlatıldı mı? ---------------------
+        # İş başarısız olsa bile ölçülüyor: yarım kalmış bir yeniden
+        # dengelemenin motoru yeniden başlatmış olması en kötü sonuçtur.
+        if [ -n "$is_hata" ] || [ "$is_durum" = "running" ]; then
+            :    # yukarıda zaten bildirildi
+        elif [ "$onc_adet" -eq 0 ]; then
+            t_unknown "$R_ISIM_RST" "hiçbir container'ın başlangıç zamanı okunamadı (docker inspect .State.StartedAt) — karşılaştırılacak referans yok:$onc_okunamayan"
+        else
+            yeniden=""; son_okunamaz=""
+            while read -r c onceki; do
+                [ -n "$c" ] || continue
+                if ! sonraki="$(baslangic_of "$c")"; then
+                    son_okunamaz="$son_okunamaz $c"
+                    continue
+                fi
+                [ "$sonraki" = "$onceki" ] || yeniden="$yeniden $c($onceki→$sonraki)"
+            done < "$TMP/before.txt"
+            if [ -n "$yeniden" ]; then
+                t_fail "$R_ISIM_RST" "başlangıç zamanı değişen:$yeniden — yeniden dengeleme container'ı yeniden yaratmış; açık bağlantılar koptu ve motor kurtarma ile açıldı. Beklenen yol: docker update (canlı limit değişimi)"
+            elif [ -n "$son_okunamaz" ]; then
+                t_unknown "$R_ISIM_RST" "$onc_adet container'ın bir kısmının sonraki başlangıç zamanı okunamadı:$son_okunamaz — yeniden başlatılıp başlatılmadıkları bilinmiyor"
+            elif [ -n "$onc_okunamayan" ]; then
+                t_unknown "$R_ISIM_RST" "ölçülen $onc_adet container'da başlangıç zamanı değişmedi, ama şunlar hiç okunamadı:$onc_okunamayan — paketin tamamı için 'yeniden başlatılmadı' denemez"
+            else
+                t_ok "yeniden dengeleme $onc_adet container'ın hiçbirini yeniden başlatmadı (.State.StartedAt aynı) — limitler canlı güncellendi"
+            fi
         fi
     fi
 fi

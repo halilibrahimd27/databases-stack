@@ -326,9 +326,13 @@ details[open] > .sum .chev::before { transform: rotate(45deg); }
   min-width: 0;
 }
 
-/* --- ana ölçü: ayrılan bellek --- */
+/* --- ana ölçü: BELLEK KULLANIMI ---
+   Sütunun cevapladığı soru değişti: büyük sayı artık ayrılanı değil gerçek
+   kullanımı gösteriyor, altına da baskı ve tavan rozetleri geliyor (bkz.
+   .sys-flags). Genişlik 264 → 288: rozet şeridi 264'te üç satıra dağılıp
+   üst barı gereksiz yere büyütüyordu. */
 .sys-item-mem {
-  width: 264px;
+  width: 288px;
   flex: 0 0 auto;
   min-width: 0;
 }
@@ -386,6 +390,45 @@ details[open] > .sum .chev::before { transform: rotate(45deg); }
 }
 .sys-sub-warn { color: var(--err); font-weight: 600; }
 
+/* --- rozetler: çekirdek baskısı ve aşırı taahhüt ---
+   ÖLÇÜLEN OLAY: tavanların toplamı dağıtılabilirin %122'siyken üst bar
+   kırmızı yanıyor, kapalı motorların hepsinde "bellek yetmiyor" yazıyordu —
+   oysa makinenin %91'i boştu ve /proc/pressure/memory bütün pencerelerde
+   0.00 bildiriyordu. Tavan aşımı TEK BAŞINA arıza değildir: limitler birer
+   üst sınırdır, hepsi aynı anda dolmaz. Bu yüzden varsayılan rozet RENKSİZ;
+   sarı ancak politika sınırı aşılınca, kırmızı ancak çekirdek gerçekten
+   baskı bildirince ya da baştan ayrılanlar dağıtılabiliri aşınca çıkar. */
+.sys-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-top: 6px;
+}
+.sys-flag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1.5;
+  /* Sarmalanır: "tavan toplamı %122 — tavanlar aynı anda dolmaz" cümlesi
+     tek satıra sığmıyor ve kırpıldığında tam da açıklayan yarısı gidiyor. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.sys-flag.is-warn {
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.sys-flag.is-err {
+  border-color: var(--err-border);
+  background: var(--err-bg);
+  color: var(--err);
+}
+
 /* --- künye: sunucu / disk / işlemci --- */
 .sys-meta {
   display: flex;
@@ -422,6 +465,41 @@ details[open] > .sum .chev::before { transform: rotate(45deg); }
   font-weight: 550;
 }
 .banner[hidden] { display: none !important; }
+
+/* --- öğüt şeridi: bellek politikası aşıldığında NE YAPILACAĞI ---
+   .banner'dan ayrı bir şey ve ayrı görünmesi gerekiyor: banner "kurulum
+   eksik" gibi ARIZA bildirir ve kırmızıdır. Burada bildirilen şey arıza
+   değil, bir eşiğin aşılması: gerçek kullanım düşük, çekirdek baskısı yok,
+   yalnız tavanların toplamı politika sınırının üstüne çıkmış. Bu yüzden
+   varsayılan ton sarı; kırmızı yalnız .is-err ile, baştan ayrılanlar
+   dağıtılabiliri gerçekten aştığında. */
+.mem-advice {
+  max-width: var(--page);
+  margin: 14px auto 0;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--warn-bg);
+  color: var(--warn);
+  border: 1px solid var(--warn-border);
+  border-left: 3px solid var(--warn-dot);
+}
+.mem-advice.is-err {
+  background: var(--err-bg);
+  color: var(--err);
+  border-color: var(--err-border);
+  border-left-color: var(--err-dot);
+}
+.mem-advice[hidden] { display: none !important; }
+
+.mem-advice-t, .mem-advice-n {
+  margin: 0;
+  max-width: 88ch;
+  font-size: var(--fs-md);
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+.mem-advice-n { margin-top: 7px; }
+.mem-advice-act { margin-top: 10px; }
 
 /* ------------------- 5. Gövde, giriş, araç çubuğu, durum okuması --------- */
 main {
@@ -1074,6 +1152,45 @@ main {
   font-weight: 640;
 }
 
+/* --- ölçülen değerler: hangi kural çiğnendi ---
+   Hem pencerede hem kapalı motor satırının açılırında kullanılıyor. Ayrı bir
+   sınıf, çünkü .plan-line b nowrap: "3.2 GB + 512 MB ≤ 12.3 GB · ✗ kaldı"
+   gibi bir hesap satır sonunda kırılamayıp satırı taşırıyordu.
+   Kaldığı kural SARI: "yer yok" burada bir arıza değil bir bütçe kararıdır
+   ve kırmızı, kullanıcıyı sunucuda olmayan bir sorunu aramaya gönderiyordu. */
+.kural {
+  margin: 10px 0 0;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.kural-bas {
+  margin: 0 0 4px;
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+}
+.kural-satir {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1px 14px;
+  padding: 3px 0;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+.kural-ad { color: var(--muted); min-width: 0; }
+.kural-hesap {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.kural-ok { color: var(--text-2); }
+.kural-no { color: var(--warn); font-weight: 640; }
+
 .note {
   margin: 12px 0 0;
   padding: 9px 12px;
@@ -1303,7 +1420,7 @@ main {
 /* -------------------------------- 15. Duyarlılık ve erişilebilirlik ------ */
 @media (max-width: 1080px) {
   :root { --card-basis: 320px; }
-  .sys-item-mem { width: 240px; }
+  .sys-item-mem { width: 252px; }
 }
 
 @media (max-width: 900px) {
@@ -1311,7 +1428,7 @@ main {
   .sysbar { width: 100%; justify-content: space-between; gap: 16px; }
   .sys-item-mem { flex: 1 1 240px; width: auto; }
   main { padding: 24px 16px 60px; }
-  .banner { margin-left: 16px; margin-right: 16px; }
+  .banner, .mem-advice { margin-left: 16px; margin-right: 16px; }
   :root { --card-max: 100%; }
 }
 
@@ -1569,6 +1686,12 @@ main {
   overflow-wrap: anywhere;
 }
 .bk-defer b { font-weight: 650; }
+
+/* Sıradaki DENEME, olağan gecelik turdan farklı bir zamana kaymışsa (kilit
+   çakışması) satır .bk-defer ile aynı sarıyı alır. Kırmızı olamaz: yedek
+   bozulmadı, yalnız sıra bekliyor — kutu "Sıradaki yedek: 24 saat sonra"
+   yazarken kullanıcı o günün yedeğinden umudu kesip elle yedek alıyordu. */
+.bk-retry { color: var(--warn); overflow-wrap: anywhere; }
 
 .bk-warn {
   margin: 6px 0 0;

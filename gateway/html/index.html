@@ -28,8 +28,21 @@ try {
      Sunucu / Disk / İşlemci ise onun yanında ince, kutusuz bir künye satırı.
      Bellek, "açabilir miyim" sorusunun tek belirleyicisi olduğu için sayfadaki
      en ağır sayı odur; diğer üçü referans bilgisidir.
+
+     BÜYÜK SAYI GERÇEK KULLANIMDIR, ayrılan değil. Burada eskiden "Ayrılan
+     bellek" yazıyor ve docker tavanlarının toplamı gösteriliyordu: 16 GB'lık
+     bir sunucuda "15 GB / 12 GB · %122 aşım" çıkıyordu, oysa free -m 1508 MB
+     kullanım, çekirdek de sıfır bellek baskısı bildiriyordu. Tavan bir
+     rezervasyon değil üst sınırdır; toplanıp RAM ile kıyaslanamaz. Baştan
+     ayrılan (rezerve) ile üst sınır (tavan) artık ALT satırda, adları
+     söylenerek duruyor.
+
      app.js'in okuduğu id'ler (#sys-host #sys-mem #sys-mem-bar #sys-mem-real
-     #sys-disk #sys-cpu) ve .sys-item-mem sınıfı aynen korunuyor.
+     #sys-disk #sys-cpu) ve .sys-item-mem sınıfı aynen korunuyor. Rozet
+     şeridi (.sys-flags) ile bellek öğüt kutusu (#mem-advice) BURADA YOK:
+     onları app.js / yedekler.js DOM'a kendisi ekliyor, çünkü aynı üst bar
+     yedekler.html'de de birebir duruyor ve iki kopyayı elle güncellemek er
+     geç ikisinin ayrışması demekti.
      =========================================================================== -->
 <header class="topbar">
   <div class="brand">
@@ -49,9 +62,9 @@ try {
   <div class="sysbar" id="sysbar" role="group" aria-label="Sunucu durumu">
 
     <div class="sys-item sys-item-mem">
-      <span class="sys-label">Ayrılan bellek</span>
+      <span class="sys-label">Bellek kullanımı</span>
       <b id="sys-mem">—</b>
-      <div class="meter" role="img" aria-label="Ayrılan bellek">
+      <div class="meter" role="img" aria-label="Bellek kullanımı">
         <div class="meter-fill" id="sys-mem-bar"></div>
       </div>
       <span class="sys-sub" id="sys-mem-real">—</span>

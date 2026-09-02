@@ -112,13 +112,14 @@ Panelde bir veritabanını açtığınızda arka planda şunlar olur:
 
 ```
 "Aktif Et"  →  Kontrol servisi sunucuyu ölçer
-                 ├─ Toplam RAM, boş RAM, boş disk, CPU
-                 ├─ Zaten açık veritabanlarının taahhüdü
-                 └─ İşletim sistemi ve çekirdek servisler için ayrılan pay
+                 ├─ Toplam RAM, çekirdeğin MemAvailable'ı, boş disk, CPU
+                 ├─ Açık motorların REZERVESİ (açılışta gerçekten ayırdıkları)
+                 ├─ Açık container'ların TAVANI (docker --memory)
+                 └─ /proc/pressure/memory — çekirdek baskı altında mı?
                              ↓
-               Bütçe yetiyor mu?
-                 ├─ HAYIR → açmaz, sebebini sade dille söyler
-                 └─ EVET  → limiti ve motorun iç ayarlarını hesaplar
+               Üç kapı da geçiliyor mu?
+                 ├─ HAYIR → açmaz, HANGİ kapıya takıldığını söyler
+                 └─ EVET  → tavanı ve motorun iç ayarlarını hesaplar
                              (buffer pool, JVM heap, WiredTiger cache,
                               max_connections, work_mem …)
                              ↓
@@ -128,22 +129,108 @@ Panelde bir veritabanını açtığınızda arka planda şunlar olur:
 **Kapalı bir veritabanı hiç container yaratmaz** — sıfır RAM, sıfır CPU tüketir.
 Kapatmak verileri silmez; diskte kalır, tekrar açtığınızda her şey yerindedir.
 
+### Bellek otomatik hesaplanır
+
+Belleğin iki ayrı büyüklüğü var ve bu ürünün en pahalı hatası ikisini aynı
+şey sanmaktı.
+
+| | **Rezerve** (taban) | **Tavan** (limit) |
+|---|---|---|
+| Ne demek? | Motorun **açılışta gerçekten ayırdığı** bellek | `docker --memory`: aşılırsa çekirdek container'ı öldürür (OOM) |
+| Nereden gelir? | PostgreSQL `shared_buffers`, MariaDB `innodb_buffer_pool_size`, JVM motorlarında `-Xms` | Kontrol servisinin motora verdiği üst sınır |
+| Redis · MSSQL · MinIO · ClickHouse | **~0** — boş başlarlar, tavana doğru *büyürler* | Büyüyebilecekleri son nokta |
+| Toplamı | Dağıtılabilir belleği **asla** aşamaz | Dağıtılabiliri **aşabilir** (varsayılan sınır: 1,5 katı) |
+
+**Dağıtılabilir bellek** = toplam RAM − işletim sistemi payı − çekirdek
+servislerin payı.
+
+#### Tavan toplamının RAM'i aşması normaldir
+
+16 GB'lık bir test sunucusunda ölçülen tablo:
+
+| Container | Tavan | Gerçek kullanım |
+|---|---|---|
+| mariadb | 3196 MB | 243 MB (%7) |
+| mariadb-replica | 3196 MB | 213 MB (%6) |
+| postgresql | 2397 MB | 98 MB (%4) |
+| redis | 1278 MB | 5 MB (%0) |
+
+Aynı makinede toplam RAM 15984 MB, tavanların toplamı 15087 MB, dağıtılabilir
+bellek ise 12340 MB (15984 − 3196 işletim sistemi − 448 çekirdek servisler).
+Yani tavan toplamı dağıtılabilirin **%122'si**. Buna karşılık:
+
+- `free -m` → kullanılan **1508 MB**, available **13987 MB** (makine %91 boş),
+- `/proc/pressure/memory` → `some avg10=0.00 · avg60=0.00`, `full avg10=0.00`
+  (çekirdek tek bir görevi bile bellek için bekletmiyor),
+- motorların **gerçekten ayırdığı** toplam: **2516 MB** — dağıtılabilirin
+  %20'si.
+
+Tavanları toplayıp RAM ile kıyaslamak, yoldaki arabaların azami hızlarını
+toplayıp "yol kapasitesi aşıldı" demeye benzer. Ürün bir süre tam olarak bunu
+yapıyordu: panel **"AYRILAN BELLEK 15 GB / 12 GB · %122 aşım"** yazıyor ve
+kapalı motorların hepsinde "bellek yetmiyor" diyordu — boş bir makinede.
+
+#### Bir motoru açmadan önceki üç kapı
+
+1. **Rezerve kapısı — sert.** `Σ rezerve + yeni motorun rezervesi ≤
+   dağıtılabilir`. Asla esnetilmez: rezerve, motorun ayıracağı **gerçek**
+   bellektir; sığmıyorsa açmak OOM'a davetiyedir.
+2. **Tavan kapısı — yumuşak.** `Σ tavan + yeni tavan ≤ dağıtılabilir × 1,5`.
+   Tavanların hepsi aynı anda dolmaz. Katsayı kontrol servisinin
+   `OVERCOMMIT_LIMIT` ortam değişkeniyle değişir; `1.0` yazmak aşırı taahhüdü
+   kapatır, yani yukarıdaki eski davranışa döner.
+3. **Çekirdek kemeri.** `/proc/meminfo`daki `MemAvailable` yeni rezerveyi +
+   emniyet payını karşılıyor mu; `/proc/pressure/memory` baskı bildiriyor mu?
+   **Defter ne derse desin çekirdeğin gerçeği bağlayıcıdır.** PSI'ı olmayan
+   eski çekirdeklerde baskı kapısı atlanır — ölçemediğimiz bir şeyi gerekçe
+   gösterip motor açtırmamak kullanıcıya yalan söylemek olurdu.
+
+Reddedilen aktivasyon **hangi kapıya** takıldığını yazar; hepsine birden
+"bellek yetmiyor" demez.
+
+#### Yeniden dengeleme
+
+Tavan toplamı politika sınırını geçtiğinde (bir motor elle büyütüldü,
+sunucudan RAM eksildi, ya da `OVERCOMMIT_LIMIT` düşürüldü) kontrol servisi
+bunu bildirir. **Yeniden dengeleme** — panelden ya da `POST /api/rebalance` —
+açık motorların tavanlarını yeniden hesaplar ve `docker update` ile **canlı**
+uygular:
+
+- Container'lar **yeniden başlatılmaz.** Açık bağlantılar kopmaz, InnoDB
+  kurtarma çalışmaz, kesinti olmaz. (Kolay yol `compose up -d` ile motoru
+  yeniden yaratmak olurdu; o yol çalışan veritabanını kapatır.)
+- Yalnız **tavan** değişir. Motorun açılışta ayırdığı bellek çalışırken
+  küçültülemez — buffer pool'u geri veremezsiniz. Bu yüzden yeniden dengeleme
+  hiçbir tavanı motorun mevcut **rezervesinin altına** indirmez; o ayar ancak
+  motor yeniden başlatıldığında yeni tavana göre hesaplanır.
+
+`./scripts/e2e/sizing.sh` bunu ölçüyor: aşırı taahhüt durumunu kendisi
+yaratıyor, yeniden dengelemeyi çağırıyor, tavanın gerçekten düştüğünü
+cgroup'tan okuyor ve `.State.StartedAt` ile hiçbir container'ın yeniden
+başlatılmadığını doğruluyor.
+
+Ayrıntı, formüller ve motor başına rezerve tablosu:
+[docs/BELLEK.md](docs/BELLEK.md)
+
 ### Bunun neden önemli olduğu
 
-Aynı hesabın somut karşılığı:
+Aynı hesabın somut karşılığı — boş bir sunucuda, `./stack.sh plan` çıktısı:
 
 | Sunucu | MariaDB açılırsa | Elasticsearch açılırsa |
 |---|---|---|
-| 512 MB | **açılmaz** — "en az 512 MB gerekiyor, bütçe 0 MB" | açılmaz |
-| 2 GB | 512 MB limit, panelsiz (Adminer'ı kullanın) | açılmaz |
-| 4 GB | 1.2 GB limit, buffer pool 736 MB | 1 GB limit, JVM heap 512 MB |
-| 16 GB | 4.8 GB limit, buffer pool 2.9 GB | 4 GB limit, JVM heap 2 GB |
-| 128 GB | 16 GB limit (tek motor sunucuyu yutmasın) | 16 GB limit, heap 8 GB |
+| 512 MB | **açılmaz** — 512 MB tavan + 320 MB panel/exporter dağıtılabilire sığmıyor | açılmaz |
+| 2 GB | tavan 512 MB · rezerve (buffer pool) 307 MB | açılmaz |
+| 4 GB | tavan 819 MB · rezerve 491 MB | tavan 1024 MB · rezerve (JVM heap) 512 MB |
+| 16 GB | tavan 3276 MB · rezerve 1965 MB | tavan 2949 MB · rezerve 1474 MB |
+| 128 GB | tavan 16 GB (tek motor sunucuyu yutmasın) · rezerve 9830 MB | tavan 16 GB · rezerve 8192 MB |
 
 4 GB'lık makinede 16 GB'lık veritabanı açılmaya çalışılmaz; 128 GB'lık makinede
-de varsayılan değerlerde kalınmaz. Bütçe dolduğunda kart pasifleşir ve
-"MongoDB en az 512 MB ister, kullanılabilir bütçe 380 MB — başka bir motoru
-durdurun" der.
+de varsayılan değerlerde kalınmaz. Kapılardan biri kapalıysa kart pasifleşir ve
+**hangi kapı** olduğunu yazar. Tavan kapısına takılan bir ret, ekranda boş
+belleği gördüğü için haklı olarak "ama yer var" diyen kullanıcıya şunu söyler:
+*"Bu bir TAVAN sıkışmasıdır, belleğin dolu olduğu anlamına GELMEZ"* — ve o
+andaki çekirdek boş bellek ölçümünü, baskı seviyesini, çözüm yollarını
+(yeniden dengele / bir motoru durdur / `OVERCOMMIT_LIMIT`'i yükselt) sıralar.
 
 Hesabı görmek için: `./stack.sh plan mongodb`
 

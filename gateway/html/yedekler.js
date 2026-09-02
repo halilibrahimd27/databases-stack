@@ -51,6 +51,12 @@ const mb = (v) => (v == null ? '—'
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+/* Pencerelerdeki "etiket … değer" satırı — app.js'tekiyle aynı biçim.
+   İki sayfada iki farklı görünen aynı satır, kullanıcıya iki farklı
+   ürüne bakıyormuş hissi veriyordu. */
+const planSatir = (ad, deger) =>
+  `<div class="plan-line"><span>${esc(ad)}</span><b>${esc(deger)}</b></div>`;
+
 /* mb() MEGABAYT alır; yedek boyutları ise BAYT gelir ve bu ölçekte küçük
    dosyalar kayboluyordu: 40 KB'lık taze bir Redis rdb'si “0 MB” görünüyor,
    kullanıcı da dosyanın boş olduğunu sanıyordu. Ayrı bir birim gerekiyor. */
@@ -265,15 +271,167 @@ async function restoreEngine(engine, f) {
   await refreshStatus();
 }
 
+/* ------------------------------------------------- yeniden dengeleme */
+
+/* Üst bar bu sayfada da duruyor, dolayısıyla aşırı taahhüt uyarısı da burada
+   çıkabiliyor; düğmenin yalnız panelde çalışması, uyarıyı burada okuyan
+   kullanıcıyı çıkışsız bırakırdı. Gövde app.js'teki ikizi ile aynı sözü
+   veriyor: CONTAINER YENİDEN BAŞLATILMAZ, docker update cgroup sınırını
+   canlı değiştirir. */
+async function rebalance() {
+  const m = bellekModeli(STATUS.system || {});
+  const ok = await confirmBox('Üst sınırlar yeniden hesaplansın mı?', `
+    <p>Açık veritabanlarının bellek <b>üst sınırları</b> bugünkü koşullara
+       göre yeniden hesaplanır ve <code>docker update</code> ile
+       uygulanır.</p>
+    ${planSatir('Şu anki tavan toplamı', mb(m.tavan))}
+    ${planSatir('Dağıtılabilir bellek', mb(m.dagitilabilir))}
+    ${planSatir('Politika sınırı',
+                m.sinir.toFixed(1) + '× · ' + mb(m.tavanButce))}
+    ${planSatir('Şu anki gerçek kullanım', mb(m.kullanilan))}
+    <p class="note"><b>Veritabanları yeniden başlatılmaz.</b> Bağlantılarınız
+       kopmaz, veri kaybı olmaz; değişen tek şey cgroup'un izin verdiği en
+       fazla bellektir.</p>
+    <p class="note">Motorların <b>baştan ayırdığı</b> bellek (rezerve) bu
+       işlemle değişmez: o, motorun kendi ayarından gelir ve ancak yeniden
+       başlatmayla değişirdi.</p>`, 'Yeniden dengele');
+  if (!ok) return;
+  const r = await api('/rebalance', { method: 'POST' });
+  await watchJob(r.job, 'Üst sınırlar yeniden hesaplanıyor…',
+    'Açık motorların bellek üst sınırları güncelleniyor. Container\'lar ' +
+    'yeniden başlatılmadığı için işlem birkaç saniye sürer.');
+  /* watchJob bu dosyada kendiliğinden tazelemiyor (app.js'teki ikizi
+     tazeliyor). Yeni sınırlar üst barda görünsün diye durumu biz istiyoruz. */
+  await refreshStatus();
+}
+
 /* ================================================================== çizim */
 
 /* --------------------------------------------- üst bar (sistem ölçüleri) */
-/* Hesap app.js'teki renderSystem ile BİREBİR aynı olmak zorunda: iki sayfada
-   iki farklı “ayrılan bellek” göstermek, hangisinin doğru olduğunu kimsenin
-   bilemeyeceği bir çelişki üretirdi. Payda sunucunun TOPLAM RAM'i değil
-   DAĞITILABİLİR belleği (toplam − işletim sistemi payı − çekirdek servisler);
-   toplam RAM'e bölündüğünde ekranda “19 GB / 16 GB” gibi imkânsız görünen bir
-   oran çıkıyor ve okuyan haklı olarak ürünü bozuk sanıyordu. */
+
+/* ÜST BARIN CEVAPLADIĞI SORU DEĞİŞTİ — ve değişmesi gerekiyordu.
+
+   ÖLÇÜLEN OLAY (16 GB'lık test sunucusu): free -m 1508 MB kullanım
+   gösteriyor, /proc/pressure/memory bütün pencerelerinde 0.00 bildiriyor,
+   mariadb 3196 MB'lık tavanının yalnız 213 MB'ını (%6) kullanıyor. Üst bar
+   ise "AYRILAN BELLEK 15 GB / 12 GB · %122 aşım" yazıyor, kapalı motorların
+   hepsinde de "bellek yetmiyor" çıkıyordu. Makinenin %91'i boşken ürün "yer
+   yok" diyordu; kullanıcı ürünü bozuk sandı ve haklıydı.
+
+   HATA SAYIDA DEĞİL MODELDE: docker --memory bir TAVANDIR, rezervasyon
+   değil. Tavanları toplayıp RAM ile kıyaslamak kategori hatasıdır — yolda
+   giden arabaların azami hızlarını toplayıp "yol kapasitesi aşıldı" demek
+   gibi.
+
+   Bu yüzden BİRİNCİL sayı artık GERÇEK kullanım (toplam − MemAvailable):
+   "sunucum doldu mu" sorusunun cevabı odur. Baştan ayrılan (rezerve) ve
+   izin verilen üst sınır (tavan) ikincil satırda, ne oldukları YAZILI
+   olarak duruyor. Kırmızı yalnız iki durumda çıkar: çekirdek gerçekten
+   baskı bildiriyorsa, ya da baştan ayrılanların toplamı dağıtılabilirin
+   üstüne çıkmışsa. Tavan toplamının büyük olması TEK BAŞINA arıza
+   değildir — bilgilendirici bir rozettir. */
+
+const BASKI_AD = {
+  yok: 'yok', orta: 'orta', yuksek: 'YÜKSEK', bilinmiyor: 'ölçülemedi'
+};
+
+/* Sözleşmenin YENİ alanları (stack_reserved_mb, allocatable_mb,
+   overcommit_ratio/limit, pressure) yoksa eski hesaba düşülür: panel, bu
+   alanları henüz göndermeyen bir controller sürümüyle de açılabilmeli.
+   Eksik alanı "0" sayıp ekrana basmak, ölçmediğimiz bir şeye kefil olmak
+   olurdu; null taşıyoruz ve o satırı hiç yazmıyoruz. */
+function bellekModeli(sys) {
+  const toplam = sys.mem_total_mb || 0;
+  const bos    = sys.mem_available_mb || 0;
+  const kullanilan = Math.max(0, toplam - bos);
+
+  const dagitilabilir = sys.allocatable_mb != null
+    ? sys.allocatable_mb
+    : Math.max(0, toplam - (sys.os_reserve_mb || 0)
+                 - (sys.core_reserve_mb || 0));
+  const tavan   = sys.stack_committed_mb || 0;
+  const rezerve = sys.stack_reserved_mb != null ? sys.stack_reserved_mb : null;
+  const sinir   = typeof sys.overcommit_limit === 'number'
+    ? sys.overcommit_limit : 1.5;
+  const oran = typeof sys.overcommit_ratio === 'number'
+    ? sys.overcommit_ratio
+    : (dagitilabilir ? tavan / dagitilabilir : 0);
+
+  const bs = sys.pressure || {};
+  const seviye = BASKI_AD[bs.seviye] ? bs.seviye : 'bilinmiyor';
+
+  /* SERT KURAL burada: rezerve bir TABANDIR, motor o belleği açılışta
+     gerçekten ayırır (shared_buffers, innodb buffer pool, JVM -Xms). Bunun
+     aşılması, defterin borcunu ödeyememesi demektir — tavan aşımının
+     aksine gerçek bir arızadır. */
+  const rezerveAsim = rezerve != null && dagitilabilir > 0
+                   && rezerve > dagitilabilir;
+
+  return {
+    toplam: toplam, bos: bos, kullanilan: kullanilan,
+    dagitilabilir: dagitilabilir, tavan: tavan, rezerve: rezerve,
+    oran: oran, sinir: sinir, seviye: seviye, baski: bs,
+    rezerveAsim: rezerveAsim,
+    kullanimYuzde: toplam ? Math.round((kullanilan / toplam) * 100) : 0,
+    tavanYuzde: Math.round(oran * 100),
+    tavanButce: Math.round(dagitilabilir * sinir),
+    kritik: rezerveAsim || seviye === 'yuksek',
+    politikaAsim: oran > sinir
+  };
+}
+
+const bsSayi = (v) => (typeof v === 'number' ? v.toFixed(2) : '—');
+
+/* Çekirdeğin ölçüsü BAĞLAYICIDIR: defter "yer yok" dese de baskı sıfırsa
+   sistemde bellek darlığı yoktur. Rozetin arkasındaki ham sayıları title'da
+   veriyoruz ki iddia sınanabilsin — kullanıcı aynı dosyaya kendisi de
+   bakabilir. */
+function baskiTitle(m) {
+  if (m.seviye === 'bilinmiyor') {
+    return 'Çekirdeğin bellek baskısı ölçümü (/proc/pressure/memory) '
+         + 'okunamadı: bu çekirdekte yok ya da erişilemiyor.';
+  }
+  return 'Çekirdek ölçümü (/proc/pressure/memory) — süreçlerin bellek '
+       + 'beklerken geçirdiği zaman payı: son 10 sn %'
+       + bsSayi(m.baski.some10) + ', son 60 sn %' + bsSayi(m.baski.some60)
+       + '. Sıfıra yakınsa sistemde bellek darlığı yoktur.';
+}
+
+/* Rozet şeridi ve öğüt kutusu HTML'de DEĞİL burada üretiliyor. Aynı üst bar
+   iki sayfada (index.html ve yedekler.html) birebir kopya duruyor; ikisini
+   ayrı ayrı elle güncellemek, er geç birinin diğerinden farklı bir bellek
+   tablosu göstermesi demekti. Tek üretim yeri olsun diye DOM'a buradan
+   ekleniyor. */
+function bayrakSeridi() {
+  const item = document.querySelector('.sys-item-mem');
+  if (!item) return null;
+  let k = item.querySelector('.sys-flags');
+  if (!k) {
+    k = document.createElement('div');
+    k.className = 'sys-flags';
+    item.appendChild(k);
+  }
+  return k;
+}
+
+function ogutKutusu() {
+  let el = document.getElementById('mem-advice');
+  if (el) return el;
+  const ana = document.querySelector('main');
+  if (!ana || !ana.parentNode) return null;
+  el = document.createElement('section');
+  el.id = 'mem-advice';
+  el.className = 'mem-advice';
+  el.hidden = true;
+  ana.parentNode.insertBefore(el, ana);
+  return el;
+}
+
+/* Kutu 5 saniyede bir yeniden yazılırsa içindeki düğmenin odağı kaybolur ve
+   klavyeyle gezen kullanıcı düğmeye bir türlü basamaz. İçerik gerçekten
+   değişmedikçe innerHTML'e dokunmuyoruz — ızgarada da aynı desen var. */
+let sonOgutHtml = '';
+
 function renderSystem() {
   const sys = STATUS.system || {};
   $('#sys-host').textContent = location.hostname;
@@ -281,36 +439,125 @@ function renderSystem() {
   $('#sys-disk').textContent = mb(sys.disk_free_mb) + ' boş';
 
   if (!sys.mem_total_mb) return;
+  const m = bellekModeli(sys);
 
-  const alloc    = sys.stack_committed_mb || 0;
-  const reserved = (sys.os_reserve_mb || 0) + (sys.core_reserve_mb || 0);
-  const dagitilabilir = Math.max(0, (sys.mem_total_mb || 0) - reserved);
-  const real = sys.mem_total_mb - (sys.mem_available_mb || 0);
-  const pct  = dagitilabilir ? Math.round((alloc / dagitilabilir) * 100) : 0;
-  const asim = pct > 100;
+  /* Etiket de değişmek zorunda: HTML'de "Ayrılan bellek" yazıyor, oysa
+     büyük sayı artık ayrılanı değil KULLANILANI gösteriyor. Yanlış başlıkla
+     doğru sayı, yanlış sayıdan daha kötüdür. */
+  const et = document.querySelector('.sys-item-mem .sys-label');
+  if (et) et.textContent = 'Bellek kullanımı';
+  const olcek = document.querySelector('.sys-item-mem .meter');
+  if (olcek) olcek.setAttribute('aria-label', 'Bellek kullanımı');
 
-  $('#sys-mem').textContent = mb(alloc) + ' / ' + mb(dagitilabilir);
+  $('#sys-mem').textContent = mb(m.kullanilan) + ' / ' + mb(m.toplam);
+
+  /* İkincil satır: ayrılanların İKİSİ DE, ne oldukları söylenerek. Tek bir
+     "ayrılan" sayısı, tabanla tavanı aynı kefeye koyduğu için bu ekranın
+     ilk hatasıydı. */
   const rel = $('#sys-mem-real');
   if (rel) {
-    rel.textContent = (asim ? '⚠ %' + pct + ' aşım · ' : mb(sys.mem_total_mb) + ' RAM · ')
-                    + 'kullanım ' + mb(real);
-    rel.className = 'sys-sub' + (asim ? ' sys-sub-warn' : '');
+    const parca = [];
+    if (m.rezerve != null) parca.push('baştan ayrılan ' + mb(m.rezerve));
+    parca.push('üst sınır ' + mb(m.tavan));
+    rel.textContent = parca.join(' · ');
+    rel.className = 'sys-sub' + (m.kritik ? ' sys-sub-warn' : '');
   }
+
   const item = document.querySelector('.sys-item-mem');
   if (item) {
-    item.title = asim
-      ? 'Açık motorlara söz verilen bellek tavanlarının toplamı ('
-        + mb(alloc) + '), dağıtılabilir bellekten (' + mb(dagitilabilir)
-        + ') fazla. Şu anki gerçek kullanım ' + mb(real) + '.'
-      : 'Toplam ' + mb(sys.mem_total_mb) + ' RAM\'in ' + mb(reserved)
-        + ' kadarı işletim sistemine ve çekirdek servislere ayrıldı; kalan '
-        + mb(dagitilabilir) + ' veritabanlarına dağıtılabilir.';
+    item.title =
+      'Gerçek kullanım: ' + mb(m.kullanilan) + ' / ' + mb(m.toplam) + ' RAM.'
+      + (m.rezerve != null
+          ? '\nBaştan ayrılan (rezerve): ' + mb(m.rezerve)
+            + ' — motorların açılışta gerçekten ayırdığı bellek.'
+          : '')
+      + '\nİzin verilen üst sınır (tavan): ' + mb(m.tavan)
+      + ' — docker limitlerinin toplamı, rezervasyon değil.'
+      + '\nDağıtılabilir: ' + mb(m.dagitilabilir)
+      + ' (toplam − işletim sistemi payı − çekirdek servisler).'
+      + '\nÇekirdek bellek baskısı: ' + BASKI_AD[m.seviye] + '.';
   }
+
   const bar = $('#sys-mem-bar');
   if (bar) {
-    bar.style.width = Math.min(100, pct) + '%';
-    bar.className = 'meter-fill' + (pct > 90 ? ' crit' : pct > 75 ? ' hot' : '');
+    /* Çubuk GERÇEK kullanımı gösteriyor. Tavan oranını gösterseydi %122'de
+       sürekli dolu bir kırmızı çubuk olurdu — hem de makine boşken. */
+    bar.style.width = Math.min(100, m.kullanimYuzde) + '%';
+    bar.className = 'meter-fill'
+      + (m.kritik || m.kullanimYuzde > 90 ? ' crit'
+         : m.kullanimYuzde > 75 ? ' hot' : '');
   }
+
+  /* --- rozetler: baskı her zaman, aşırı taahhüt yalnız varsa --- */
+  const ser = bayrakSeridi();
+  if (ser) {
+    const bay = [];
+    bay.push('<span class="sys-flag'
+      + (m.seviye === 'yuksek' ? ' is-err'
+         : m.seviye === 'orta' ? ' is-warn' : '')
+      + '" title="' + esc(baskiTitle(m)) + '">bellek baskısı: '
+      + esc(BASKI_AD[m.seviye]) + '</span>');
+
+    if (m.rezerveAsim) {
+      bay.push('<span class="sys-flag is-err" title="'
+        + esc('Açık motorların baştan ayırdığı toplam ' + mb(m.rezerve)
+              + ', dağıtılabilir bellekten (' + mb(m.dagitilabilir)
+              + ') fazla. Bu bellek gerçekten tutulur; tavanların aksine '
+              + 'yeniden dağıtılamaz.')
+        + '">baştan ayrılanlar dağıtılabiliri aştı</span>');
+    }
+    /* Tavan toplamının kapasiteyi aşması BİLGİDİR, arıza değil: limitler
+       birer üst sınırdır ve hepsi aynı anda dolmaz. Bunu kırmızıya boyamak,
+       kullanıcıyı olmayan bir arızanın peşine düşüren eski davranıştı. */
+    if (m.tavanYuzde > 100) {
+      bay.push('<span class="sys-flag' + (m.politikaAsim ? ' is-warn' : '')
+        + '" title="' + esc('Açık motorların docker üst sınırları toplamı '
+              + mb(m.tavan) + '; dağıtılabilir bellek '
+              + mb(m.dagitilabilir) + '. Politika ' + m.sinir.toFixed(1)
+              + ' katına kadar izin veriyor (' + mb(m.tavanButce) + ').')
+        + '">tavan toplamı %' + m.tavanYuzde
+        + ' — tavanlar aynı anda dolmaz</span>');
+    }
+    const bh = bay.join('');
+    if (ser.innerHTML !== bh) ser.innerHTML = bh;
+  }
+
+  /* --- ne yapmalı: yalnız gerçekten yapılacak bir şey varsa --- */
+  const kutu = ogutKutusu();
+  if (!kutu) return;
+  let h = '';
+  if (m.rezerveAsim) {
+    h = '<p class="mem-advice-t"><b>Baştan ayrılan bellek dağıtılabilirin '
+      + 'üstünde.</b> Açık motorların açılışta gerçekten ayırdığı toplam '
+      + mb(m.rezerve) + ', dağıtılabilir bellek ise ' + mb(m.dagitilabilir)
+      + '. Tavanların aksine bu bellek gerçekten tutulur.</p>'
+      + '<p class="mem-advice-n">Yapılacak şey: kullanmadığınız bir '
+      + 'veritabanını kapatın. Üst sınırları yeniden hesaplamak burada işe '
+      + 'yaramaz — taban, motorun kendi ayarından gelir ve ancak yeniden '
+      + 'başlatmayla değişir.</p>';
+  } else if (m.politikaAsim) {
+    h = '<p class="mem-advice-t"><b>Üst sınırların toplamı politika sınırını '
+      + 'aştı.</b> Açık motorlara verilen tavanlar toplamı ' + mb(m.tavan)
+      + '; politika, dağıtılabilir belleğin (' + mb(m.dagitilabilir) + ') '
+      + m.sinir.toFixed(1) + ' katına — yani ' + mb(m.tavanButce)
+      + ' — kadar izin veriyor. Şu an bir sorun görünmüyor (gerçek kullanım '
+      + mb(m.kullanilan) + ', çekirdek baskısı ' + esc(BASKI_AD[m.seviye])
+      + '); ama motorların hepsi aynı anda tavanına dayanırsa cgroup OOM '
+      + 'killer devreye girer ve birini öldürür.</p>'
+      + '<p class="mem-advice-n"><b>Yeniden dengele</b>: açık motorların üst '
+      + 'sınırları bugünkü koşullara göre yeniden hesaplanır ve '
+      + '<code>docker update</code> ile uygulanır. <b>Veritabanları yeniden '
+      + 'başlatılmaz</b>, bağlantılarınız kopmaz.</p>'
+      + '<div class="mem-advice-act">'
+      + '<button class="btn" data-act="rebalance">Yeniden dengele</button>'
+      + '</div>';
+  }
+  if (h !== sonOgutHtml) {
+    kutu.innerHTML = h;
+    sonOgutHtml = h;
+  }
+  kutu.className = 'mem-advice' + (m.rezerveAsim ? ' is-err' : '');
+  kutu.hidden = !h;
 }
 
 /* ------------------------------------------------------ zamanlama kutusu */
@@ -385,9 +632,33 @@ function schedHtml(s) {
          container'ın belleğini iki kez zorlar; kilit sırayı koruyor ve tur
          koşmuş sayılmıyor.</p>` : '';
 
-  const sira = (acik && s.next_run && !s.running)
-    ? `<p class="bk-next" title="${esc(tamTarih(s.next_run))}">Sıradaki yedek:
-         ${esc(bagilZaman(s.next_run))}</p>` : '';
+  /* SIRADAKİ *DENEME*, "24 saat sonra" DEĞİL.
+
+     ÖLÇÜLEN OLAY: son tur kilide takılmıştı ve zamanlayıcı 10 dakika sonra
+     yeniden deneyecekti; kutu ise next_run'ı okuyup "Sıradaki yedek: 24 saat
+     sonra" yazıyordu. Kullanıcı o günün yedeğinden umudu kesip elle yedek
+     alıyordu — oysa sistem zaten deneyecekti.
+
+     next_attempt bir sonraki DENEMEyi verir (ertelemeden sonraki kısa
+     tekrar, normalde gecelik saat), attempt_note da sebebini. Alan yoksa
+     (bu alanları göndermeyen eski controller) eski next_run'a düşülür:
+     yanlış olmayan, yalnız daha az bilgi veren bir cevap. */
+  const deneme = s.next_attempt != null ? s.next_attempt : s.next_run;
+  const not    = s.attempt_note || '';
+  /* Deneme normal gecelik saatten FARKLIYSA bu bir tekrardır; başlığı da
+     öyle yazıyoruz. Aynıysa "Sıradaki yedek" doğru kelimedir — her turu
+     "deneme" diye adlandırmak, olağan gecelik yedeği tedirgin edici
+     gösterirdi. */
+  const tekrar = s.next_attempt != null && s.next_run != null
+              && s.next_attempt !== s.next_run;
+  /* Kilit çakışması KIRMIZI DEĞİL: arıza değil, sıra bekleme. .bk-retry
+     .bk-defer ile aynı sarı tonu kullanıyor (bkz. style.css 16. bölüm). */
+  const sira = (acik && deneme && !s.running)
+    ? `<p class="bk-next${tekrar || not ? ' bk-retry' : ''}"
+          title="${esc(tamTarih(deneme))}">${
+          tekrar || not ? 'Sıradaki deneme' : 'Sıradaki yedek'}:
+         ${esc(bagilZaman(deneme))}${not ? ' — ' + esc(not) : ''}</p>`
+    : '';
 
   return `
   <div class="bk-sched${acik ? '' : ' is-off'}">
@@ -744,6 +1015,8 @@ document.addEventListener('click', (ev) => {
   switch (b.dataset.act) {
     case 'backup': p = takeBackup(engine); break;
     case 'bk-on':  p = toggleSchedule(true); break;
+    // Motora bağlı değil: dataset.id yok, engine null kalır.
+    case 'rebalance': p = rebalance(); break;
     case 'bk-off': p = toggleSchedule(false); break;
     case 'restore-last': {
       const bk = ((BACKUPS && BACKUPS.engines) || {})[engine.id] || {};

@@ -63,6 +63,64 @@ OS_RESERVE_MIN_MB = 1024
 # Bir motoru açmak için gereken asgari boş disk.
 MIN_FREE_DISK_MB = 2048
 
+
+# =============================================================================
+# BELLEK MODELİ — REZERVE, TAVAN, DAĞITILABİLİR
+# =============================================================================
+# Ölçülen olay (16 GB test sunucusu): free -m → 15984 toplam, 1508 kullanımda,
+# 13987 available. /proc/pressure/memory → some avg10=0.00: çekirdek SIFIR
+# bellek baskısı bildiriyor. Container'lar tavanlarının çok altında —
+# mariadb 3196 MB tavanın 213 MB'ını (%6), postgresql 2397 MB'ın 98 MB'ını
+# (%4), redis 1278 MB'ın 5 MB'ını kullanıyordu. Buna rağmen panel "AYRILAN
+# BELLEK 15 GB / 12 GB · %122 aşım" yazıyor, kapalı motorların hepsi "bellek
+# yetmiyor" diye reddediliyordu. Makine %91 boşken ürün "yer yok" diyordu.
+#
+# Sebep model hatasıydı: docker --memory bir TAVANDIR, rezervasyon değil.
+# Tavanları toplayıp RAM ile kıyaslamak kategori hatasıdır — yolda giden
+# arabaların azami hızlarını toplayıp "yol kapasitesi aşıldı" demek gibi.
+# Üç kavram artık ayrı tutuluyor:
+#   REZERVE       motorun AÇILIŞTA gerçekten ayırdığı bellek (PostgreSQL
+#                 shared_buffers, MariaDB innodb_buffer_pool_size, JVM -Xms).
+#                 Hangi ayardan türediğini katalog söyler: resources.reserve.
+#   TAVAN         docker --memory. Aşılırsa cgroup OOM killer devreye girer.
+#   DAĞITILABİLİR toplam RAM − işletim sistemi payı − çekirdek servis payı.
+#
+# Aktivasyon üç kapıdan BİRDEN geçmek zorunda: SERT (Σ rezerve + yeni rezerve
+# ≤ dağıtılabilir), YUMUŞAK (Σ tavan + yeni tavan ≤ dağıtılabilir × aşırı
+# taahhüt) ve ÇEKİRDEK KEMERİ (MemAvailable ≥ yeni rezerve + emniyet payı).
+def _env_float(name, default, low):
+    """Politika sabitini ortamdan okur; saçma/boş değerde varsayılana döner."""
+    try:
+        v = float(os.environ.get(name) or default)
+    except (TypeError, ValueError):
+        v = default
+    return max(v, low)
+
+
+# Tavanların hepsi aynı anda dolmaz. 1.5 ölçülen orana göre bile temkinli:
+# yukarıdaki dört container tavanlarının ortalama %5'ini kullanıyordu.
+# 1.0 = aşırı taahhüt yok, yani eski (kategori hatalı) davranış.
+OVERCOMMIT_LIMIT = _env_float("OVERCOMMIT_LIMIT", 1.5, 1.0)
+# Çekirdek kemeri payı: yeni motorun rezervesinin ÜSTÜNE bu kadar boş bellek
+# kalmalı. Rezerve açılışta bir defada ayrılır; MemAvailable'ı sıfıra indiren
+# bir aktivasyon, defter "sığıyor" dese bile OOM killer'a davetiyedir.
+KERNEL_SAFETY_MB = int(os.environ.get("KERNEL_SAFETY_MB", "512"))
+# PSI eşikleri (/proc/pressure/memory, "some" avg10 = son 10 saniyenin yüzde
+# kaçında en az bir görev bellek bekledi). Ölçümde 0.00 idi, yani "yok".
+# 10 → geri kazanım (reclaim) çalışıyor demektir: felaket değil ama yeni bir
+# rezerve için kötü zaman. 30 → görevler sürekli bekliyor; bu noktada motor
+# açmak, çalışan motorların sayfalarını attırmaktan başka işe yaramaz.
+PRESSURE_WARN = _env_float("PRESSURE_WARN", 10.0, 0.0)
+PRESSURE_HIGH = _env_float("PRESSURE_HIGH", 30.0, 0.0)
+# Yeniden dengelemede tavan, ölçülen GERÇEK kullanımın bu katının altına
+# indirilmez. cgroup limiti anlık kullanımın altına inerse çekirdek
+# container'ı ANINDA OOM eder; %30 pay, dump/checkpoint gibi ani sıçramalara
+# yer bırakır.
+REBALANCE_HEADROOM = _env_float("REBALANCE_HEADROOM", 1.3, 1.05)
+# Bu eşiğin altındaki tavan değişikliği uygulanmaz: her yeniden dengelemede
+# birkaç MB oynatmak, olay günlüğünü doldurmaktan başka bir şey yapmaz.
+REBALANCE_MIN_DELTA_MB = 32
+
 SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 
 
@@ -376,6 +434,42 @@ def container_stats(force=False):
     return out
 
 
+def container_usage_mb(c):
+    """Container'ın GERÇEK bellek kullanımı (MB); ölçülemezse None.
+
+    Önce cgroup: /sys/fs/cgroup altında memory.current (cgroup v2) ya da
+    memory.usage_in_bytes (v1). Tek dosya okuması — docker daemon'a hiç
+    dokunmaz ve `docker stats`ın saniyeler süren örneklemesini beklemez.
+    Host'un cgroup ağacı bu container'a bağlanmamışsa (varsayılan kurulumda
+    controller yalnız KENDİ cgroup'unu görür) `docker stats` önbelleğine
+    düşüyoruz: tavan küçültürken ölçüsüz kalmak, cgroup'un container'ı ANINDA
+    OOM etmesi demektir.
+
+    cgroup'un memory.current'ı sayfa önbelleğini de sayar, `docker stats` ise
+    inactive_file'ı düşer. Farkı bilerek kapatmıyoruz: yüksek olan sayı
+    tavanı daha yukarıda tutar ve yanılma yönü GÜVENLİ taraftadır.
+    """
+    cid = (c.get("id") or "").strip()
+    adaylar = []
+    for kok in ("/sys/fs/cgroup/system.slice/docker-%s.scope" % cid,
+                "/sys/fs/cgroup/docker/%s" % cid,
+                "/sys/fs/cgroup/memory/docker/%s" % cid,
+                "/sys/fs/cgroup/memory/system.slice/docker-%s.scope" % cid):
+        if not cid:
+            break
+        adaylar.append(os.path.join(kok, "memory.current"))
+        adaylar.append(os.path.join(kok, "memory.usage_in_bytes"))
+    for yol in adaylar:
+        try:
+            with open(yol) as f:
+                return int(f.read().strip()) // (1024 * 1024)
+        except (OSError, ValueError):
+            continue
+    st = container_stats().get(c.get("name")) or {}
+    kullanim = st.get("used_bytes")
+    return int(kullanim // (1024 * 1024)) if kullanim else None
+
+
 def _esc(v):
     """Prometheus etiket değeri kaçışı."""
     return str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
@@ -443,21 +537,47 @@ def render_metrics():
     add("dbstack_engine_active", "Motor acik mi (1/0)", "gauge", eng_s)
 
     # Bütçe defteri — boyutlandırma motorunun gördüğü sayıların ta kendisi.
+    # Grafikteki sayılarla panelin ve admission'ın sayıları AYNI fonksiyondan
+    # geliyor: ayrı bir formül tutmak, "Grafana başka, panel başka söylüyor"
+    # sınıfından hataların kaynağıydı.
     total, avail = host_memory_mb()
     committed = sum(c["memory_mb"] for c in conts if c["status"] == "running")
-    os_reserve = min(max(OS_RESERVE_MIN_MB, int(total * OS_RESERVE_RATIO)),
-                     int(total * 0.6)) if total > 0 else 0
+    os_reserve = os_reserve_mb(total)
+    allocatable = allocatable_mb(total)
+    reserved = stack_reserved_mb()
+    psi = host_pressure()
     MB = 1024 * 1024
     add("dbstack_host_memory_total_bytes", "Sunucunun toplam RAM'i", "gauge",
         [([], total * MB)])
     add("dbstack_host_memory_available_bytes", "Sunucuda kullanilabilir RAM",
         "gauge", [([], avail * MB)])
     add("dbstack_memory_committed_bytes",
-        "Calisan container'lara AYRILMIS toplam bellek", "gauge",
-        [([], committed * MB)])
+        "Calisan container'larin TAVAN toplami (docker --memory; rezervasyon "
+        "DEGIL)", "gauge", [([], committed * MB)])
+    add("dbstack_memory_reserved_bytes",
+        "Acik motorlarin ACILISTA gercekten ayirdigi bellek (shared_buffers, "
+        "buffer pool, JVM -Xms)", "gauge", [([], reserved * MB)])
+    add("dbstack_memory_allocatable_bytes",
+        "Dagitilabilir bellek (toplam - OS payi - cekirdek servisler)",
+        "gauge", [([], allocatable * MB)])
+    add("dbstack_memory_overcommit_ratio",
+        "Tavan toplami / dagitilabilir. 1'in ustu asiri taahhuttur ve "
+        "OVERCOMMIT_LIMIT'e kadar normaldir", "gauge",
+        [([], round(committed / float(allocatable), 3) if allocatable > 0
+           else 0.0)])
+    add("dbstack_memory_pressure_some10",
+        "Cekirdegin bellek baskisi olcumu: son 10 sn'nin yuzde kacinda en az "
+        "bir gorev bellek bekledi (/proc/pressure/memory)", "gauge",
+        [([], psi["some10"])])
     add("dbstack_memory_budget_bytes",
-        "Yeni bir motora verilebilecek bellek (toplam - OS payi - cekirdek - ayrilmis)",
-        "gauge", [([], max(0, total - os_reserve - CORE_RESERVE_MB - committed) * MB)])
+        "Yeni bir motora verilebilecek TAVAN (dagitilabilir x asiri taahhut - "
+        "acik tavanlar)",
+        "gauge", [([], max(0, int(allocatable * OVERCOMMIT_LIMIT)
+                           - committed) * MB)])
+    add("dbstack_memory_reserve_budget_bytes",
+        "Yeni bir motorun ayirabilecegi REZERVE (dagitilabilir - acik "
+        "motorlarin rezervesi); bu kural asla esnetilmez", "gauge",
+        [([], max(0, allocatable - reserved) * MB)])
     add("dbstack_disk_free_bytes", "Veri diskinde bos alan", "gauge",
         [([], disk_free_mb() * MB)])
 
@@ -527,20 +647,21 @@ def _docker_containers_uncached():
     tmpl = ("{{.Name}}\t{{.State.Status}}\t"
             "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}\t"
             "{{.HostConfig.Memory}}\t"
-            "{{index .Config.Labels \"com.docker.compose.service\"}}")
+            "{{index .Config.Labels \"com.docker.compose.service\"}}\t"
+            "{{.Id}}")
     rc, out, _ = run(["docker", "inspect", "--format", tmpl] + ids, timeout=60)
     res = []
     for line in out.splitlines():
         parts = line.split("\t")
-        if len(parts) != 5:
+        if len(parts) != 6:
             continue
-        name, status, health, mem, service = parts
+        name, status, health, mem, service, cid = parts
         try:
             mem_mb = int(mem) // (1024 * 1024)
         except ValueError:
             mem_mb = 0
         res.append({"name": name.lstrip("/"), "service": service, "status": status,
-                    "health": health, "memory_mb": mem_mb})
+                    "health": health, "memory_mb": mem_mb, "id": cid.strip()})
     if rc != 0 and not res:
         _DOCKER_PROBE["ok"] = False     # inspect de cevap vermedi
     return res
@@ -612,12 +733,16 @@ def _fmt(value_mb, fmt):
     return str(v)
 
 
-def compute_tuning(engine, limit_mb):
-    """Container limitinden motorun iç ayarlarını türetir."""
-    spec = engine.get("resources", {}).get("tuning", [])
-    out, scratch = {}, {}
-    # 1. geçiş — limit / fraction / per_gb
-    for t in spec:
+def _tuning_scratch(engine, limit_mb):
+    """tuning kurallarının BİÇİMLENMEMİŞ sayısal değerleri (MB ya da adet).
+
+    compute_tuning'ten ayrıldı çünkü rezerve hesabı da aynı sayılara bakıyor:
+    rezerve, ürünün zaten hesapladığı ayarın KENDİSİDİR. İki yerde iki formül
+    tutmak, panelin "ayrılan" dediğiyle motorun gerçekte ayırdığının
+    ayrışması demek olurdu.
+    """
+    scratch = {}
+    for t in engine.get("resources", {}).get("tuning", []):
         kind = t.get("kind")
         if kind == "limit":
             val = limit_mb
@@ -629,7 +754,18 @@ def compute_tuning(engine, limit_mb):
         else:
             continue
         scratch[t["env"]] = val
-        out[t["env"]] = _fmt(val, t.get("fmt", "int"))
+    return scratch
+
+
+def compute_tuning(engine, limit_mb):
+    """Container limitinden motorun iç ayarlarını türetir."""
+    spec = engine.get("resources", {}).get("tuning", [])
+    out = {}
+    # 1. geçiş — limit / fraction / per_gb
+    scratch = _tuning_scratch(engine, limit_mb)
+    for t in spec:
+        if t["env"] in scratch:
+            out[t["env"]] = _fmt(scratch[t["env"]], t.get("fmt", "int"))
     # 2. geçiş — başka bir ayara bağımlı olanlar
     for t in spec:
         if t.get("kind") != "workmem":
@@ -643,8 +779,234 @@ def compute_tuning(engine, limit_mb):
     return out
 
 
+def _tuning_fmt(engine, env):
+    """Bir tuning anahtarının katalogdaki yazım biçimi."""
+    for t in engine.get("resources", {}).get("tuning", []):
+        if t.get("env") == env:
+            return t.get("fmt", "int")
+    return "int"
+
+
+def _unfmt_mb(text, fmt):
+    """_fmt'in TERSİ: motorun yazımından MB'ye. Anlaşılmazsa None.
+
+    Neden tersine çeviriyoruz: rezerve, motora GERÇEKTEN verilmiş değerden
+    okunmalı. state/tuning.env'deki dizge motorun açılışta gördüğü şeydir;
+    onu limitten yeniden hesaplamak, aradan geçen elle bir `docker update`ten
+    sonra defterle gerçeği ayırırdı. Tahmin yok: biçimi katalog söylüyor,
+    yazan da _fmt — iki yön tek sözleşmeye bakıyor.
+    """
+    s = str(text or "").strip()
+    if not s:
+        return None
+    try:
+        if fmt == "java":
+            # "-Xms512m -Xmx512m" → 512. Rezerve olan -Xms'tir: JVM o kadarını
+            # açılışta ayırır, -Xmx ise büyüyebileceği tavandır.
+            m = re.search(r"-Xms(\d+)([kmgKMG]?)", s)
+            if not m:
+                return None
+            birim = {"": 1 / 1048576.0, "k": 1 / 1024.0, "m": 1.0, "g": 1024.0}
+            return int(float(m.group(1)) * birim[m.group(2).lower()])
+        if fmt == "bytes":
+            return int(int(s) / 1048576)
+        if fmt == "G_half":
+            return int(float(s) * 1024)
+        m = re.match(r"^(\d+(?:\.\d+)?)\s*([A-Za-z]*)$", s)
+        if not m:
+            return None
+        carpan = {"": 1.0, "m": 1.0, "mb": 1.0, "k": 1 / 1024.0,
+                  "kb": 1 / 1024.0, "g": 1024.0,
+                  "gb": 1024.0}.get((m.group(2) or "").lower())
+        if carpan is None:
+            return None
+        return int(float(m.group(1)) * carpan)
+    except (ValueError, KeyError):
+        return None
+
+
+def engine_limit_mb(eid):
+    """Motorun ŞU ANKİ docker tavanı (MB); çalışmıyorsa 0.
+
+    Devirden sonra ana kopya kataloğun ilk servisi olmayabilir; tavanı
+    topolojinin gösterdiği düğümden okuyoruz.
+    """
+    engine = CATALOG.engine(eid)
+    if not engine:
+        return 0
+    prim = current_primary(engine)
+    for c in docker_containers():
+        if c["service"] == prim and c["status"] == "running":
+            return c["memory_mb"]
+    return 0
+
+
+def engine_reserved_mb(eid, limit_mb=None, tuning=None):
+    """Motorun AÇILIŞTA ayırdığı bellek (MB) — TAVANI DEĞİL.
+
+    Kaynağı katalog söyler: resources.reserve.from, rezervenin hangi tuning
+    anahtar(lar)ından türediğini yazar; boş liste "tabanı yok" demektir.
+    Redis'in maxmemory'si, MSSQL'in 'max server memory'si, ClickHouse'un
+    max_server_memory_usage'ı TAVANDIR — motor boş başlar, oraya doğru büyür.
+    Onları rezerve saymak, ölçümde 1278 MB tavanının 5 MB'ını kullanan
+    Redis'i "1278 MB ayrılmış" göstermek olurdu.
+
+    Sıra: verilen tuning → yazılı kayıt (motor onunla açıldı) → limitten
+    yeniden hesap.
+    """
+    engine = CATALOG.engine(eid)
+    if not engine:
+        return 0
+    spec = engine.get("resources", {}).get("reserve") or {}
+    kaynaklar = spec.get("from") or []
+    toplam = int(spec.get("plus_mb") or 0)
+    if not kaynaklar:
+        return toplam
+    if not tuning:
+        if limit_mb is None:
+            tuning = load_tuning().get(eid) or {}
+        if not tuning:
+            lim = int(limit_mb if limit_mb is not None
+                      else engine_limit_mb(eid))
+            tuning = compute_tuning(engine, lim) if lim > 0 else {}
+    for env in kaynaklar:
+        deger = _unfmt_mb(tuning.get(env), _tuning_fmt(engine, env))
+        if deger:
+            toplam += int(deger)
+    return toplam
+
+
+def stack_reserved_mb(exclude=None):
+    """AÇIK motorların rezerve toplamı (MB); `exclude` verilen motor sayılmaz.
+
+    Kapalı motorun rezervesi 0'dır — container'ı yoktur, ayırdığı bellek de.
+    """
+    calisan = {c["service"] for c in docker_containers()
+               if c["status"] == "running"}
+    # Topoloji ve tuning defterini motor başına DEĞİL bir kez okuyoruz:
+    # /api/plans her motor için plan istiyor, her plan da bu toplamı soruyor.
+    # current_primary() içeriden dosya açtığı için tek yenilemede yüzlerce
+    # okuma ediyordu.
+    topo = load_topology()
+    tun = load_tuning()
+    toplam = 0
+    for e in CATALOG.engines:
+        if exclude and e["id"] == exclude:
+            continue
+        prim = topo.get(e["id"], {}).get("primary", e["primary_service"])
+        if prim in calisan:
+            toplam += engine_reserved_mb(e["id"], tuning=tun.get(e["id"]))
+    return toplam
+
+
+def stack_ceiling_mb(exclude_services=None):
+    """Çalışan container'ların docker --memory TAVANLARININ toplamı (MB)."""
+    haric = exclude_services or set()
+    return sum(c["memory_mb"] for c in docker_containers()
+               if c["status"] == "running" and c["service"] not in haric)
+
+
+def host_pressure():
+    """/proc/pressure/memory — çekirdeğin bellek baskısı ölçümü (PSI).
+
+    Neden defterimizden ÖNCE gelir: rezerve/tavan hesabı bizim modelimiz,
+    PSI ise çekirdeğin gerçeğidir. "some avg10", son 10 saniyenin yüzde
+    kaçında en az bir görevin bellek beklediğini söyler. Ölçümde 0.00'dı:
+    panel "yer yok" derken çekirdek hiçbir görevi bekletmiyordu.
+
+    PSI yoksa (eski çekirdek, CONFIG_PSI kapalı) seviye "bilinmiyor" döner ve
+    admission bu kapıyı ATLAR — ölçemediğimiz bir şeyi gerekçe gösterip motor
+    açtırmamak, kullanıcıya yalan söylemek olurdu.
+    """
+    out = {"some10": 0.0, "some60": 0.0, "full10": 0.0, "full60": 0.0,
+           "seviye": "bilinmiyor"}
+    try:
+        with open("/proc/pressure/memory") as f:
+            satirlar = f.readlines()
+    except OSError:
+        return out
+    for line in satirlar:
+        parca = line.split()
+        if not parca:
+            continue
+        vals = {}
+        for p in parca[1:]:
+            if "=" in p:
+                k, v = p.split("=", 1)
+                try:
+                    vals[k] = float(v)
+                except ValueError:
+                    pass
+        if parca[0] == "some":
+            out["some10"] = vals.get("avg10", 0.0)
+            out["some60"] = vals.get("avg60", 0.0)
+        elif parca[0] == "full":
+            out["full10"] = vals.get("avg10", 0.0)
+            out["full60"] = vals.get("avg60", 0.0)
+    s = out["some10"]
+    out["seviye"] = ("yuksek" if s >= PRESSURE_HIGH
+                     else "orta" if s >= PRESSURE_WARN else "yok")
+    return out
+
+
+def os_reserve_mb(total):
+    """İşletim sistemi payı — TEK yerden.
+
+    OS payı toplam RAM'i aşamaz: 512 MB'lık bir makinede "1024 MB işletim
+    sistemine ayrıldı" demek hem saçma hem yanlış bilgi. Üç hesap (plan,
+    boş bütçe, durum) aynı fonksiyonu çağırıyor ki birbirini yalanlamasın —
+    ölçülen %122 aşımının bir sebebi de iki ayrı yerde iki farklı OS payı
+    hesaplanmasıydı.
+    """
+    if total <= 0:
+        return 0
+    return min(max(OS_RESERVE_MIN_MB, int(total * OS_RESERVE_RATIO)),
+               int(total * 0.6))
+
+
+def allocatable_mb(total=None):
+    """DAĞITILABİLİR bellek: toplam RAM − OS payı − çekirdek servis payı."""
+    if total is None:
+        total = host_memory_mb()[0]
+    if total <= 0:
+        return 0
+    return max(0, total - os_reserve_mb(total) - CORE_RESERVE_MB)
+
+
+def _fit_reserve(eid, limit, min_mb, reserve_budget, available):
+    """Tavanı, rezervesi SERT kurala ve ÇEKİRDEK KEMERİNE sığana dek küçültür.
+
+    Reddetmek yerine küçültüyoruz: rezerve tavanla birlikte büyüdüğü için
+    (MariaDB buffer pool = tavanın %60'ı) daha küçük bir tavan çoğu zaman
+    sığar ve kullanıcı istediği motoru açar. %5'lik adımlarla iniyoruz;
+    katalogdaki min_mb/max_mb clamp'leri yüzünden rezerve tavanın DÜZ bir
+    oranı değil, tek bir formülle geri çözmek her motorda doğru olmazdı.
+    """
+    sinir = reserve_budget
+    if available > 0:
+        sinir = min(sinir, available - KERNEL_SAFETY_MB)
+    limit = int(limit)
+    rez = engine_reserved_mb(eid, limit_mb=limit)
+    for _ in range(60):
+        if rez <= sinir or limit <= min_mb:
+            break
+        limit = max(min_mb, int(limit * 0.95))
+        rez = engine_reserved_mb(eid, limit_mb=limit)
+    return limit, rez
+
+
 def plan_engine(eid, requested_mb=None):
-    """Bir motoru açmanın mümkün olup olmadığını ve hangi boyutla açılacağını hesaplar."""
+    """Motor açılabilir mi, hangi tavanla — ÜÇ KURALA göre karar verir.
+
+    SERT   : Σ rezerve + yeni rezerve ≤ dağıtılabilir (asla esnetilmez)
+    YUMUŞAK: Σ tavan + yeni tavan ≤ dağıtılabilir × OVERCOMMIT_LIMIT
+    ÇEKİRDEK: MemAvailable ≥ yeni rezerve + KERNEL_SAFETY_MB
+
+    Ret hâlinde hangi kuralın çiğnendiği `rule` alanında ve ret metninde
+    ölçülen sayılarla birlikte döner. Eski davranış tek bir tavan defterine
+    bakıyor ve %6 dolu bir sunucuda her motoru "bellek yetmiyor" diye
+    reddediyordu.
+    """
     engine = CATALOG.engine(eid)
     if not engine:
         return {"ok": False, "reason": "Bilinmeyen motor: %s" % eid}
@@ -661,35 +1023,38 @@ def plan_engine(eid, requested_mb=None):
     if total <= 0:
         return {"ok": False, "reason": "Host belleği okunamadı (/proc/meminfo)"}
 
-    # OS payı toplam RAM'i aşamaz: 512 MB'lık bir makinede "1024 MB işletim
-    # sistemine ayrıldı" demek hem saçma hem de kullanıcıya yanlış bilgi verir.
-    os_reserve = min(max(OS_RESERVE_MIN_MB, int(total * OS_RESERVE_RATIO)),
-                     int(total * 0.6))
+    os_reserve = os_reserve_mb(total)
+    allocatable = allocatable_mb(total)
 
-    # Zaten çalışan container'ların GERÇEK limit toplamı — kendi defterimize
-    # değil docker'ın söylediğine bakıyoruz, böylece elle yapılan değişiklikler
-    # de hesaba katılır. Bu motorun kendi servisleri hariç tutulur (yeniden
+    # Zaten çalışan container'ların TAVAN toplamı — kendi defterimize değil
+    # docker'ın söylediğine bakıyoruz, böylece elle yapılan değişiklikler de
+    # hesaba katılır. Bu motorun kendi servisleri hariç tutulur (yeniden
     # boyutlandırma senaryosu).
     own = set(engine.get("services", []))
-    committed = 0
-    for c in docker_containers():
-        if c["status"] != "running":
-            continue
-        if c["service"] in own:
-            continue
-        committed += c["memory_mb"]
+    committed = stack_ceiling_mb(own)
+    # Açık motorların REZERVE toplamı. Tavandan bağımsız ve ondan çok daha
+    # küçüktür: ölçümde mariadb 3196 MB tavan taşıyordu ama rezervesi (buffer
+    # pool) 1917 MB, gerçek kullanımı 213 MB idi.
+    reserved_others = stack_reserved_mb(exclude=eid)
+    pressure = host_pressure()
 
-    budget = total - os_reserve - CORE_RESERVE_MB - committed
+    # YUMUŞAK KURAL bütçesi: tavanların toplamı, dağıtılabilirin aşırı taahhüt
+    # katını aşmasın. Tavan bir söz değil bir sınırdır; hepsinin aynı anda
+    # dolması, iş yüklerinin sözleşmiş gibi tepe yapmasını gerektirir.
+    ceiling_budget = int(allocatable * OVERCOMMIT_LIMIT) - committed
+    # SERT KURAL bütçesi: rezerveler gerçekten ayrılır, aşırı taahhüt edilemez.
+    reserve_budget = allocatable - reserved_others
 
     # Panel (phpMyAdmin/pgAdmin/Kibana…) opsiyoneldir. Bütçe darsa onu ATLAYIP
     # veritabanının kendisini açıyoruz — küçük bir sunucuda "pgAdmin 512 MB
     # istiyor" diye PostgreSQL'i hiç açamamak saçma olurdu. Yönetim için
     # Adminer zaten her zaman ayakta (8085) ve MySQL/PostgreSQL/MSSQL'i yönetir.
     with_panel = True
-    engine_budget = budget - overhead
-    if engine_budget < min_mb and panel_mb > 0 and (budget - exporter_mb) >= min_mb:
+    engine_budget = ceiling_budget - overhead
+    if engine_budget < min_mb and panel_mb > 0 \
+            and (ceiling_budget - exporter_mb) >= min_mb:
         with_panel = False
-        engine_budget = budget - exporter_mb
+        engine_budget = ceiling_budget - exporter_mb
 
     detail = {
         "engine": eid,
@@ -697,8 +1062,18 @@ def plan_engine(eid, requested_mb=None):
         "host_available_mb": available,
         "os_reserve_mb": os_reserve,
         "core_reserve_mb": CORE_RESERVE_MB,
+        "allocatable_mb": allocatable,
         "committed_mb": committed,
-        "budget_mb": budget,
+        "stack_reserved_mb": reserved_others,
+        "reserve_budget_mb": reserve_budget,
+        "ceiling_budget_mb": ceiling_budget,
+        "overcommit_limit": OVERCOMMIT_LIMIT,
+        "overcommit_ratio": (round(committed / float(allocatable), 2)
+                             if allocatable > 0 else 0.0),
+        "pressure": pressure,
+        # budget_mb eski addır ve panel/selftest onu okuyor: yumuşak kuralın
+        # (tavan) bütçesidir.
+        "budget_mb": ceiling_budget,
         "overhead_mb": overhead if with_panel else exporter_mb,
         "panel_mb": panel_mb,
         "with_panel": with_panel,
@@ -709,28 +1084,85 @@ def plan_engine(eid, requested_mb=None):
         "disk_free_mb": disk_free_mb(),
     }
 
+    # Üç kapının durumu HER cevapta bulunur — ret sebebi disk bile olsa panel
+    # hangi kuralın sağlandığını gösterebilsin. reserved_mb burada asgari
+    # tavana göredir; plan onaylanırsa aşağıda seçilen tavanla güncellenir.
+    reserve_min = engine_reserved_mb(eid, limit_mb=min_mb)
+    detail["reserved_mb"] = int(reserve_min)
+    detail["ceiling_ok"] = bool(engine_budget >= min_mb)
+    detail["reserve_ok"] = bool(reserve_min <= reserve_budget)
+    detail["kernel_ok"] = bool(available <= 0
+                               or available >= reserve_min + KERNEL_SAFETY_MB)
+
     if detail["disk_free_mb"] >= 0 and detail["disk_free_mb"] < MIN_FREE_DISK_MB:
         detail.update(ok=False, reason=(
             "Disk yetersiz: %d MB boş, en az %d MB gerekli."
             % (detail["disk_free_mb"], MIN_FREE_DISK_MB)), reason_kind="disk")
         return detail
 
-    if engine_budget < min_mb:
-        detail.update(ok=False, reason=(
-            "%s en az %d MB ister (+ %d MB panel/exporter), kullanılabilir bütçe "
-            "yalnız %d MB. Toplam %d MB RAM'in %d MB'ı işletim sistemine, %d MB'ı "
-            "çekirdek servislere, %d MB'ı zaten açık motorlara ayrılmış durumda. "
-            "Başka bir motoru durdurun ya da sunucuya RAM ekleyin."
-            % (engine["name"], min_mb, overhead, max(engine_budget, 0),
-               total, os_reserve, CORE_RESERVE_MB, committed)), reason_kind="bellek")
+    # --- YUMUŞAK KURAL: tavan bütçesi ---------------------------------------
+    # Ret mesajı HANGİ kuralın çiğnendiğini ve ölçülen sayıları söyler.
+    # "Bellek yetmiyor" demek yetmiyordu: kullanıcı boş belleğe bakıp haklı
+    # olarak "ama yer var" diyordu — yer vardı, sıkışan tavan defteriydi.
+    if not detail["ceiling_ok"]:
+        detail.update(ok=False, rule="tavan", reason=(
+            "YUMUŞAK KURAL (tavan) çiğneniyor. %s en az %d MB tavan ister "
+            "(+ %d MB panel/exporter). Dağıtılabilir bellek %d MB; aşırı "
+            "taahhüt katsayısı %.2f ile tavan bütçesi %d MB ediyor ve bunun "
+            "%d MB'ı zaten çalışan container'ların tavanlarına verilmiş, "
+            "geriye %d MB kalıyor. Bu bir TAVAN sıkışmasıdır, belleğin dolu "
+            "olduğu anlamına GELMEZ: çekirdeğin bu andaki boş bellek ölçümü "
+            "%d MB, bellek baskısı '%s'. Çözüm: 'Yeniden dengele' ile açık "
+            "motorların tavanlarını güncel kullanıma göre düşürün, bir motoru "
+            "durdurun ya da OVERCOMMIT_LIMIT'i yükseltin. (Toplam %d MB "
+            "RAM'in %d MB'ı işletim sistemine, %d MB'ı çekirdek servislere "
+            "ayrıldı.)"
+            % (engine["name"], min_mb, overhead, allocatable, OVERCOMMIT_LIMIT,
+               int(allocatable * OVERCOMMIT_LIMIT), committed,
+               max(engine_budget, 0), available, pressure["seviye"],
+               total, os_reserve, CORE_RESERVE_MB)), reason_kind="bellek")
+        return detail
+
+    # --- SERT KURAL: rezerve bütçesi ----------------------------------------
+    # Bu kural asla esnetilmez: rezerve, motorun açılışta gerçekten ayırdığı
+    # ve geri vermediği bellektir. Aşırı taahhüt edilirse ilk yazma yükünde
+    # OOM killer devreye girer.
+    if not detail["reserve_ok"]:
+        detail.update(ok=False, rule="rezerve", reason=(
+            "SERT KURAL (rezerve) çiğneniyor. %s açılışta en az %d MB'ı "
+            "gerçekten ayırır (%s); açık motorların rezerve toplamı zaten "
+            "%d MB ve dağıtılabilir bellek %d MB, yani ayrılabilecek %d MB "
+            "kaldı. Rezerve tavan değildir: aşırı taahhüt edilemez. Başka "
+            "bir motoru durdurun ya da sunucuya RAM ekleyin."
+            % (engine["name"], reserve_min,
+               ", ".join((engine.get("resources", {}).get("reserve") or {})
+                         .get("from") or ["taban yok"]),
+               reserved_others, allocatable, max(reserve_budget, 0))),
+            reason_kind="bellek")
+        return detail
+
+    # --- ÇEKİRDEK KEMERİ ----------------------------------------------------
+    # Defter ne derse desin çekirdeğin gerçeği bağlayıcıdır. MemAvailable
+    # okunamadıysa (0) bu kapı atlanır; ölçemediğimiz şey gerekçe olamaz.
+    if not detail["kernel_ok"]:
+        detail.update(ok=False, rule="cekirdek", reason=(
+            "ÇEKİRDEK KEMERİ çiğneniyor. %s açılışta %d MB ayıracak ve buna "
+            "%d MB emniyet payı ekleniyor, ama /proc/meminfo MemAvailable şu "
+            "an %d MB. Defter uygun görse bile bu belleği ayırmak OOM "
+            "killer'ı çağırır. Bellek baskısı: '%s' (some avg10=%.2f)."
+            % (engine["name"], reserve_min, KERNEL_SAFETY_MB, available,
+               pressure["seviye"], pressure["some10"])), reason_kind="bellek")
         return detail
 
     if requested_mb:
         want = int(requested_mb)
         if want > engine_budget:
-            detail.update(ok=False, reason=(
-                "İstenen %d MB bütçeyi aşıyor (kullanılabilir: %d MB)."
-                % (want, engine_budget)), reason_kind="bellek")
+            detail.update(ok=False, rule="tavan", reason=(
+                "İstenen %d MB tavan bütçesini aşıyor (kullanılabilir: %d MB; "
+                "dağıtılabilir %d MB × aşırı taahhüt %.2f − açık tavanlar "
+                "%d MB)." % (want, max(engine_budget, 0), allocatable,
+                             OVERCOMMIT_LIMIT, committed)),
+                reason_kind="bellek")
             return detail
         limit = _clamp(want, min_mb, None)
         source = "kullanıcı"
@@ -749,8 +1181,14 @@ def plan_engine(eid, requested_mb=None):
         detail.update(ok=False, reason=pre, reason_kind="onkosul")
         return detail
 
+    # Seçilen tavanın rezervesi de sert kurala ve çekirdek kemerine sığmalı.
+    # Sığmıyorsa reddetmiyoruz, tavanı küçültüyoruz: min_mb için üç kapı da
+    # yukarıda geçildi, yani en kötü ihtimalle min_mb'de duruyoruz.
+    limit, reserve_now = _fit_reserve(eid, limit, min_mb, reserve_budget,
+                                      available)
     detail.update(ok=True, limit_mb=int(limit), source=source,
                   tuning=compute_tuning(engine, int(limit)),
+                  reserved_mb=int(reserve_now),
                   headroom_mb=int(engine_budget - limit))
     return detail
 
@@ -768,27 +1206,46 @@ def free_budget_mb():
     dağıtılabilirken ayrılan 15087 MB'a çıktı ve panel "%122 aşım" yazdı.
     Onay, silinmemiş olan 2397+512+64 MB'ı iki kez saymıştı.
 
-    Hesap plan_engine ile BİREBİR aynı sırayı izler (aynı OS oranı, aynı
-    çekirdek payı, aynı docker defteri) — iki sayı birbirini yalanlamasın.
+    Hesap plan_engine ile BİREBİR aynı sırayı izler (aynı OS payı, aynı
+    çekirdek payı, aynı docker defteri, aynı üç kural) — iki sayı birbirini
+    yalanlamasın. Dönen `free` YUMUŞAK kuralın (tavan) boşluğudur; sert kural
+    ve çekirdek kemeri için ayrıntıda reserve_free_mb ve kernel_free_mb var.
+    Çağıran taraf üçünü birden sormak zorunda: tavanı boş bulup rezervesi
+    sığmayan bir replika kurmak, ilk yazma yükünde OOM demektir.
     """
-    total, _available = host_memory_mb()
+    total, available = host_memory_mb()
     if total <= 0:
         # /proc/meminfo okunamadı: sıfır bütçe döndürmek, "yer var" demekten
         # iyidir — bilinmeyen bir bütçeye replika kurdurmak aşırı taahhüdün
         # ta kendisi olurdu.
-        return 0, {"host_total_mb": 0, "os_reserve_mb": 0,
-                   "core_reserve_mb": CORE_RESERVE_MB, "committed_mb": 0,
-                   "free_mb": 0}
-    os_reserve = min(max(OS_RESERVE_MIN_MB, int(total * OS_RESERVE_RATIO)),
-                     int(total * 0.6))
+        return 0, {"host_total_mb": 0, "host_available_mb": 0,
+                   "os_reserve_mb": 0, "core_reserve_mb": CORE_RESERVE_MB,
+                   "allocatable_mb": 0, "committed_mb": 0,
+                   "stack_reserved_mb": 0,
+                   "overcommit_limit": OVERCOMMIT_LIMIT,
+                   "overcommit_ratio": 0.0, "ceiling_free_mb": 0,
+                   "reserve_free_mb": 0, "kernel_free_mb": 0,
+                   "pressure": host_pressure(), "free_mb": 0}
+    os_reserve = os_reserve_mb(total)
+    allocatable = allocatable_mb(total)
     # Kendi defterimize değil docker'ın söylediğine bakıyoruz: elle konmuş
-    # limitler de taahhüttür ve RAM'i onlar da tüketir.
-    committed = sum(c["memory_mb"] for c in docker_containers()
-                    if c["status"] == "running")
-    free = total - os_reserve - CORE_RESERVE_MB - committed
-    return free, {"host_total_mb": total, "os_reserve_mb": os_reserve,
-                  "core_reserve_mb": CORE_RESERVE_MB,
-                  "committed_mb": committed, "free_mb": free}
+    # tavanlar da deftere yazılıdır ve tavan bütçesini onlar da tüketir.
+    committed = stack_ceiling_mb()
+    reserved = stack_reserved_mb()
+    ceiling_free = int(allocatable * OVERCOMMIT_LIMIT) - committed
+    reserve_free = allocatable - reserved
+    return ceiling_free, {
+        "host_total_mb": total, "host_available_mb": available,
+        "os_reserve_mb": os_reserve, "core_reserve_mb": CORE_RESERVE_MB,
+        "allocatable_mb": allocatable, "committed_mb": committed,
+        "stack_reserved_mb": reserved,
+        "overcommit_limit": OVERCOMMIT_LIMIT,
+        "overcommit_ratio": (round(committed / float(allocatable), 2)
+                             if allocatable > 0 else 0.0),
+        "ceiling_free_mb": ceiling_free, "reserve_free_mb": reserve_free,
+        "kernel_free_mb": available, "pressure": host_pressure(),
+        # Eski ad: panel ve selftest bunu okuyor. Yumuşak kuralın boşluğudur.
+        "free_mb": ceiling_free}
 
 
 def _cpu_flags():
@@ -2363,6 +2820,213 @@ def do_deactivate(jid, eid):
         lock.release()
 
 
+def do_rebalance(jid):
+    """Açık motorların TAVANLARINI şu anki koşullara göre yeniden hesaplar.
+
+    Neden gerekiyor: tavanlar motorlar TEK TEK açılırken hesaplandı. Üçüncü
+    motor açılırken ilk ikisinin tavanı çoktan konmuştu ve kimse geri dönüp
+    "artık daha az yer var, sen de kıs" demedi. Ölçülen sonuç: 15984 MB'lık
+    makinede tavan toplamı 15 GB'a çıktı, panel %122 aşım yazdı ve yeni motor
+    açılamaz oldu — oysa aynı anda gerçek kullanım 1508 MB idi.
+
+    Container YENİDEN BAŞLATILMAZ: `docker update --memory` cgroup limitini
+    canlı değiştirir, kesinti olmaz. Motorun İÇ ayarları (buffer pool, JVM
+    heap) çalışırken değişmez; onları tuning.env'e yazıyoruz ki bir sonraki
+    açılışta tavanla uyumlu olsunlar. Küçültmede iç ayarı da küçültmek
+    ŞARTTIR: yoksa motor bir dahaki açılışta kendi tavanının üstünde bellek
+    ayırıp ilk sorguda OOM olur.
+    """
+    if BACKEND == "kubernetes":
+        return job_done(jid, False,
+                        "Yeniden dengeleme yalnız Docker backend'inde "
+                        "çalışır: K8s'te limit değişimi pod'u yeniden "
+                        "yaratır, yani "
+                        "kesinti demektir.")
+    # Aç/durdur ve devirle AYNI SIRADA yürür: tam bir aktivasyon sürerken
+    # tavanları oynatmak, compose'un yarattığı container'ın limitini
+    # yarıştırırdı.
+    if not ACTION_LOCK.acquire(blocking=False):
+        return job_done(jid, False,
+                        "Şu anda başka bir yığın işlemi sürüyor (aç/durdur, "
+                        "devir, yedek kopya). Yeniden dengeleme sıraya "
+                        "girmez; bitmesini bekleyip tekrar deneyin.")
+    try:
+        total, available = host_memory_mb()
+        if total <= 0:
+            return job_done(jid, False,
+                            "Host belleği okunamadı (/proc/meminfo)")
+        allocatable = allocatable_mb(total)
+        containers = docker_containers(force=True)
+        calisan = {c["service"]: c for c in containers
+                   if c["status"] == "running"}
+        hedefler = []
+        for e in CATALOG.engines:
+            c = calisan.get(current_primary(e))
+            if c:
+                hedefler.append((e, c))
+        if not hedefler:
+            return job_done(jid, False,
+                            "Açık motor yok — dengelenecek bir tavan da yok.")
+
+        job_log(jid, "dağıtılabilir %d MB (toplam %d − OS %d − çekirdek %d), "
+                     "aşırı taahhüt %.2f, çekirdek %d MB boş bildiriyor, "
+                     "bellek baskısı '%s'"
+                % (allocatable, total, os_reserve_mb(total), CORE_RESERVE_MB,
+                   OVERCOMMIT_LIMIT, available, host_pressure()["seviye"]))
+
+        # 1) İstenen tavanlar: aktivasyondaki formülün AYNISI. İki yerde iki
+        #    formül tutmak, "yeniden dengele"den sonra motoru kapatıp açınca
+        #    başka bir sayı çıkması demek olurdu.
+        istek = {}
+        for e, _c in hedefler:
+            res = e.get("resources", {})
+            istek[e["id"]] = int(_clamp(total * float(res.get("share", 0.2)),
+                                        int(res.get("min_mb", 256)),
+                                        int(res.get("max_mb", 8192))))
+
+        # 2) YUMUŞAK KURAL: motorların tavan toplamı, dağıtılabilirin aşırı
+        #    taahhüt katından "bizim dokunmadığımız" container'ların (panel,
+        #    exporter, replika, gateway) tavanları düşüldükten sonra kalanı
+        #    aşamaz. Aşıyorsa hepsi AYNI oranda kısılır: kimse ayrıcalıklı
+        #    değil, sıraya göre son açılan cezalandırılmıyor.
+        prim_isimler = {c["service"] for _e, c in hedefler}
+        disari = sum(c["memory_mb"] for c in containers
+                     if c["status"] == "running"
+                     and c["service"] not in prim_isimler)
+        pay = int(allocatable * OVERCOMMIT_LIMIT) - disari
+        toplam = sum(istek.values())
+        if pay <= 0:
+            # Motor dışı container'ların tavanları tek başına bütçeyi yemiş.
+            # Motorlara verebileceğimiz en dürüst değer asgarileridir; daha
+            # fazlasını vermek defteri yeniden şişirmek olurdu.
+            for k in istek:
+                istek[k] = int(CATALOG.engine(k).get("resources", {})
+                               .get("min_mb", 256))
+            job_log(jid, "UYARI: motor dışı container tavanları (%d MB) tavan "
+                         "bütçesini tüketmiş — motorlar asgari tavana çekildi"
+                    % disari)
+        elif toplam > pay and toplam > 0:
+            oran = float(pay) / toplam
+            for k in istek:
+                res = CATALOG.engine(k).get("resources", {})
+                istek[k] = max(int(res.get("min_mb", 256)),
+                               int(istek[k] * oran))
+            job_log(jid, "tavan bütçesi dar (%d MB istendi, %d MB var): "
+                         "istekler %.2f katsayısıyla kısıldı"
+                    % (toplam, pay, oran))
+
+        # 3) SERT KURAL: yeni tavanlardan türeyecek REZERVE toplamı
+        #    dağıtılabiliri aşamaz. Aşıyorsa %10'luk adımlarla iniyoruz;
+        #    min_mb'nin altına inmek motoru açılamaz hâle getirir, orada
+        #    duruyoruz ve durumu günlüğe yazıyoruz.
+        for _ in range(20):
+            rez = sum(engine_reserved_mb(e["id"], limit_mb=istek[e["id"]])
+                      for e, _c in hedefler)
+            if rez <= allocatable:
+                break
+            for e, _c in hedefler:
+                mn = int(e.get("resources", {}).get("min_mb", 256))
+                istek[e["id"]] = max(mn, int(istek[e["id"]] * 0.9))
+        else:
+            rez = sum(engine_reserved_mb(e["id"], limit_mb=istek[e["id"]])
+                      for e, _c in hedefler)
+            job_log(jid, "UYARI: rezerve toplamı asgari tavanlarda bile "
+                         "dağıtılabiliri aşıyor (%d MB > %d MB) — bir motoru "
+                         "durdurmadan bu sunucuya sığmaz" % (rez, allocatable))
+
+        # 4) Uygula. Tavan, ölçülen GERÇEK kullanımın altına İNDİRİLEMEZ.
+        tun = load_tuning()
+        degisen = uygulanan = hata = 0
+        for e, c in hedefler:
+            eid = e["id"]
+            eski = c["memory_mb"]
+            yeni = int(istek[eid])
+            kullanim = container_usage_mb(c)
+            if kullanim is not None:
+                taban = int(kullanim * REBALANCE_HEADROOM)
+                if yeni < taban:
+                    job_log(jid, "%s: hesaplanan tavan %d MB, gerçek "
+                                 "kullanımın %.2f katının (%d MB) altında "
+                                 "kalıyordu — tabana çekildi; cgroup limiti "
+                                 "anlık kullanımın altına inerse container "
+                                 "ANINDA OOM olur"
+                            % (eid, yeni, REBALANCE_HEADROOM, taban))
+                    yeni = taban
+            elif yeni < eski:
+                job_log(jid, "%s: gerçek kullanım ölçülemedi — tavan "
+                             "KÜÇÜLTÜLMÜYOR (körlemesine küçültmek anında OOM "
+                             "demektir)" % eid)
+                yeni = eski
+            yeni = max(yeni, int(e.get("resources", {}).get("min_mb", 256)))
+            if abs(yeni - eski) < REBALANCE_MIN_DELTA_MB:
+                job_log(jid, "%s: %d MB — değişiklik yok (kullanım %s)"
+                        % (eid, eski,
+                           "%d MB" % kullanim if kullanim is not None
+                           else "ölçülemedi"))
+                continue
+            degisen += 1
+            # --memory-swap AYNI değerle veriliyor: swap'a taşma yok. Docker
+            # memory-swap < memory kabul etmez, ikisini tek çağrıda vermek
+            # büyütmede de küçültmede de doğru sırayı garanti eder.
+            rc, out, err = run(["docker", "update",
+                                "--memory", "%dm" % yeni,
+                                "--memory-swap", "%dm" % yeni,
+                                c["name"]], timeout=120)
+            if rc != 0 and "swap" in (out + err).lower():
+                # Bazı çekirdeklerde swap muhasebesi derlenmemiştir ("Your
+                # kernel does not support swap limit capabilities") ve docker
+                # --memory-swap'ı reddeder. Tavanın KENDİSİNİ yine de
+                # koyabiliyoruz; swap zaten yoksa ikisi aynı şeydir. Bu dal
+                # olmadan dengeleme, sırf bir çekirdek seçeneği yüzünden
+                # hiçbir şey yapamadan başarısız görünürdü.
+                job_log(jid, "%s: --memory-swap reddedildi (çekirdekte swap "
+                             "muhasebesi kapalı olabilir), yalnız --memory "
+                             "ile yeniden deneniyor" % eid)
+                rc, out, err = run(["docker", "update",
+                                    "--memory", "%dm" % yeni,
+                                    c["name"]], timeout=120)
+            if rc != 0:
+                hata += 1
+                job_log(jid, "%s: docker update BAŞARISIZ (%d): %s"
+                        % (eid, rc, (out + err).strip()[-300:]))
+                continue
+            uygulanan += 1
+            tun[eid] = compute_tuning(e, yeni)
+            job_log(jid, "%s: %d MB → %d MB (kullanım %s, rezerve %d MB)"
+                    % (eid, eski, yeni,
+                       "%d MB" % kullanim if kullanim is not None
+                       else "ölçülemedi",
+                       engine_reserved_mb(eid, limit_mb=yeni)))
+
+        if uygulanan:
+            # tuning.env, bir sonraki açılışta compose'un okuyacağı dosya.
+            # Yazmazsak `compose up` eski tavanı geri koyar ve dengeleme
+            # sessizce geri alınırdı.
+            save_tuning(tun)
+            job_log(jid, "tuning.env güncellendi — iç ayarlar (buffer pool, "
+                         "heap) motorun BİR SONRAKİ açılışında geçerli olur; "
+                         "tavan ise şimdiden değişti, kesinti olmadı")
+            docker_containers(force=True)     # panel güncel tavanı görsün
+
+        record_event("rebalance", "tümü",
+                     "Tavanlar yeniden dengelendi: %d motorun %d'sinde tavan "
+                     "değişti%s. Dağıtılabilir %d MB, aşırı taahhüt sınırı "
+                     "%.2f. Container'lar yeniden başlatılmadı."
+                     % (len(hedefler), uygulanan,
+                        (", %d tanesinde docker update başarısız" % hata)
+                        if hata else "", allocatable, OVERCOMMIT_LIMIT),
+                     level="warning" if hata else "info")
+        if hata:
+            return job_done(jid, False,
+                            "%d motorun tavanı güncellendi ama %d tanesinde "
+                            "docker update başarısız oldu; ayrıntı iş "
+                            "günlüğünde." % (uygulanan, hata))
+        return job_done(jid, True, None,
+                        {"changed": uygulanan, "considered": len(hedefler)})
+    finally:
+        ACTION_LOCK.release()
+
+
 def do_replication(jid, eid, enable):
     engine = CATALOG.engine(eid)
     # HTTP ucu motor kimliğini zaten katalogla doğruluyor; buradaki kontrol,
@@ -2462,25 +3126,54 @@ def do_replication(jid, eid, enable):
                 # sokuyordu — 15984 MB RAM'de 15087 MB ayrılmış hâlde panel
                 # "%122 aşım" gösterdi. Sayıyı ekleme sorusuna göre soruyoruz.
                 free, bd = free_budget_mb()
+                # Replika ana kopyanın TAVANINI da REZERVESİNİ de tekrarlar:
+                # aynı imaj, aynı tuning.env, aynı buffer pool. Üç kuralı da
+                # ayrı ayrı soruyoruz ki ret mesajı hangisinin çiğnendiğini
+                # söyleyebilsin — "bellek yetmiyor" cümlesi, %6 dolu bir
+                # sunucuda kullanıcıya hiçbir şey anlatmıyordu.
+                rep_reserve = engine_reserved_mb(eid)
+                msg = None
                 if free < prim_mb:
-                    msg = ("Replika ana kopya kadar bellek ister (%d MB) çünkü "
-                           "devirden sonra aynı yükü taşıyacak; şu an boşta "
-                           "yalnız %d MB var. Toplam %d MB RAM'in %d MB'ı "
-                           "işletim sistemine, %d MB'ı çekirdek servislere, "
-                           "%d MB'ı zaten çalışan container'lara ayrılmış "
-                           "durumda. Başka bir motoru durdurun ya da sunucuya "
-                           "RAM ekleyin."
-                           % (prim_mb, max(free, 0), bd["host_total_mb"],
-                              bd["os_reserve_mb"], bd["core_reserve_mb"],
-                              bd["committed_mb"]))
+                    msg = ("YUMUŞAK KURAL (tavan): replika ana kopya kadar "
+                           "tavan ister (%d MB) çünkü devirden sonra aynı "
+                           "yükü taşıyacak; tavan bütçesinde yalnız %d MB "
+                           "boş var "
+                           "(dağıtılabilir %d MB × aşırı taahhüt %.2f − açık "
+                           "tavanlar %d MB). Açık motorların tavanlarını "
+                           "'Yeniden dengele' ile güncel kullanıma çekin, bir "
+                           "motoru durdurun ya da RAM ekleyin."
+                           % (prim_mb, max(free, 0), bd["allocatable_mb"],
+                              bd["overcommit_limit"], bd["committed_mb"]))
+                elif rep_reserve > bd["reserve_free_mb"]:
+                    msg = ("SERT KURAL (rezerve): replika açılışta %d MB'ı "
+                           "gerçekten ayırır; açık motorların rezerve toplamı "
+                           "%d MB ve dağıtılabilir bellek %d MB, yani "
+                           "ayrılabilecek %d MB kaldı. Rezerve aşırı taahhüt "
+                           "edilemez."
+                           % (rep_reserve, bd["stack_reserved_mb"],
+                              bd["allocatable_mb"],
+                              max(bd["reserve_free_mb"], 0)))
+                elif bd["kernel_free_mb"] > 0 and \
+                        bd["kernel_free_mb"] < rep_reserve + KERNEL_SAFETY_MB:
+                    msg = ("ÇEKİRDEK KEMERİ: replika açılışta %d MB ayıracak "
+                           "(+%d MB emniyet payı) ama /proc/meminfo "
+                           "MemAvailable şu an %d MB. Defter uygun görse bile "
+                           "bu belleği ayırmak OOM killer'ı çağırır."
+                           % (rep_reserve, KERNEL_SAFETY_MB,
+                              bd["kernel_free_mb"]))
+                if msg:
                     # Olay günlüğüne de düşüyor: "yedek kopya neden kurulmadı"
                     # sorusu çoğu zaman iş penceresi kapandıktan sonra
                     # soruluyor, iş günlüğü ise o zamana kadar budanmış olur.
                     record_event("replication_blocked", eid, msg,
                                  level="warning")
                     return job_done(jid, False, msg)
-                job_log(jid, "bütçe uygun: replika %d MB alacak, şu an boşta "
-                             "%d MB var" % (prim_mb, free))
+                job_log(jid, "bütçe uygun: replika %d MB tavan / %d MB "
+                             "rezerve alacak; tavan boşluğu %d MB, rezerve "
+                             "boşluğu "
+                             "%d MB, çekirdek %d MB boş bildiriyor"
+                        % (prim_mb, rep_reserve, free, bd["reserve_free_mb"],
+                           bd["kernel_free_mb"]))
             st = load_state()
             if os.path.exists(os.path.join(OVERRIDE_DIR, override + ".yml")):
                 st["overrides"] = list(set(st.get("overrides", [])) | {override})
@@ -2721,12 +3414,22 @@ BACKUP_BUSY_MSG = ("Şu anda başka bir yedekleme sürüyor. İki dump aynı and
 # görünüyordu; oysa o an başka bir yedek/geri yükleme koşuyordu ve kilit tam
 # görevini yapmıştı. Yanlış alarm, gerçek alarmı değersizleştirir.
 BACKUP_LOCK_TEXT = "Başka bir işlem kilidi tutuyor"
-# Ertelenen tur ne kadar sonra yeniden denenir ve bu ne kadar sürdürülür.
-# Hedef DAKİKA geçtiği için tek şansa bırakılamaz: kilidi tutan iş (uzun bir
-# geri yükleme) bittiğinde o günün yedeği hâlâ alınabilmeli. Pencere gün
-# boyu açık kalmaz — akşam alınan "gece yedeği" kullanıcıyı yanıltır.
+# Ertelenen ya da BAŞARISIZ olan tur, ARTAN ARALIKLA aynı gün içinde yeniden
+# denenir: 10 dk → 30 dk → saatlik. Ölçülen olay: zamanlama açıldı, tek deneme
+# kilide takıldı, panel "Sıradaki yedek: 24 saat sonra" yazdı ve o gün AÇIK
+# olan PostgreSQL ile Redis'in HİÇ yedeği alınmadı. Oysa mekanizma sağlamdı —
+# elle çalıştırılan `backup.sh all` üç motoru 3 saniyede yedekliyor. Tek şansa
+# bırakmak, kilidi tutan iş bittikten sonra bile o günü harcamak demekti.
+# Aralığın artması, kilidi dakikalarca tutan uzun bir geri yüklemede olay
+# günlüğünü 30 saniyede bir doldurmamak için.
 BACKUP_RETRY_AFTER = int(os.environ.get("BACKUP_RETRY_AFTER", "600"))
-BACKUP_DEFER_WINDOW = int(os.environ.get("BACKUP_DEFER_WINDOW", "21600"))
+BACKUP_RETRY_STEPS = (BACKUP_RETRY_AFTER, 1800, 3600)
+# Zamanlama İLK açıldığında — ya da controller açılırken zamanlama açık olduğu
+# hâlde hiç başarılı tur yoksa — bu kadar sonra bir TABAN YEDEĞİ alınır.
+# Sabah 11'de zamanlamayı açan kullanıcı gece 02:00'yi beklememeli: o 15 saat
+# yedeksizdir. "Hemen" değil 180 sn: controller yeni başladıysa container'lar
+# henüz healthcheck'ten geçmemiş olabilir ve dump boşuna düşer.
+BACKUP_BASELINE_DELAY = int(os.environ.get("BACKUP_BASELINE_DELAY", "180"))
 
 
 # Panelde gösterilecek dosya listesinin üst sınırı ve YEDEĞİN KAYNAĞI defteri.
@@ -2840,8 +3543,15 @@ def load_backup_cfg():
     # last_ok'tan ayrı bir alan, çünkü "yedek alınamadı" ile "sıra bekliyor"
     # aynı şey değil; ikisini tek alanda toplamak paneli yanlış alarma
     # sokuyordu.
+    # last_success: son BAŞARILI turun anı. "Hiç başarılı yedek alındı mı"
+    #   sorusunun tek cevabı; taban yedeği kararı buna bakıyor.
+    # slot_done_at: BUGÜNÜN zamanlı saatini karşılayan tur. last_run'dan ayrı,
+    #   çünkü sabah alınan taban yedeği o gecenin turunu iptal etmemeli.
+    # attempts/next_attempt/attempt_note: artan aralıklı yeniden deneme.
     cfg.update({"last_run": None, "last_ok": None, "last_error": None,
-                "last_deferred": None})
+                "last_deferred": None, "last_success": None,
+                "slot_done_at": None, "attempts": 0,
+                "next_attempt": None, "attempt_note": None})
     try:
         with open(BACKUP_CFG_FILE, encoding="utf-8") as f:
             raw = f.read()
@@ -2880,6 +3590,24 @@ def load_backup_cfg():
     ld = data.get("last_deferred")
     if isinstance(ld, (int, float)) and not isinstance(ld, bool):
         cfg["last_deferred"] = int(ld)
+    for alan in ("last_success", "slot_done_at", "next_attempt"):
+        v = data.get(alan)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            cfg[alan] = int(v)
+    at = data.get("attempts")
+    if isinstance(at, int) and not isinstance(at, bool) and at >= 0:
+        cfg["attempts"] = at
+    if isinstance(data.get("attempt_note"), str):
+        cfg["attempt_note"] = data["attempt_note"]
+
+    # Yükseltme göçü: eski dosyada last_success/slot_done_at yok. Haftalardır
+    # sorunsuz yedekleyen bir sunucuda bu iki alanı boş bırakmak, gereksiz bir
+    # taban yedeği başlatır, o günün zamanlı turunu da ikinci kez
+    # koşturabilirdi.
+    if cfg["last_success"] is None and cfg["last_ok"] and cfg["last_run"]:
+        cfg["last_success"] = cfg["last_run"]
+    if cfg["slot_done_at"] is None and cfg["last_run"]:
+        cfg["slot_done_at"] = cfg["last_run"]
     return cfg
 
 
@@ -2894,9 +3622,56 @@ def save_backup_cfg(cfg):
         "last_ok": cfg.get("last_ok"),
         "last_error": cfg.get("last_error"),
         "last_deferred": cfg.get("last_deferred"),
+        "last_success": cfg.get("last_success"),
+        "slot_done_at": cfg.get("slot_done_at"),
+        "attempts": int(cfg.get("attempts") or 0),
+        "next_attempt": cfg.get("next_attempt"),
+        "attempt_note": cfg.get("attempt_note"),
     }
     _write_json(BACKUP_CFG_FILE, out)
     return out
+
+
+def backup_pending_attempt(cfg, now=None):
+    """Bekleyen DENEMENİN zamanı ve sebebi: (epoch|None, not|None).
+
+    Neden türetiyoruz da yalnız kayda bakmıyoruz: next_attempt'i yazan tek
+    yer _schedule_backup_retry. Kayıt bir sebeple eksik kalırsa (eski sürümden
+    yükseltme, yarım yazılmış dosya, kilidi tutan koşum ölmüş) elde yalnız
+    "son tur başarısız/ertelendi" bilgisi kalıyor ve panel bir sonraki an
+    olarak ERTESİ GÜNÜN zamanlı saatini gösteriyordu — kullanıcının
+    "otomatik yedek çalışmıyor" dediği durum tam olarak buydu. Sunucudaki
+    gerçek kayıt da öyleydi: last_ok=False, next_attempt yok, panel
+    "Sıradaki yedek: 24 saat sonra".
+
+    Kural: son tur başarıyla bitmediyse ve o günden beri başarılı tur yoksa
+    bekleyen bir deneme VARDIR. Kayıtta duruyorsa o, durmuyorsa son
+    olaydan BACKUP_RETRY_AFTER sonrası.
+    """
+    now = time.time() if now is None else now
+    if not cfg.get("enabled"):
+        return None, None
+    kayitli = cfg.get("next_attempt")
+    if kayitli:
+        return int(kayitli), cfg.get("attempt_note")
+    # Kayıt yok: son turun sonucuna bakarak türet.
+    son_olay = cfg.get("last_deferred") or 0
+    basarisiz = cfg.get("last_ok") is False
+    if basarisiz and (cfg.get("last_run") or 0) > son_olay:
+        son_olay = cfg["last_run"]
+    if not son_olay:
+        return None, None
+    basari = cfg.get("last_success") or 0
+    if basari >= son_olay:
+        return None, None          # sonrasında başarılı tur olmuş, borç yok
+    hedef = son_olay + BACKUP_RETRY_AFTER
+    if not _same_local_day(hedef, now):
+        return None, cfg.get("attempt_note")
+    not_ = cfg.get("attempt_note") or (
+        "önceki tur %s; en geç %s içinde tekrar denenecek"
+        % ("ertelendi" if cfg.get("last_deferred") else "başarısız oldu",
+           _sure_metni(BACKUP_RETRY_AFTER)))
+    return int(max(hedef, now)), not_
 
 
 def backup_next_run(cfg=None, now=None):
@@ -2992,7 +3767,18 @@ def backups_overview():
             # Panel bunu "BAŞARISIZ" değil "ertelendi" diye gösterir: tur
             # koşmadı, kilit sırayı korudu ve zamanlayıcı yeniden deneyecek.
             "last_deferred": cfg["last_deferred"],
+            "last_success": cfg["last_success"],
+            "attempts": int(cfg["attempts"] or 0),
             "next_run": backup_next_run(cfg),
+            # Bir sonraki DENEME. Bekleyen bir deneme (taban yedeği ya da
+            # ertelenen/başarısız turun tekrarı) varsa O gösterilir; yoksa
+            # zamanlı turun kendisi. "24 saat sonra" ancak gerçekten başarılı
+            # bir turdan sonra doğrudur — ölçülen olayda tek deneme kilide
+            # takılmıştı ve panel yine de 24 saat sonrasını gösteriyordu.
+            "next_attempt": (backup_pending_attempt(cfg)[0]
+                             or backup_next_run(cfg)),
+            "attempt_note": (cfg["attempt_note"]
+                             or backup_pending_attempt(cfg)[1]),
             "running": BACKUP_LOCK.locked(),
         },
         "engines": engines,
@@ -3315,8 +4101,87 @@ def do_restore(jid, eid, filename):
         lock.release()
 
 
+def _slot_epoch(cfg, now):
+    """Bugünün zamanlı yedek saatinin epoch'u; saat geçersizse None."""
+    hm = _parse_hhmm(cfg.get("time"))
+    if not hm:
+        return None
+    lt = time.localtime(now)
+    try:
+        return time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday,
+                            hm[0], hm[1], 0, 0, 0, -1))
+    except (OverflowError, ValueError):
+        return None
+
+
+def _sure_metni(sn):
+    """Saniyeyi panelde ve olay günlüğünde okunur Türkçeye çevirir."""
+    sn = int(sn)
+    if sn < 90:
+        return "%d saniye" % sn
+    if sn < 3600:
+        return "%d dakika" % int(round(sn / 60.0))
+    return "%d saat" % int(round(sn / 3600.0))
+
+
+def _schedule_backup_retry(cfg, neden, now=None):
+    """Bir sonraki DENEMEYİ planlar (artan aralık) ve diske yazar.
+
+    Panelin "Sıradaki yedek: 24 saat sonra" cümlesi tam olarak burada
+    doğuyordu: tur koşmayınca akla gelen tek "sonraki an" ertesi günün
+    zamanlı saatiydi. Deneme ile zamanlı tur ayrı şeyler; artık ayrı
+    alanlarda duruyorlar (next_attempt / next_run).
+    """
+    now = time.time() if now is None else now
+    sira = int(cfg.get("attempts") or 0) + 1
+    gecikme = BACKUP_RETRY_STEPS[min(sira, len(BACKUP_RETRY_STEPS)) - 1]
+    cfg = dict(cfg)
+    cfg["attempts"] = sira
+    hedef = now + gecikme
+    if _same_local_day(hedef, now):
+        cfg["next_attempt"] = int(hedef)
+        cfg["attempt_note"] = "%s, %s sonra tekrar" % (neden,
+                                                       _sure_metni(gecikme))
+    else:
+        # Gün bitti. Yarına sarkan bir "gece yedeği" kullanıcının sandığı şey
+        # değildir; ertesi günün zamanlı turu zaten gelecek.
+        cfg["next_attempt"] = None
+        cfg["attempt_note"] = ("%s; gün bittiği için bir sonraki zamanlı tura "
+                               "bırakıldı" % neden)
+    save_backup_cfg(cfg)
+    return cfg
+
+
+def _ensure_baseline_backup(neden):
+    """Zamanlama açık ama HİÇ başarılı tur yoksa kısa süre içinde bir TABAN
+    YEDEĞİ planlar. Planladıysa yeni yapılandırmayı, planlamadıysa None döner.
+
+    Ölçülen olay: kullanıcı sabah zamanlamayı açtı, tek deneme kilide takıldı
+    ve panel "Sıradaki yedek: 24 saat sonra" yazdı — o gün AÇIK olan
+    PostgreSQL ve Redis'in hiç yedeği alınmadı. Kullanıcının zamanlamayı
+    açarken beklediği şey "yarın gece" değil "artık yedekleniyorum"dur; aradaki
+    saatler yedeksiz geçiyordu.
+    """
+    cfg = load_backup_cfg()
+    if not cfg.get("enabled") or cfg.get("last_success"):
+        return None
+    if cfg.get("next_attempt"):
+        return None                      # zaten planlı, üstüne yazma
+    cfg = dict(cfg)
+    cfg["next_attempt"] = int(time.time()) + BACKUP_BASELINE_DELAY
+    cfg["attempt_note"] = ("ilk taban yedeği %s içinde alınacak (%s)"
+                           % (_sure_metni(BACKUP_BASELINE_DELAY), neden))
+    save_backup_cfg(cfg)
+    record_event("backup", "tümü",
+                 "Zamanlama açık ve henüz başarılı bir tur yok — taban yedeği "
+                 "%s içinde alınacak (%s). Gece saatini beklemek, o ana kadar "
+                 "yedeksiz kalmak demekti."
+                 % (_sure_metni(BACKUP_BASELINE_DELAY), neden))
+    return cfg
+
+
 def _mark_backup_deferred(cfg, neden):
-    """Zamanlanmış turu 'ertelendi' diye işaretler ve kaydeder.
+    """Zamanlanmış turu 'ertelendi' diye işaretler ve TEKRARINI planlar.
 
     last_ok'a DOKUNMAZ: erteleme bir sonuç değil, sıraya girme. Panelde
     "BAŞARISIZ" yazan kırmızı satır tam olarak bu ayrımın olmamasından
@@ -3325,16 +4190,19 @@ def _mark_backup_deferred(cfg, neden):
     """
     cfg = dict(cfg)
     cfg["last_deferred"] = int(time.time())
-    save_backup_cfg(cfg)
+    cfg = _schedule_backup_retry(cfg, "kilit meşguldü")
     record_event("backup_deferred", "tümü",
                  "Zamanlanmış yedekleme ertelendi: %s. Tur koşmuş sayılmıyor; "
-                 "en geç %d dakika sonra yeniden denenecek."
-                 % (neden, max(1, BACKUP_RETRY_AFTER // 60)))
+                 "%s." % (neden, cfg["attempt_note"] or "yeniden denenecek"))
     return cfg
 
 
-def _run_scheduled_backup(cfg):
-    """Zamanlanmış tur: önce tüm AKTİF motorlar, sonra saklama temizliği.
+# Tur adları olay günlüğünde ve panelde olduğu gibi görünüyor.
+BACKUP_TUR_ADI = {"zamanlı": "Zamanlanmış yedekleme", "taban": "Taban yedeği"}
+
+
+def _run_scheduled_backup(cfg, tur="zamanlı"):
+    """Zamanlayıcının turu: önce tüm AKTİF motorlar, sonra saklama temizliği.
 
     (backup.sh `all` kapalı motoru zaten atlar — kapalı motorun container'ı
     yoktur, dump alınacak bir yer de yoktur.)
@@ -3345,18 +4213,30 @@ def _run_scheduled_backup(cfg):
     başlardı — iki paralel dump, aynı container'ın cgroup'unda çift bellek
     baskısı, yani backup.sh'ın başında anlatılan OOM demek.
 
+    slot_done_at ise "BUGÜNÜN zamanlı saati karşılandı" demektir ve yalnız o
+    saat GEÇMİŞSE yazılır. Fark önemli: sabah 11'de alınan taban yedeği,
+    saati 23:00 olan turu iptal etmemeli — asıl gece yedeği odur.
+
     Tek istisna ERTELEME: betik kilide takılıp iş yapmadan çıkarsa tur hiç
-    koşmamıştır ve last_run geri alınır. Aksi halde "aynı gün bir kez"
+    koşmamıştır ve iki alan da geri alınır. Aksi halde "aynı gün bir kez"
     kuralı o günü harcar; kilidi tutan uzun iş bittiğinde bile o gece yedek
     alınmaz — kaydı tutulan tek şey yanlış bir "BAŞARISIZ" satırı olurdu.
     """
+    simdi = time.time()
+    slot = _slot_epoch(cfg, simdi)
+    kapsiyor = (slot is None) or (simdi >= slot)
     onceki_run = cfg.get("last_run")
+    onceki_slot = cfg.get("slot_done_at")
+    ad = BACKUP_TUR_ADI.get(tur, "Yedekleme")
+
     cfg = dict(cfg)
-    cfg.update({"last_run": int(time.time()), "last_ok": None,
-                "last_error": None, "last_deferred": None})
+    cfg.update({"last_run": int(simdi), "last_ok": None, "last_error": None,
+                "last_deferred": None, "next_attempt": None,
+                "attempt_note": "%s şu anda koşuyor" % ad})
+    if kapsiyor:
+        cfg["slot_done_at"] = int(simdi)
     save_backup_cfg(cfg)
-    log("zamanlanmış yedekleme başlıyor (saklama: %d gün)"
-        % cfg["retention_days"])
+    log("%s başlıyor (saklama: %d gün)" % (ad, cfg["retention_days"]))
 
     basladi = time.time()
     rc, err, ertelendi = _backup_run(["all"], log)
@@ -3366,29 +4246,38 @@ def _run_scheduled_backup(cfg):
         # olabilir ve o sırada dosya silmek işi zorlaştırmaktan başka bir işe
         # yaramaz — tur yeniden denendiğinde temizlik de onunla gelecek.
         cfg["last_run"] = onceki_run
+        cfg["slot_done_at"] = onceki_slot
         cfg["last_ok"] = None
         cfg["last_error"] = None
         _mark_backup_deferred(cfg, "başka bir yedekleme ya da geri yükleme "
                                    "state/backup.lock kilidini tutuyordu")
         return
     # Bu turda oluşan dosyaları "zamanlı" diye işaretle. Panelde elle alınanla
-    # gecenin turu ayrı görünsün diye: "dün gece yedek alındı mı" sorusunun
-    # cevabı, elle alınmış bir yedeğin varlığıyla karışmamalı.
+    # zamanlayıcının turu ayrı görünsün diye: "dün gece yedek alındı mı"
+    # sorusunun cevabı, elle alınmış bir yedeğin varlığıyla karışmamalı.
+    # (Taban yedeği de zamanlayıcının turudur, aynı etiketi taşır.)
     tag_new_backups("zamanlı", basladi)
     cfg["last_ok"] = (rc == 0)
     cfg["last_error"] = err
     if rc == 0:
-        # Olay satırındaki "motor" alanı panelde olduğu gibi yazılıyor; tek
-        # motor değil bütün tur olduğu için Türkçe bir etiket veriyoruz.
-        record_event("backup", "tümü", "Zamanlanmış yedekleme tamamlandı.")
+        # BAŞARILI TUR ESKİ KAYDI TEMİZLER. Eskiden last_error diskte kalıyor,
+        # panel günler önce düzelmiş bir arızayı kırmızı göstermeye devam
+        # ediyordu; gerçek bir arıza çıktığında ona kimse bakmıyordu.
+        cfg.update({"last_success": int(time.time()), "last_error": None,
+                    "last_deferred": None, "attempts": 0,
+                    "next_attempt": None, "attempt_note": None})
+        record_event("backup", "tümü", "%s tamamlandı." % ad)
     else:
         # Seviye "critical": bu tur kimsenin başında olmadığı saatte koşuyor.
         # Elle basılan düğmenin sonucunu kullanıcı ekranda görür, buranınkini
         # yalnız bildirim gösterir — "gece yedeği alınamadı", öğrenilmesinde
         # en geç kalınmaması gereken şeydir.
         record_event("backup_failed", "tümü",
-                     "Zamanlanmış yedekleme başarısız: %s" % err,
-                     level="critical")
+                     "%s başarısız: %s" % (ad, err), level="critical")
+        # Başarısızlık da tekrar denenir: o günün yedeği tek bir denemeye
+        # bağlı kalmamalı. Kalıcı bir arızada aralık büyüyerek gün sonunda
+        # kendiliğinden susar.
+        cfg = _schedule_backup_retry(cfg, "yedekleme başarısız oldu")
 
     # Temizlik, yedekleme düşse bile çalışır: yedeğin düşme sebebi çoğu zaman
     # diskin dolmasıdır ve tam o durumda temizliği atlamak işi kötüleştirir.
@@ -3417,10 +4306,23 @@ def backup_scheduler():
     "kaydettim ama gece yine eski saatte koştu" sınıfından hataları baştan
     imkânsız kılıyor.
 
+    İki ayrı tetik var ve bu ayrım bu üründeki en pahalı sessizliği kapatıyor:
+      (a) ZAMANLI TUR — hedef dakika geldi ve bugünün turu henüz koşmadı.
+      (b) PLANLI DENEME — taban yedeği ya da ertelenen/başarısız turun artan
+          aralıklı tekrarı. Zamanlı saatten BAĞIMSIZ; eskiden tek deneme
+          kilide takılınca o gün hiç yedek alınmıyordu.
+
     Her tur try/except ile sarılı. Thread ölürse hiçbir yerde hata görünmez,
-    yalnız yedekler durur — bu üründeki en pahalı sessizlik odur.
+    yalnız yedekler durur.
     """
     log("yedek zamanlayıcısı başladı (her %d sn kontrol)" % BACKUP_TICK)
+    # Açılışta: zamanlama açık ama hiç başarılı tur yoksa taban yedeği planla.
+    # "Zamanlamayı açtım, akşama kadar hiç yedeğim olmadı" ölçülmüş bir
+    # olaydır ve controller yeniden başladığında da geçerlidir.
+    try:
+        _ensure_baseline_backup("controller açılışı")
+    except Exception as e:
+        log("taban yedeği planlanamadı:", repr(e))
     while True:
         time.sleep(BACKUP_TICK)
         try:
@@ -3431,34 +4333,25 @@ def backup_scheduler():
             if not hm:
                 continue
             now = time.time()
-            # Aynı gün ikinci kez koşmaz: hedef dakika 30 sn'lik turlarla en
-            # az iki kez yakalanıyor, tur uzun sürerse daha da fazla.
-            # (Ertelenen tur last_run yazmadığı için bu kapıya takılmaz —
-            # koşmamış bir tur "bugün koştu" sayılamaz.)
-            if cfg.get("last_run") and _same_local_day(cfg["last_run"], now):
-                continue
-            dfr = cfg.get("last_deferred") or 0
-            if dfr and now - dfr < BACKUP_RETRY_AFTER:
-                # Az önce ertelendi. Hemen tekrar denemek aynı kilide 30
-                # saniyede bir toslamak ve olay günlüğünü doldurmaktır;
-                # kilidi tutan iş dakikalar sürüyor.
-                continue
             lt = time.localtime(now)
-            zamani = (lt.tm_hour, lt.tm_min) == hm
-            # İKİNCİ ŞANS: hedef dakika geçmiş olabilir ama tur ertelendiği
-            # için hiç koşmadı. O günün yedeği, kilidi tutan iş bittikten
-            # sonra hâlâ alınabilmeli. Pencere sınırlı: öğleden sonra alınan
-            # bir "gece yedeği" kullanıcının sandığı şey değildir.
-            tekrar = False
-            if dfr and not zamani and _same_local_day(dfr, now):
-                try:
-                    hedef = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday,
-                                         hm[0], hm[1], 0, 0, 0, -1))
-                except (OverflowError, ValueError):
-                    hedef = now
-                tekrar = 0 <= (now - hedef) <= BACKUP_DEFER_WINDOW
-            if not (zamani or tekrar):
+            # (a) Hedef dakika 30 sn'lik turlarla en az iki kez yakalanıyor.
+            #     Bugünün turu koştuysa (slot_done_at) ikinci kez koşmaz.
+            zamani = ((lt.tm_hour, lt.tm_min) == hm
+                      and not (cfg.get("slot_done_at")
+                               and _same_local_day(cfg["slot_done_at"], now)))
+            # (b) Bekleyen denemenin vakti geldi mi?
+            # Bekleyen deneme KAYITTAN DEĞİL, türetilmiş kaynaktan okunuyor:
+            # kayıt eksikse bile borçlu bir tur varsa denenmeli (bkz.
+            # backup_pending_attempt). Aksi hâlde eksik kayıt, zamanlayıcıyı
+            # sessizce ertesi güne bırakıyordu.
+            bekleyen = backup_pending_attempt(cfg, now)[0] or 0
+            deneme = bool(bekleyen and now >= bekleyen)
+            if not (zamani or deneme):
                 continue
+            # Hiç başarılı tur yokken koşan deneme TABAN yedeğidir; kullanıcı
+            # panelde bunu gecenin turuyla karıştırmasın diye ayrı adlanıyor.
+            tur = "taban" if (deneme and not cfg.get("last_success")) \
+                else "zamanlı"
             if not BACKUP_LOCK.acquire(blocking=False):
                 # Controller'ın kendi içinde bir yedek/geri yükleme sürüyor.
                 # Eskiden yalnız log satırıydı: tur sessizce düşüyor, hedef
@@ -3469,7 +4362,17 @@ def backup_scheduler():
                          "yükleme sürüyordu")
                 continue
             try:
-                _run_scheduled_backup(cfg)
+                _run_scheduled_backup(cfg, tur)
+            except Exception as e:
+                # Tur yarıda kaldı. Yeniden denemeyi PLANLAMADAN geçmek, o
+                # günü harcamak olurdu. (_run_scheduled_backup bekleyen
+                # denemeyi işin başında sildiği için burada sonsuz döngü yok.)
+                log("yedekleme turu hatayla durdu:", repr(e))
+                record_event("backup_failed", "tümü",
+                             "Yedekleme turu beklenmeyen bir hatayla durdu: "
+                             "%r" % e, level="critical")
+                _schedule_backup_retry(load_backup_cfg(),
+                                       "tur beklenmeyen hatayla durdu")
             finally:
                 BACKUP_LOCK.release()
         except Exception as e:
@@ -3484,7 +4387,13 @@ def status():
     st = load_state()
     tun = load_tuning()
     total, available = host_memory_mb()
+    # used_by_stack TAVANLARIN toplamıdır, kullanılan bellek DEĞİL. Adı
+    # (stack_committed_mb) bunu söylüyor ama panel onu "AYRILAN BELLEK" diye
+    # gösterip RAM ile kıyaslıyordu; yanına dağıtılabiliri, rezerve toplamını
+    # ve çekirdeğin baskı ölçümünü koyuyoruz ki tek başına okunmasın.
     used_by_stack = sum(c["memory_mb"] for c in containers.values() if c["status"] == "running")
+    allocatable = allocatable_mb(total)
+    reserved_total = stack_reserved_mb()
 
     topo = load_topology()
     auto_fo = auto_failover_engines()
@@ -3531,6 +4440,11 @@ def status():
             "health": primary["health"] if primary else "none",
             "services": svcs,
             "memory_mb": primary["memory_mb"] if primary else 0,
+            # Kapalı motorun rezervesi 0'dır: ayırdığı bellek yok. Açıkken
+            # tuning kaydından türer — motor o değerlerle açıldı.
+            "reserved_mb": (engine_reserved_mb(e["id"],
+                                               tuning=tun.get(e["id"]))
+                            if active else 0),
             "tuning": tun.get(e["id"], {}),
             "replication_active": bool(rep_svc and rep_svc["status"] == "running"),
             "primary_service": prim_name,
@@ -3557,9 +4471,21 @@ def status():
             "mem_total_mb": total,
             "mem_available_mb": available,
             "stack_committed_mb": used_by_stack,
+            # Açık motorların AÇILIŞTA gerçekten ayırdığı bellek. Ölçümde
+            # tavan toplamı 15 GB iken bu sayı bunun çok altındadır; ikisini
+            # yan yana göstermek "%122 aşım" yanılgısını kapatıyor.
+            "stack_reserved_mb": reserved_total,
+            "allocatable_mb": allocatable,
+            "overcommit_ratio": (round(used_by_stack / float(allocatable), 2)
+                                 if allocatable > 0 else 0.0),
+            "overcommit_limit": OVERCOMMIT_LIMIT,
+            # Çekirdeğin kendi ölçümü. Defter ne derse desin bağlayıcı olan
+            # budur: baskı "yok" iken "bellek yetmiyor" demek ölçülebilir
+            # biçimde yanlıştır.
+            "pressure": host_pressure(),
             "cpus": host_cpus(),
             "disk_free_mb": disk_free_mb(),
-            "os_reserve_mb": max(OS_RESERVE_MIN_MB, int(total * OS_RESERVE_RATIO)),
+            "os_reserve_mb": os_reserve_mb(total),
             "core_reserve_mb": CORE_RESERVE_MB,
         },
         "preflight_error": preflight(),
@@ -3703,6 +4629,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             cfg = load_backup_cfg()
             cfg.update({"enabled": body["enabled"], "time": "%02d:%02d" % hm,
                         "retention_days": rd})
+            if not cfg["enabled"]:
+                # Kapatıldıysa bekleyen deneme de düşer: kapalı bir
+                # zamanlamanın "10 dakika sonra tekrar" demesi anlamsızdır.
+                cfg.update({"next_attempt": None, "attempt_note": None,
+                            "attempts": 0})
             save_backup_cfg(cfg)
             nxt = backup_next_run(cfg)
             record_event("config", "tümü",
@@ -3712,7 +4643,37 @@ class Handler(http.server.BaseHTTPRequestHandler):
                             (" — sonraki koşum %s" % time.strftime(
                                 "%Y-%m-%d %H:%M", time.localtime(nxt)))
                             if nxt else ""))
-            return self._send(200, {"ok": True, "next_run": nxt})
+            # Zamanlama AÇILDIYSA ve hiç başarılı tur yoksa taban yedeğini
+            # şimdi planla: kullanıcı düğmeye bastığı an korunmaya başlamalı,
+            # gece 02:00'yi beklememeli.
+            yeni = _ensure_baseline_backup("zamanlama açıldı")
+            if yeni:
+                cfg = yeni
+            return self._send(200, {"ok": True, "next_run": nxt,
+                                    "next_attempt": (cfg.get("next_attempt")
+                                                     or nxt),
+                                    "attempt_note": cfg.get("attempt_note")})
+
+        # --- tavanları yeniden dengele --------------------------------
+        # Tek motora değil YIĞINA ait bir işlem: motor kimliği almıyor.
+        if path == "/api/rebalance":
+            jid = new_job("rebalance", "tümü")
+
+            def _dengele():
+                # do_rebalance kendi job_done'unu çağırıyor; buradaki sarmal,
+                # beklenmedik bir istisnada işin sonsuza dek "devam ediyor"
+                # kalmasını önler (failover yolunda aynısı yapılıyor).
+                try:
+                    do_rebalance(jid)
+                except Exception as e:
+                    job_log(jid, "HATA:", repr(e))
+                    record_event("rebalance_failed", "tümü",
+                                 "Yeniden dengeleme beklenmeyen bir hatayla "
+                                 "durdu: %r" % e, level="warning")
+                    job_done(jid, False, repr(e))
+
+            threading.Thread(target=_dengele, daemon=True).start()
+            return self._send(202, {"job": jid})
 
         if path.startswith("/api/engines/"):
             eid = self._engine_from(path)
