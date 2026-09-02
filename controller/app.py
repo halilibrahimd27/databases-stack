@@ -3760,15 +3760,135 @@ def backup_stats(eid, root=None):
     return count, total, latest, liste[:BACKUP_LIST_MAX]
 
 
+# =============================================================================
+# KURTARMA PROVASI
+# =============================================================================
+# verify_backup dosyanın bozulmadığını söyler; "geri yüklenebilir" DEMEZ.
+# Prova, yedeği tek kullanımlık bir container'da GERÇEKTEN geri yükler ve
+# süreyi ölçer — yani RTO'yu vaat etmek yerine ÖLÇERİZ. Sonucu burada
+# saklıyoruz ki panel "bu yedek 2 gün önce gerçekten geri yüklendi, 42 saniye
+# sürdü" diyebilsin. Bir yedekleme sisteminin verebileceği en değerli cümle bu.
+DRILL_SCRIPT = os.path.join(PROJECT_DIR, "scripts", "restore-drill.sh")
+DRILL_FILE = os.path.join(STATE_DIR, "drill.json")
+DRILL_TIMEOUT = int(os.environ.get("DRILL_TIMEOUT", "3600"))
+# Haftalık: prova ucuz değil (ikinci bir veritabanı açıp veri yüklüyor) ama
+# ayda bir de yetmez — iki prova arasında bozulan bir yedek zinciri fark
+# edilmeden birikir. Gecelik yedekten SONRA koşar, çünkü provanın anlamı en
+# taze kurtarma noktasını sınamaktır.
+DRILL_EVERY_DAYS = int(os.environ.get("DRILL_EVERY_DAYS", "7"))
+
+
+def load_drills():
+    try:
+        with open(DRILL_FILE, encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_drill(eid, sonuc):
+    d = load_drills()
+    d[eid] = sonuc
+    try:
+        tmp = DRILL_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(d, fh, ensure_ascii=False)
+        os.replace(tmp, DRILL_FILE)
+    except OSError as e:
+        log("prova defteri yazılamadı: %r" % e)
+
+
+def drill_supported(eid):
+    """backup.sh'ta geri yükleme yolu VAR MI. Listeyi elle yazmıyoruz:
+    katalog büyüdüğünde sessizce eksik kalmasın diye betiğin kendi
+    gerçeğinden okuyoruz."""
+    try:
+        with open(BACKUP_SCRIPT, encoding="utf-8") as fh:
+            return ("restore_%s()" % eid) in fh.read()
+    except OSError:
+        return False
+
+
+def do_drill(jid, eid):
+    """Kurtarma provası — üretime DOKUNMAZ, tek kullanımlık kopyada çalışır."""
+    engine = CATALOG.engine(eid)
+    if not engine:
+        return job_done(jid, False, "Bilinmeyen motor: %s" % eid)
+    if not drill_supported(eid):
+        return job_done(jid, False,
+                        "%s için geri yükleme yolu yok; prova yapılamaz."
+                        % engine["name"])
+    if not shutil.which("bash"):
+        return job_done(jid, False, "Bu container'da bash yok.")
+    # Prova üretim container'ına dokunmuyor ama AYNI yedek dosyasını okuyor ve
+    # diski/CPU'yu kullanıyor: yedekleme kilidini alıyoruz. Alamıyorsak bu bir
+    # arıza değil sıradır — "ertelendi" diyoruz (bkz. do_backup).
+    if not BACKUP_LOCK.acquire(blocking=False):
+        return job_done(jid, False, BACKUP_BUSY_MSG, {"deferred": True})
+    try:
+        basladi = time.time()
+        job_log(jid, "%s kurtarma provası başlıyor…" % engine["name"])
+        rc, out, err = run(["bash", DRILL_SCRIPT, eid], cwd=PROJECT_DIR,
+                           timeout=DRILL_TIMEOUT, env=script_env())
+        metin = (out + err).strip()
+        for satir in metin.splitlines()[-120:]:
+            job_log(jid, satir)
+        # Son satır TEK SATIR JSON — sözleşme betiğin kendisinde de yazılı.
+        sonuc = None
+        for satir in reversed(metin.splitlines()):
+            satir = satir.strip()
+            if satir.startswith("{") and satir.endswith("}"):
+                try:
+                    sonuc = json.loads(satir)
+                except ValueError:
+                    sonuc = None
+                break
+        if sonuc is None:
+            # Çıktıyı okuyamadıysak "prova başarısız" DEMİYORUZ: ölçemedik.
+            # İkisini karıştırmak, sağlam bir yedeği bozuk göstermek olurdu.
+            kayit = {"at": int(basladi), "ok": None, "seconds": None,
+                     "detail": "prova çıktısı okunamadı (çıkış %d)" % rc,
+                     "file": None}
+            save_drill(eid, kayit)
+            return job_done(jid, False, kayit["detail"])
+        kayit = {"at": int(basladi), "ok": bool(sonuc.get("ok")),
+                 "seconds": sonuc.get("seconds"),
+                 "detail": sonuc.get("detail") or "",
+                 "file": os.path.basename(sonuc.get("file") or "") or None,
+                 "match": sonuc.get("match")}
+        save_drill(eid, kayit)
+        if kayit["ok"]:
+            record_event("drill", eid,
+                         "%s kurtarma provası GEÇTİ — yedek gerçekten geri "
+                         "yüklendi (%s sn)." % (engine["name"], kayit["seconds"]))
+            return job_done(jid, True)
+        # Prova düşmesi CRITICAL: elde geri yüklenemeyen bir yedek var ve bunu
+        # felaket gününden ÖNCE öğrenmek bu özelliğin tek varlık sebebi.
+        record_event("drill_failed", eid,
+                     "%s kurtarma provası BAŞARISIZ: %s"
+                     % (engine["name"], kayit["detail"]), level="critical")
+        return job_done(jid, False, kayit["detail"])
+    except Exception as e:
+        job_log(jid, "HATA:", repr(e))
+        return job_done(jid, False, repr(e))
+    finally:
+        BACKUP_LOCK.release()
+
+
 def backups_overview():
     """GET /api/backups gövdesi: zamanlama + motor başına yedek özeti."""
     cfg = load_backup_cfg()
     root = backups_dir()
+    drills = load_drills()
     engines = {}
     for e in CATALOG.engines:
         bk = e.get("backup") or {}
         count, total, latest, files = backup_stats(e["id"], root)
+        prova = drills.get(e["id"])
         engines[e["id"]] = {"supported": bool(bk.get("supported")),
+                            "drill_supported": drill_supported(e["id"]),
+                            "drill": prova,
                             "count": count, "total_bytes": total,
                             "latest": latest, "files": files,
                             "listed": len(files)}
@@ -4311,6 +4431,43 @@ def _run_scheduled_backup(cfg, tur="zamanlı"):
                      "Eski yedekler temizlenemedi: %s — yedek dizini büyümeye "
                      "devam eder." % err2, level="warning")
     save_backup_cfg(cfg)
+    _haftalik_prova()
+
+
+def _haftalik_prova():
+    """Gecelik turdan sonra, süresi gelmiş motorlar için KURTARMA PROVASI.
+
+    Neden yedeğin hemen ardından: provanın anlamı EN TAZE kurtarma noktasını
+    sınamaktır. Bir hafta önceki yedeğin geri yüklendiğini bilmek, dün gece
+    bozulmuş bir zincir hakkında hiçbir şey söylemez.
+
+    Neden hepsi değil de "süresi gelen": prova ikinci bir veritabanı açıp veri
+    yüklüyor; her gece her motor için koşmak, gecelik pencereyi doldurur ve
+    yedeklemenin önüne geçer. Haftalık aralık, "hiç prova yok" ile "her gece
+    prova" arasındaki dürüst orta yol — ve aralık DRILL_EVERY_DAYS ile
+    değiştirilebilir.
+
+    Kilit: do_drill BACKUP_LOCK'u kendisi alıyor; buraya kadar geldiğimizde
+    yedek turu bitmiş oluyor.
+    """
+    if DRILL_EVERY_DAYS <= 0:
+        return
+    simdi = time.time()
+    kayitlar = load_drills()
+    for e in CATALOG.engines:
+        eid = e["id"]
+        if not drill_supported(eid):
+            continue
+        # Yedeği olmayan motorun provası yapılamaz — bu bir arıza değil.
+        _c, _t, latest, _f = backup_stats(eid)
+        if not latest:
+            continue
+        son = (kayitlar.get(eid) or {}).get("at") or 0
+        if simdi - son < DRILL_EVERY_DAYS * 86400:
+            continue
+        jid = new_job("drill", eid)
+        log("haftalık kurtarma provası: %s (iş %s)" % (eid, jid))
+        do_drill(jid, eid)      # sırayla: iki prova aynı anda koşmasın
 
 
 def backup_scheduler():
@@ -4709,6 +4866,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if action == "backup":
                 jid = new_job("backup", eid)
                 threading.Thread(target=do_backup, daemon=True,
+                                 args=(jid, eid)).start()
+                return self._send(202, {"job": jid})
+            if action == "drill":
+                # Prova YIKICI DEĞİLDİR: tek kullanımlık bir kopyada çalışır,
+                # üretime dokunmaz. Bu yüzden geri yükleme gibi onay istemiyor.
+                jid = new_job("drill", eid)
+                threading.Thread(target=do_drill, daemon=True,
                                  args=(jid, eid)).start()
                 return self._send(202, {"job": jid})
             if action == "restore":

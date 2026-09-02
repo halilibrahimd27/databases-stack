@@ -262,6 +262,30 @@ async function takeBackup(engine) {
   await refreshBackups(true);
 }
 
+/* KURTARMA PROVASI — bu sayfadaki tek "yıkıcı görünüp yıkıcı olmayan" iş.
+   Onay istemiyoruz: prova tek kullanımlık bir kopyada çalışır, üretime
+   dokunmaz. Ama uzun sürebilir (yedek boyutuna göre dakikalar), o yüzden
+   iş penceresi bunu söylüyor. */
+async function runDrill(engine) {
+  const r = await api('/engines/' + engine.id + '/drill', { method: 'POST' });
+  const bitti = await watchJob(r.job, engine.name + ' kurtarma provası…',
+    'Yedek, TEK KULLANIMLIK bir kopyada geri yükleniyor. Üretim '
+    + 'veritabanınıza dokunulmaz. Büyük bir yedekte birkaç dakika sürebilir.');
+  if (bitti && bitti.state !== 'done') {
+    SON_DENEME[engine.id] = bitti.deferred
+      ? { tur: 'ertelendi',
+          metin: 'prova ertelendi — sunucuda başka bir yedekleme ya da geri '
+               + 'yükleme sürüyordu' }
+      : { tur: 'hata',
+          metin: 'prova başarısız: '
+               + (String(bitti.reason || '').split(SATIR_SONU)[0]
+                  || 'sebep bilinmiyor') };
+  } else {
+    delete SON_DENEME[engine.id];
+  }
+  await refreshBackups(true);
+}
+
 /* GERİ YÜKLEME — bu sayfadaki tek geri dönüşsüz iş.
    Onay penceresi üç şeyi birden söylemek zorunda: ne olacağı, hangi dosyaya
    dönüleceği ve o dosyanın tarihi. Dosya adını göstermeden onay istemek,
@@ -771,6 +795,41 @@ function rowHtml(engine, b, st, s) {
   /* “Son yedeğe dön” yalnız dönülecek bir dosya varken çıkar. Yedeksiz bir
      motorda sönük de olsa bir geri yükleme düğmesi göstermek, olmayan bir
      kurtarma noktası vaat etmek olurdu. */
+  /* KURTARMA PROVASI. Bir yedeğin tek dürüst güvencesi, geri yüklendiğinin
+     GÖRÜLMÜŞ olmasıdır. Burada üç durum var ve üçü de farklı şey söyler:
+       geçti      → "bu yedek N saniyede gerçekten geri yüklendi"
+       kaldı      → elde geri YÜKLENEMEYEN bir yedek var; felaket gününden
+                    önce öğrenmenin tek yolu buydu
+       hiç yapılmadı → yedeğiniz var ama geri yüklenip yüklenmeyeceği
+                    BİLİNMİYOR. Bunu sessizce boş bırakmak, kullanıcıya
+                    olmayan bir güvence hissettirirdi. */
+  const pr = b.drill;
+  let provaRozet = '';
+  if (b.drill_supported === false) {
+    provaRozet = '';
+  } else if (!pr) {
+    provaRozet = b.latest
+      ? '<span class="bk-drill bk-drill-yok">prova yapılmadı</span>' : '';
+  } else if (pr.ok === true) {
+    provaRozet = `<span class="bk-drill bk-drill-ok"
+      title="${esc(tamTarih(pr.at))} · ${esc(pr.detail || '')}"
+      >prova geçti ${esc(bagilZaman(pr.at))}${
+        pr.seconds != null ? ' · ' + esc(pr.seconds) + ' sn' : ''}</span>`;
+  } else if (pr.ok === false) {
+    provaRozet = `<span class="bk-drill bk-drill-err"
+      title="${esc(tamTarih(pr.at))} · ${esc(pr.detail || '')}"
+      >PROVA KALDI ${esc(bagilZaman(pr.at))}</span>`;
+  } else {
+    provaRozet = `<span class="bk-drill bk-drill-yok"
+      title="${esc(pr.detail || '')}">prova ölçülemedi</span>`;
+  }
+
+  const provaBtn = (b.drill_supported !== false && b.latest)
+    ? `<button class="btn btn-sm" data-act="drill" data-id="${esc(engine.id)}"
+         title="Yedeği tek kullanımlık bir kopyada geri yükler; üretime dokunmaz"
+         aria-label="${esc(engine.name)} yedeğinin kurtarma provasını yap"
+         >Prova yap</button>` : '';
+
   const sonBtn = b.latest
     ? `<button class="btn btn-sm btn-danger" data-act="restore-last"
          data-id="${esc(engine.id)}"${grKapali ? ' disabled' : ''}${
@@ -821,11 +880,12 @@ function rowHtml(engine, b, st, s) {
   <li class="bk-row" id="bk-${esc(engine.id)}">
     <span class="bk-icon" aria-hidden="true">${esc(engine.icon)}</span>
     <span class="bk-name">${esc(engine.name)}</span>
-    <span class="bk-facts">${facts.join('')}${denemeNotu}</span>
+    <span class="bk-facts">${facts.join('')}${provaRozet}${denemeNotu}</span>
     <span class="bk-acts">
       <button class="btn btn-sm" data-act="backup" data-id="${esc(engine.id)}"
         ${kapali || mesgul ? 'disabled' : ''}${bkNot ? ' title="' + esc(bkNot) + '"' : ''}
         aria-label="${esc(engine.name)} yedeğini şimdi al">Yedek al</button>
+      ${provaBtn}
       ${sonBtn}
     </span>
     ${liste}
@@ -1057,6 +1117,7 @@ document.addEventListener('click', (ev) => {
   let p;
   switch (b.dataset.act) {
     case 'backup': p = takeBackup(engine); break;
+    case 'drill':  p = runDrill(engine); break;
     case 'bk-on':  p = toggleSchedule(true); break;
     // Motora bağlı değil: dataset.id yok, engine null kalır.
     case 'rebalance': p = rebalance(); break;
