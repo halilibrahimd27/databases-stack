@@ -3473,6 +3473,22 @@ def load_backup_index():
         return {}          # bozuk/boş defter, yedeklerin kendisini etkilemez
 
 
+# ŞİFRELİ YEDEK DE YEDEKTİR. Şifreleme açıkken dosyalar '.gz.enc' uzantısıyla
+# yazılıyor; yalnız '.gz' arayan her yer o kurulumu SESSİZCE görmez oldu:
+# panelde "hiç yedek yok", geri yüklemede "dosya bulunamadı", provada
+# "yedek yok". Yani şifrelemeyi açan — en çok güvence isteyen — kullanıcı
+# en az güvence alıyordu. Uzantı sözleşmesi tek yerde tanımlı.
+BACKUP_EXTS = (".gz", ".gz.enc")
+
+
+def yedek_dosyasi_mi(ad):
+    """Ad bir yedek dosyası mı? '.bozuk' kenara alınmış dosya SAYILMAZ:
+    doğrulamayı geçemediği için kurtarma noktası değildir."""
+    if ad.endswith(".bozuk"):
+        return False
+    return any(ad.endswith(x) for x in BACKUP_EXTS)
+
+
 def tag_new_backups(kind, since, eids=None):
     """`since`dan sonra oluşan yedek dosyalarını `kind` ile işaretler.
 
@@ -3489,7 +3505,7 @@ def tag_new_backups(kind, since, eids=None):
         d = os.path.join(root, eid)
         for dirpath, _dirs, files in os.walk(d):
             for name in files:
-                if not name.endswith(".gz"):
+                if not yedek_dosyasi_mi(name):
                     continue
                 try:
                     stt = os.stat(os.path.join(dirpath, name))
@@ -3738,7 +3754,7 @@ def backup_stats(eid, root=None):
                         # kullanıyor ve her dizinde üzerine yazıyordu
     for dirpath, _dirs, files in os.walk(root):
         for name in files:
-            if not name.endswith(".gz"):
+            if not yedek_dosyasi_mi(name):
                 continue
             try:
                 stt = os.stat(os.path.join(dirpath, name))
@@ -4375,8 +4391,8 @@ def resolve_backup_file(eid, name):
     if not yol.startswith(kok + os.sep):
         return None, ("Dosya %s dizininin dışına çıkıyor; geri yükleme yalnız "
                       "o motorun kendi yedekleriyle yapılır." % kok)
-    if not ad.endswith(".gz"):
-        return None, ("Yalnız .gz uzantılı yedekler geri yüklenir. "
+    if not yedek_dosyasi_mi(ad):
+        return None, ("Yalnız .gz ya da .gz.enc uzantılı yedekler geri yüklenir. "
                       "Doğrulamayı geçemediği için '.bozuk' diye kenara "
                       "alınmış bir dosya kurtarma noktası değildir.")
     if not os.path.isfile(yol):

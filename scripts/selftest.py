@@ -1073,6 +1073,21 @@ _dorep = _ctrl_src[_dorep_i:_dorep_i + 6000]
 ck("replika kontrolü plan_engine'in budget_mb'sini KULLANMIYOR",
    "free_budget_mb()" in _dorep and 'p.get("budget_mb"' not in _dorep)
 
+# ŞİFRELİ YEDEK ZİNCİRİ TEK PARÇA OLMALI. Şifreleme açıkken dosyalar
+# '.gz.enc' uzantısıyla yazılıyor; zincirin herhangi bir halkası yalnız '.gz'
+# ararsa o kurulum SESSİZCE görünmez olur — panelde "hiç yedek yok", geri
+# yüklemede "dosya bulunamadı", provada "yedek yok". Yani şifrelemeyi açan,
+# en çok güvence isteyen kullanıcı en az güvence alır. e2e/encrypt.sh bunu
+# controller ve restore-drill için ayrı ayrı yakaladı.
+ck("controller yedek uzantılarını tek yerden tanımlıyor",
+   "BACKUP_EXTS" in _ctrl_src and '".gz.enc"' in _ctrl_src)
+ck("controller şifreli yedekleri de sayıyor/listeliyor/çözümlüyor",
+   _ctrl_src.count("yedek_dosyasi_mi(") >= 4)
+ck("'.bozuk' dosya yedek sayılmıyor (kurtarma noktası değildir)",
+   'ad.endswith(".bozuk")' in _ctrl_src)
+_rd = io.open("scripts/restore-drill.sh", encoding="utf-8").read()
+ck("kurtarma provası da şifreli yedekleri aday görüyor", "*.gz.enc" in _rd)
+
 # KURTARMA PROVASI, verify_backup'ın YAPAMADIĞI şeyi yapmalı: yedeği gerçekten
 # geri yükleyip süreyi ölçmek. Buradaki kontroller provanın VARLIĞINI değil,
 # sözleşmesini koruyor — çünkü panel ve zamanlayıcı o sözleşmeye bağlı.
