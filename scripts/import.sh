@@ -109,6 +109,10 @@ EOF
 # ------------------------------------------------------------------ argüman
 MOTOR=""; DOSYA=""; URI=""; HEDEF=""
 UZERINE=0; KURU=0; BICIME_GUVEN=0; YEDEKSIZ=0
+# HEDEF'i kullanıcı mı yazdı, biz mi türettik? Uzak kaynakta URI'nin
+# yolundan bir ad türetiyoruz; "--hedef yok sayıldı" uyarısını orada da
+# basmak, hiç --hedef yazmamış kullanıcıya yazmış gibi davranmak olurdu.
+HEDEF_KULLANICI=0
 
 [ "$#" -ge 1 ] || { kullanim; exit "$KOD_KULLANIM"; }
 case "$1" in
@@ -123,7 +127,7 @@ while [ "$#" -gt 0 ]; do
                    URI="$1" ;;
         --hedef)   shift; [ "$#" -ge 1 ] \
                        || cik "$KOD_KULLANIM" "--hedef bir ad bekler."
-                   HEDEF="$1" ;;
+                   HEDEF="$1"; HEDEF_KULLANICI=1 ;;
         --uzerine-yaz)  UZERINE=1 ;;
         --kuru)         KURU=1 ;;
         --bicime-guven) BICIME_GUVEN=1 ;;
@@ -201,12 +205,17 @@ fi
 # aynısı. Zinciri burada tekrar kurmak yerine katalogdaki password_env'i
 # okuyoruz — parola değişkeninin adı tek bir yerde tanımlı kalsın.
 parola_env() {
+    # tr -d ile satır sonu temizliği: python'ın çıktısı bazı ortamlarda
+    # CRLF ile gelir ve buradan dönen dize DEĞİŞKEN ADI olarak kullanılıyor.
+    # Sondaki tek bir \r, "MARIADB_PASSWORD\r" diye var olmayan bir değişken
+    # aratıp parolayı sessizce boş bırakırdı. (.env okuyucusu da aynı sebeple
+    # \r kırpıyor — bkz. common.sh/load_env.)
     python3 -c '
 import json, sys
 c = json.load(open(sys.argv[1], encoding="utf-8"))
 e = [x for x in c["engines"] if x["id"] == sys.argv[2]]
 print((e[0].get("connection") or {}).get("password_env") or "" if e else "")' \
-        "$CATALOG" "$1" 2>/dev/null
+        "$CATALOG" "$1" 2>/dev/null | tr -d '\r'
 }
 PW_ENV="$(parola_env "$MOTOR")"
 PW=""
@@ -245,6 +254,29 @@ ms_sql() {   # ms_sql <sorgu>
     SQLCMDPASSWORD="$PW" docker exec -e SQLCMDPASSWORD "$KAP" \
         /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -b -h -1 -W \
         -s '|' -Q "SET NOCOUNT ON; $1" 2>>"$LOG_FILE"
+}
+
+# Özet satırlarında motorun KENDİ sözcükleri kullanılsın: MongoDB'de
+# "tablo" diye bir şey yok, Redis'te "satır" yok. Yanlış sözcük, sayının
+# neyi saydığını da şüpheli hâle getirir.
+birim_tablo() {
+    # MSSQL motor kapsamında sayılan şey tablo değil VERİTABANI
+    # (bkz. durum_oku); özet satırı da öyle demeli.
+    if [ "$MOTOR" = "mssql" ] && [ "${KAPSAM:-db}" = "motor" ]; then
+        printf 'veritabanı'; return 0
+    fi
+    case "$MOTOR" in
+        mongodb) printf 'koleksiyon' ;;
+        redis)   printf 'veritabanı' ;;
+        *)       printf 'tablo' ;;
+    esac
+}
+birim_satir() {
+    case "$MOTOR" in
+        mongodb) printf 'belge' ;;
+        redis)   printf 'anahtar' ;;
+        *)       printf 'satır' ;;
+    esac
 }
 
 bayt_insan() {
@@ -315,8 +347,19 @@ tespit_et() {   # tespit_et <dosya>
         # Bu yığının kendi MSSQL yedeği: içinde <veritabanı>.bak dosyaları
         # olan bir tar.gz. Üyeleri listelemek dosyanın TAMAMINI okur; yalnız
         # tar olduğu kesinleştikten sonra yapıyoruz.
-        if akis "$f" 2>/dev/null | tar -tf - 2>/dev/null \
-             | grep -qi '\.bak$'; then
+        #
+        # BURADA `grep -q` KULLANILAMAZ. İlk eşleşmede çıkar, boruyu
+        # kapatır ve tar SIGPIPE ile 141 döner; `set -o pipefail` da
+        # borunun sonucunu 141 yapar. Yani ARANAN ŞEY BULUNDUĞUNDA if
+        # başarısız olur: kendi mssql yedeğimiz "içeriği tanınmayan tar"
+        # diye reddediliyordu (birebir üretildi: mssql_full_*.tar.gz,
+        # içinde master.bak/msdb.bak/<db>.bak, çıkış kodu 4).
+        # `grep -c` girdiyi SONUNA KADAR okur; erken çıkış da yok, SIGPIPE
+        # da. Eşleşme yokken 0 basıp 1 ile çıkar — biz sayıya bakıyoruz.
+        local bak_sayisi
+        bak_sayisi="$(akis "$f" 2>/dev/null | tar -tf - 2>/dev/null \
+                      | grep -ci '[.]bak$')"
+        if [ "${bak_sayisi:-0}" -gt 0 ]; then
             BICIM="mssql-tar"; BICIM_MOTOR="mssql"; COK_VT=1
         else
             BICIM="taninmayan-tar"
@@ -479,10 +522,13 @@ $(bayt_insan "$DUR_BAYT") veri"
 var ad = db.getMongo().getDBNames().filter(function (n) {
     return ['admin', 'config', 'local'].indexOf(n) < 0; });
 var k = 0, o = 0, b = 0;
+// Number() ŞART: stats() alanları mongosh'ta Long döner ve JavaScript'te
+// 0 + Long(2) sayı değil DİZE üretir ('02'). Ekranda '02 belge' yazan,
+// karşılaştırmalarda ise sayı sanılan bir değer en kötü türden hatadır.
 ad.forEach(function (n) {
     var d = db.getSiblingDB(n), s = d.stats();
     k += d.getCollectionNames().length;
-    o += s.objects || 0; b += s.dataSize || 0; });
+    o += Number(s.objects || 0); b += Number(s.dataSize || 0); });
 print(ad.length + '|' + k + '|' + o + '|' + b);")"; rc=$?
         [ "$rc" -eq 0 ] || return 2
         out="$(printf '%s' "$out" | grep -aE '^[0-9]+\|' | tail -1)"
@@ -509,6 +555,31 @@ $DUR_SATIR belge, $(bayt_insan "$DUR_BAYT") veri"
 $(bayt_insan "${DUR_BAYT:-0}") bellek"
         ;;
     mssql)
+        if [ "$KAPSAM" = "motor" ]; then
+            # Kendi tar.gz yedeğimiz birden çok veritabanı taşır ve
+            # HEDEF boştur; eski hâlinde DB_ID('') sorulup "veritabanı
+            # yok" deniyordu — yani DOLU bir sunucu BOŞ sayılıyor,
+            # güvenlik yedeği alınmadan üzerine yazılıyordu.
+            # Tablo sayısı yerine VERİTABANI sayısı ölçülüyor: tablolar
+            # ancak her veritabanı için ayrı ayrı (dinamik SQL ya da
+            # imleç ile) sayılabilir ve buradaki soru "kaç tablo var"
+            # değil, "kaybedilecek bir şey var mı".
+            out="$(ms_sql "SELECT CAST((SELECT COUNT(*)
+                     FROM sys.databases WHERE database_id > 4)
+                     AS varchar(20))
+                 + '|' + CAST((SELECT ISNULL(SUM(CAST(size AS bigint)), 0)
+                     * 8192 FROM sys.master_files WHERE database_id > 4)
+                     AS varchar(20));")"; rc=$?
+            [ "$rc" -eq 0 ] || return 2
+            out="$(printf '%s' "$out" | tr -d '\r' \
+                   | grep -aE '^[0-9]+\|' | tail -1)"
+            [ -n "$out" ] || return 2
+            IFS='|' read -r DUR_TABLO DUR_BAYT <<< "$out"
+            DUR_SEMA="$DUR_TABLO"; DUR_SATIR=0
+            DUR_METIN="$DUR_TABLO kullanıcı veritabanı, \
+$(bayt_insan "$DUR_BAYT") ayrılmış dosya"
+            return 0
+        fi
         out="$(ms_sql "SELECT CASE WHEN DB_ID('$HEDEF') IS NULL
                        THEN 0 ELSE 1 END;")"; rc=$?
         [ "$rc" -eq 0 ] || return 2
@@ -558,6 +629,10 @@ hedef_dolu_mu() {   # 0 = dolu · 1 = boş
 # state/backup.lock'u flock ile kapar. Bu betik o kilidi tutuyorken backup.sh'ı
 # çağırsaydık çağrılan süreç "Başka bir işlem kilidi tutuyor" deyip çıkardı —
 # yani güvenlik yedeği HİÇ ALINAMAZDI ve kemer sessizce kopmuş olurdu.
+# Uzak kaynağın PAROLASIZ etiketi. URI'nin kendisi parola taşır; ekrana da
+# özete de basılamaz. Boşsa kaynak yerel bir dosyadır.
+KAYNAK_ETIKET=""
+
 GUVENLIK_DOSYA=""
 guvenlik_yedegi() {
     local isaret="$GECICI_DIZIN/yedek-isareti"
@@ -604,6 +679,9 @@ guvenlik_yedegi() {
 # çarptırır — bu betiğin varlık sebebiyle çelişir.
 # Uzak sunucuya erişim de container'ın ağından geçer; kaynak yalnız host'un
 # göreceği bir adresteyse (127.0.0.1 gibi) buradan görünmez.
+# Çıktı satır satır okunuyor; python bazı ortamlarda CRLF yazar ve sondaki
+# \r şema/host/port alanlarının SONUNA yapışır. "mysql\r" hiçbir case dalına
+# uymaz ve ürün kendi ürettiği URI'yi "bilinmeyen şema" diye reddederdi.
 uri_coz() {
     python3 - "$1" <<'PY'
 import sys, urllib.parse as u
@@ -621,7 +699,8 @@ PY
 
 uzaktan_cek() {   # DOSYA'yı çekilen dump ile doldurur
     local coz
-    coz="$(uri_coz "$URI")" || cik "$KOD_KULLANIM" "URI çözümlenemedi: $URI"
+    coz="$(uri_coz "$URI" | tr -d '\r')" \
+        || cik "$KOD_KULLANIM" "URI çözümlenemedi: $URI"
     local -a P; mapfile -t P <<< "$coz"
     [ "${P[6]:-}" = "SON" ] || cik "$KOD_KULLANIM" "URI çözümlenemedi: $URI"
     local sema="${P[0]}" kul="${P[1]}" pw="${P[2]}"
@@ -639,11 +718,12 @@ uzaktan_cek() {   # DOSYA'yı çekilen dump ile doldurur
         *)  cik "$KOD_BICIM" "Bilinmeyen URI şeması: $sema://" ;;
     esac
     [ "$beklenen" = "$MOTOR" ] || cik "$KOD_BICIM" \
-        "$sema:// bir $beklenen kaynağıdır; siz $MOTOR'a aktarıyorsunuz."
+        "$sema:// bir $beklenen kaynağıdır; sizin hedefiniz $MOTOR."
 
     local cikti rc=0
+    KAYNAK_ETIKET="$sema://$host${port:+:$port}${yol:+/$yol}"
     heading "Uzak kaynaktan çekiliyor"
-    log "kaynak: $sema://$host${port:+:$port}${yol:+/$yol}"
+    log "kaynak: $KAYNAK_ETIKET"
     case "$MOTOR" in
     mariadb)
         cikti="$GECICI_DIZIN/uzak.sql"
@@ -989,11 +1069,18 @@ N'/var/opt/mssql/data/${HEDEF}_log$gunluk.ldf'" ;;
                     | awk -F'|' 'NF >= 3 {print $1 "|" $3 "|"}')"
     fi
 
-    # REPLACE yalnız --uzerine-yaz ile: onsuz SQL Server aynı adda BAŞKA bir
-    # veritabanının üzerine yazmayı kendisi reddeder. Kemer 1'in motor
-    # tarafındaki karşılığı; iki kapı birden kapalı olsun.
-    local secenek="RECOVERY"
-    [ "$UZERINE" = "1" ] && secenek="REPLACE, RECOVERY"
+    # REPLACE, hedef veritabanı VARSA gerekir — boş bile olsa. Buraya
+    # gelmiş olmak zaten kemer 1'in izin verdiği anlamına geliyor: ya
+    # hedef boştu ya da kullanıcı --uzerine-yaz dedi. REPLACE'i yalnız
+    # --uzerine-yaz'a bağlamak, panelden boş bir veritabanı açıp içine
+    # aktarmak isteyen kullanıcıya SQL Server'ın ham hatasını
+    # ("database ... already exists") gösterirdi.
+    local secenek="RECOVERY" varmi
+    varmi="$(ms_sql "SELECT CASE WHEN DB_ID('$HEDEF') IS NULL
+                     THEN 0 ELSE 1 END;")"
+    varmi="${varmi//[[:space:]]/}"
+    { [ "$UZERINE" = "1" ] || [ "$varmi" = "1" ]; } \
+        && secenek="REPLACE, RECOVERY"
     ms_sql "RESTORE DATABASE [$HEDEF] FROM DISK=N'$yol' \
             WITH $secenek$tasi;" >>"$LOG_FILE" 2>&1
     local rc=$?
@@ -1100,7 +1187,7 @@ if [ -z "$BICIM_MOTOR" ]; then
         exit "$KOD_BICIM"
     fi
 elif [ "$BICIM_MOTOR" != "$MOTOR" ]; then
-    err "Bu dosya bir $BICIM_MOTOR dump'ı, siz $MOTOR'a aktarıyorsunuz."
+    err "Bu dosya bir $BICIM_MOTOR dump'ı; sizin hedefiniz $MOTOR."
     err "  Görülen: $(bicim_adi "$BICIM")"
     err "  Doğrusu:  ./scripts/import.sh $BICIM_MOTOR $DOSYA"
     exit "$KOD_BICIM"
@@ -1110,7 +1197,8 @@ fi
 if [ "$COK_VT" = "1" ]; then
     KAPSAM="motor"
     if [ -n "$HEDEF" ]; then
-        warn "--hedef yok sayıldı: bu dump veritabanı adlarını KENDİ taşıyor."
+        [ "$HEDEF_KULLANICI" = "1" ] && warn \
+            "--hedef yok sayıldı: dump kendi veritabanı adlarını taşıyor."
         HEDEF=""
     fi
 else
@@ -1132,7 +1220,12 @@ else
     fi
 fi
 
+# Kullanıcıya ÖNERECEĞİMİZ komut, onun yazdığı komutun aynısı olmalı.
+# Öneriden --hedef'i düşürmek, "aynısını bir daha yaz" demek yerine veriyi
+# BAŞKA bir veritabanına aktarmasına yol açardı.
+HEDEF_ARG=""
 if [ "$KAPSAM" = "db" ]; then
+    HEDEF_ARG=" --hedef $HEDEF"
     log "hedef : $MOTOR / $HEDEF veritabanı"
 else
     log "hedef : $MOTOR / MOTORUN TAMAMI (dump birden çok veritabanı taşıyor)"
@@ -1160,7 +1253,12 @@ log "durum : $DUR_METIN"
 if [ "$KURU" = "1" ]; then
     heading "Kuru koşum — hiçbir şey yazılmadı"
     if [ "$DURUM_RC" -eq 0 ] && hedef_dolu_mu && [ "$UZERINE" != "1" ]; then
-        err "Bu dosya AKTARILAMAZ: hedef dolu ve --uzerine-yaz verilmedi."
+        # Kuru koşum da NE BULDUĞUNU söylemeli. "Aktarılamaz" tek başına
+        # kullanıcıyı bir şey aramaya yollar; hedefte ne olduğu burada
+        # yazmazsa yukarıdaki durum satırını da kimse okumaz.
+        err "Bu dosya AKTARILAMAZ: HEDEF BOŞ DEĞİL."
+        err "  Hedefte: $DUR_METIN"
+        err "  --uzerine-yaz ile aktarılır (önce güvenlik yedeği alınır)."
         exit "$KOD_DOLU"
     fi
     if hedef_dolu_mu; then
@@ -1178,7 +1276,15 @@ if [ "$DURUM_RC" -eq 0 ] && hedef_dolu_mu; then
         err "  Hedefte: $DUR_METIN"
         err "  Bu veriyi gerçekten değiştirmek istiyorsanız (önce güvenlik"
         err "  yedeği alınır):"
-        err "    ./scripts/import.sh $MOTOR $DOSYA --uzerine-yaz"
+        # Uzak kaynakta $DOSYA geçici bir dosyadır (bu betik çıkarken
+        # silinir) ve URI parola taşıdığı için ekrana basılamaz; kullanıcıya
+        # kendi komutunu tarif ediyoruz.
+        if [ -n "$KAYNAK_ETIKET" ]; then
+            err "    ./scripts/import.sh $MOTOR --kaynak <aynı URI>\
+$HEDEF_ARG --uzerine-yaz"
+        else
+            err "    ./scripts/import.sh $MOTOR $DOSYA$HEDEF_ARG --uzerine-yaz"
+        fi
         err "  Ne olacağını önce görmek için: --kuru"
         exit "$KOD_DOLU"
     fi
@@ -1230,7 +1336,7 @@ durum_oku; SON_RC=$?
 
 heading "Özet"
 printf '  Motor        : %s (%s)\n' "$MOTOR" "$KAP"
-printf '  Kaynak       : %s\n' "$DOSYA"
+printf '  Kaynak       : %s\n' "${KAYNAK_ETIKET:-$DOSYA}"
 printf '  Biçim        : %s\n' "$(bicim_adi "$BICIM")"
 printf '  Okunan       : %s\n' "$(bayt_insan "$KAYNAK_BAYT")"
 if [ "$KAPSAM" = "db" ]; then
@@ -1241,8 +1347,16 @@ fi
 printf '  Önce         : %s\n' "$ONCE_METIN"
 printf '  Sonra        : %s\n' "$DUR_METIN"
 if [ "$SON_RC" -eq 0 ] && [ "$DURUM_RC" -eq 0 ]; then
-    printf '  Değişim      : %+d tablo, %+d satır\n' \
-        "$(( DUR_TABLO - ONCE_TABLO ))" "$(( DUR_SATIR - ONCE_SATIR ))"
+    # MSSQL motor kapsamında satır SAYILMIYOR (bkz. durum_oku); orada
+    # "+0 satır" yazmak ölçülmemiş bir şeyi ölçülmüş gibi gösterirdi.
+    if [ "$MOTOR" = "mssql" ] && [ "$KAPSAM" = "motor" ]; then
+        printf '  Değişim      : %+d %s\n' \
+            "$(( DUR_TABLO - ONCE_TABLO ))" "$(birim_tablo)"
+    else
+        printf '  Değişim      : %+d %s, %+d %s\n' \
+            "$(( DUR_TABLO - ONCE_TABLO ))" "$(birim_tablo)" \
+            "$(( DUR_SATIR - ONCE_SATIR ))" "$(birim_satir)"
+    fi
 fi
 printf '  Süre         : %dm %ds\n' "$((SURE / 60))" "$((SURE % 60))"
 [ -n "$GUVENLIK_DOSYA" ] && \

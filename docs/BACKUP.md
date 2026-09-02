@@ -68,9 +68,11 @@ Liste **son 40 dosya** ile sınırlı — bir yıllık günlük yedek 365 satır
 ve sayfa kendini düzenli olarak yeniden çiziyor. Sınırın dışında kalanların
 varlığı satırdaki toplam sayıda duruyor; sayı ile liste birbirini yalanlamaz.
 
-Yalnız `*.gz` dosyaları sayılır. Doğrulamayı geçemeyip `.bozuk` uzantısıyla
-kenara alınmış dosyalar kurtarma noktası **değildir**; onları saymak panelde
-"3 yedeğiniz var" yazdırıp elde hiç yedek olmaması demek olurdu.
+Yedek sayılan uzantılar `*.gz` (şifresiz) ve `*.gz.enc` (şifreli) —
+ikisi de kurtarma noktasıdır, aradaki fark yalnız zarftır. Doğrulamayı
+geçemeyip `.bozuk` uzantısıyla kenara alınmış dosyalar kurtarma noktası
+**değildir**; onları saymak panelde "3 yedeğiniz var" yazdırıp elde hiç yedek
+olmaması demek olurdu.
 
 ---
 
@@ -83,6 +85,7 @@ kenara alınmış dosyalar kurtarma noktası **değildir**; onları saymak panel
 ./scripts/backup.sh stats        # boyut, adet, en son ne zaman
 ./scripts/backup.sh clean 7      # 7 günden eskileri sil
 ./scripts/backup.sh verify <dosya>
+./scripts/backup.sh sifreleme   # yedek şifrelemesi açık mı, hangi anahtarla
 ```
 
 ## Otomatik çalıştırma
@@ -163,6 +166,10 @@ zaman öncelikli kalır.
 | Neo4j | çevrimdışı dump — **kesinti gerektirir** | `.dump.gz` |
 | Kafka | yedeklenmez | — |
 
+Şifreleme açıkken her dosyanın adına `.enc` eklenir
+(`.sql.gz` → `.sql.gz.enc`); biçim değişmez, üzerine bir zarf geçer.
+Ayrıntı: [Yedek şifreleme](#yedek-şifreleme).
+
 ### Neo4j
 
 Community sürümde çevrimiçi yedek yoktur (Enterprise özelliğidir). Yedek almak
@@ -186,6 +193,185 @@ bir veritabanını o gürültünün içinde kaybederdi.
 Veri dizinini kopyalamak **tutarsız** bir yedek üretir; doğru yol snapshot
 API'sidir. Bunun için `path.repo` ayarı ve ayrı bir volume gerekir — compose
 dosyasında hazır tanımlıdır.
+
+---
+
+## Yedek şifreleme
+
+Yedekler öntanımlı olarak **düz gzip**tir. `.env` içinde bir anahtar
+verdiğinizde her yedek **AES-256** ile şifrelenir:
+
+```bash
+# anahtar üret
+openssl rand -base64 32 | tr -d '+/='
+
+# .env
+BACKUP_ENCRYPT_KEY=<ürettiğiniz değer>
+```
+
+Durumu her zaman şuradan görürsünüz:
+
+```bash
+./scripts/backup.sh sifreleme
+```
+
+### Neden
+
+`scripts/sync-remote.sh` yedekleri Google Drive / S3 / Backblaze / SFTP'ye
+kopyalıyor. Şifreleme olmadan bu dosyalar **düz gzip** olarak binadan çıkar:
+uzak depo hesabını ele geçiren biri `gzip -dc` ile bütün veritabanını okur.
+Elde ettiği şey yalnız tablo verisi de değil — `pg_dumpall` rolleri ve parola
+hash'lerini, MariaDB dump'ı bütün kullanıcı tablolarını taşır. Yedek diskini
+ayrı bir birime (`BACKUP_DIR=/mnt/backups`, tipik olarak bir NAS) koyan
+kurulumlarda dosya zaten sunucunun dışında duruyor.
+
+### Dosya adı sözleşmesi
+
+| Ad | Anlamı |
+|---|---|
+| `mariadb_full_20260901_020000.sql.gz` | **Şifresiz** yedek (eski akış; hâlâ geçerli) |
+| `mariadb_full_20260901_020000.sql.gz.enc` | **Şifreli** yedek |
+| `…​.gz.bozuk` / `…​.gz.enc.bozuk` | Doğrulamayı geçemedi — **kurtarma noktası değildir** |
+
+Sıra bilerek "önce `.gz`, sonra `.enc`": dosya önce sıkıştırıldı, **sonra**
+şifrelendi; ad soldan sağa bunu anlatır.
+
+`.enc` uzantısının `*.gz` desenine **uymaması** da kasıtlı. Şifreli dosyayı
+`.gz` diye adlandırsaydık, onu tanımayan her araç `gzip -dc` deneyip
+"not in gzip format" ile ölürdü — gürültülü ama **yanlış yere** işaret eden bir
+hata. Şimdi eski araçlar dosyayı hiç görmüyor; görmemek, yanlış anlamaktan
+iyidir.
+
+Şifreli dosyanın ilk 64 baytı **düz metin bir başlıktır**:
+
+```
+DBSTACK-ENC1 aes-256-cbc pbkdf2 sha512 600000
+```
+
+Şifreleme parametreleri betikte değil **dosyanın içinde** duruyor. Sebebi:
+yarın iterasyon sayısı yükseltilirse bugünkü yedekler açılabilir kalsın.
+Betiğe sabit yazsaydık, o değişikliğin yapıldığı gün bütün arşiv sessizce
+okunamaz hâle gelir ve bunu ancak felaket günü öğrenirdik. Aynı başlık,
+dosyanın şifreli olduğunu **adından bağımsız** anlamayı da sağlıyor: dosya
+yeniden adlandırılmış olsa bile betik "bu yedek şifreli" der, "bozuk gzip"
+demez.
+
+### Neden `openssl` (age ya da gpg değil)
+
+- **Bulunabilirlik.** `install.sh` zaten `require_cmd openssl` diyor — openssl
+  bu ürünün *kurulum şartı*; TLS sertifikaları (`scripts/gen-certs.sh`) ve
+  rastgele parolalar (`scripts/lib/common.sh`) onunla üretiliyor. `age` ya da
+  `gpg` seçmek, "tek komutla kurulur" diyen bir ürüne **yeni bir kurulum
+  bağımlılığı** eklemek olurdu; ikisi de hiçbir dağıtımda öntanımlı gelmiyor.
+- **Anahtar yönetiminin sadeliği.** Simetrik parola = `.env`'de tek satır,
+  `DB_PASSWORD` ile aynı dosyada, aynı izinlerle. `age` bir *kimlik dosyası*
+  ister: kaybedilecek ikinci bir sır, ayrı bir saklama yeri, ayrı bir
+  yedekleme kuralı. `gpg` ise `~/.gnupg` anahtarlığı ister — ve `backup.sh`
+  **üç ayrı kimlikle** koşuyor: host cron'u (kullanıcı), controller
+  container'ı (root), operatörün terminali. Üç farklı `$HOME` = üç farklı
+  anahtarlık = "panelden çalışıyor, cron'dan çalışmıyor" sınıfı arıza.
+- **Kurtarma.** Felaket günü elde yığın değil yalnız *dosya* kalırsa, çözme
+  komutu tek satır ve her Linux'ta çalışır (aşağıda). `age`/`gpg` ile önce
+  aracı kurmak, sonra anahtarı içe aktarmak gerekir; en kötü günde en fazla
+  adım.
+
+**Ne vaat edilmiyor:** `openssl enc` AEAD (GCM) desteklemez. Bu şifreleme
+**gizlilik** sağlar, kriptografik **bütünlük imzası (MAC)** sağlamaz.
+Kurcalanmış bir dosya neredeyse kesinlikle CBC dolgusunda, gzip CRC'sinde ya da
+`verify` biçim kontrollerinde düşer — ama bu bir MAC değildir. Vaat edilmeyen
+bir güvenceyi vaat edilmiş gibi göstermek, hiç şifrelememekten tehlikelidir.
+
+### ⚠️ ANAHTARI KAYBEDERSENİZ YEDEKLER AÇILAMAZ
+
+Bunu büyük harfle yazıyoruz çünkü geri dönüşü yok: **anahtarsız bir yedek
+dosyası rastgele bayt yığınıdır.** Ne bu üründe, ne başka bir yerde bir
+kopyası vardır; kurtarma servisi, yedek anahtar, arka kapı yoktur.
+
+Bu yüzden:
+
+- Anahtarı **sunucunun dışında da** saklayın — parola yöneticisi, kasa, kâğıda
+  yazıp zarf. Sunucu yandığında yedeği açacak şey odur. Anahtarı yalnız
+  sunucuda tutmak, yedeği veriyle aynı yere koymakla aynı şeydir.
+- `.env` dosyasını yedekleyin (ya da en azından bu satırı). `.env` sürüm
+  kontrolüne **girmez** (`.gitignore`), yani onu yedekleyen tek şey sizsiniz.
+- Anahtarı **değiştirirseniz eskisini silmeyin**: eski dosyalar eski anahtarla
+  açılır. `RETENTION_DAYS` dolup o dosyalar temizlenene kadar ikisine de
+  ihtiyacınız var. Uzak depodaki kopyalar için süre `RETENTION_REMOTE_DAYS`
+  (öntanımlı 30 gün) — eski anahtarı en az o kadar saklayın.
+
+Anahtarı `.env`'den ayrı bir dosyada tutmak isterseniz:
+
+```bash
+install -m 0600 /dev/null /etc/databases-stack/backup.key
+openssl rand -base64 32 | tr -d '+/=' > /etc/databases-stack/backup.key
+# .env
+BACKUP_ENCRYPT_KEY_FILE=/etc/databases-stack/backup.key
+```
+
+Dosya okunamıyorsa yedekleme **durur**; sessizce şifresiz yedek üretmez.
+
+### Geri yükleme ve doğrulama
+
+Hiçbir komut değişmiyor. `verify`, `restore-*`, `list`, `stats`, `clean` ve
+prova (`restore-drill.sh`) şifreli dosyayı da şifresizi de kabul eder;
+şifre çözme boru hattının içinde yapılır.
+
+Anahtar yoksa hata **anlaşılırdır** — gzip hatası değil:
+
+```
+[✗] Bu yedek ŞİFRELİ, BACKUP_ENCRYPT_KEY tanımlı değil: mariadb_full_….sql.gz.enc
+[✗]   .env'de BACKUP_ENCRYPT_KEY (ya da BACKUP_ENCRYPT_KEY_FILE) verin, sonra tekrar deneyin.
+[✗]   ANAHTAR KAYIPSA BU DOSYA AÇILAMAZ; kurtarmanın başka yolu yoktur (docs/BACKUP.md).
+```
+
+Anahtar **yanlışsa**:
+
+```
+[✗] Bu yedeğin ŞİFRESİ ÇÖZÜLEMEDİ: mariadb_full_….sql.gz.enc
+[✗]   Elinizdeki anahtar bu dosyaya ait değil (ya da dosya kurcalanmış).
+[✗]   Çözülen ilk baytlar: 7712 — beklenen: 1f8b (gzip).
+```
+
+Bu ikinci kontrol dosyanın **ilk iki baytına** bakar. Sebep hız: CBC dolgu
+hatası akışın *sonunda* anlaşılır, yani 30 GB'lık bir dosyayı yanlış anahtarla
+baştan sona okuduktan sonra "bad decrypt" denirdi — cevabı 40 dakika geç
+vermek, geri yükleme sırasında verilebilecek en pahalı cevaptır.
+
+### Elle çözme (ürün olmadan)
+
+Sunucu, betikler, hepsi gitti; elinizde yalnız dosya ve anahtar var:
+
+```bash
+export K='<anahtarınız>'
+tail -c +65 mariadb_full_20260901_020000.sql.gz.enc \
+  | openssl enc -d -aes-256-cbc -pbkdf2 -md sha512 -iter 600000 -pass env:K \
+  | gzip -dc > dump.sql
+```
+
+`tail -c +65` 64 baytlık başlığı atlar. Parametreleri başlıktan okuyun:
+
+```bash
+head -c 64 mariadb_full_20260901_020000.sql.gz.enc; echo
+```
+
+Anahtarı komut satırına (`-pass pass:...`) **yazmayın**: `ps` çıktısı
+sistemdeki herkese açıktır. Betik de bu yüzden ortam değişkeni kullanıyor.
+
+### Maliyet (ölçüldü)
+
+openssl 3.5.5, AES-NI'li bir x86-64 üzerinde:
+
+| Ne | Süre |
+|---|---|
+| PBKDF2-HMAC-SHA512, 600 000 iterasyon | **dosya başına ~0,56 sn** (tek seferlik) |
+| Şifreleme akış hızı | ~130–220 MB/sn |
+
+Şifreleme gzip'ten **sonra** geldiği için sıkıştırılmış baytları işler:
+5 GB'lık bir dump 400 MB'a inip ~3 sn'de şifrelenir. Darboğaz hâlâ gzip.
+
+600 000 iterasyon OWASP'ın PBKDF2 önerisidir. Rastgele üretilmiş 32 karakterlik
+bir anahtar için gereğinden fazladır; zayıf bir parola giren kullanıcı için
+ise tek koruma odur ve bedeli günde yarım saniyedir.
 
 ---
 
@@ -278,6 +464,10 @@ başlamadan önce açılıp içeriği sınanır; geçemezse işlem hiç başlama
 dosyayla geri yükleme yapılmaz"). Boş ya da kesik bir yedekle başlanan geri
 yükleme veriyi geri getirmez, yalnızca yok eder.
 
+Şifreli dosyada aynı kontrol **şifre çözmeyi de** kapsar: anahtar eksik ya da
+yanlışsa geri yükleme hiç başlamaz ve veriye dokunulmaz. Anahtarı yedeği
+silmeden *sonra* aramak zorunda kalmamanız için bu sıra bilerek böyle.
+
 Aynı sebeple geri yükleme, yedeklemeyle **aynı kilidi** tutar. Kilitsizken
 02:00 cron'u, yarım geri yüklenmiş bir veritabanını (bazı tablolar yeni,
 bazıları DROP edilmiş) döküp "geçerli yedek" diye saklıyor ve uzağa
@@ -318,9 +508,35 @@ Kurulum: [GOOGLE-DRIVE.md](GOOGLE-DRIVE.md)
 
 ```bash
 ./scripts/sync-remote.sh test     # bağlantı testi
+./scripts/sync-remote.sh plan     # NE gidecek, ne gitmeyecek (uzağa dokunmaz)
 ./scripts/sync-remote.sh          # gönder
 ./scripts/sync-remote.sh status   # yerel/uzak karşılaştırma
 ```
 
 Uzak saklama süresi `RETENTION_REMOTE_DAYS` (varsayılan 30 gün) ile ayarlanır;
 yerel saklama `RETENTION_DAYS` (varsayılan 7 gün).
+
+### Şifreleme kapısı
+
+Uzak depo, [yedek şifrelemesinin](#yedek-şifreleme) asıl sebebidir; bu yüzden
+gönderim kararı şifreleme durumuna bağlı:
+
+| Şifreleme | Ne olur |
+|---|---|
+| **Açık** | Yalnız `*.gz.enc` gönderilir. Şifresiz `*.gz` dosyalar **gönderilmez**; kaç tanesinin atlandığı ekrana yazılır. |
+| **Kapalı** | Gönderim yapılır ama her koşumda **uyarı basılır** — dökümü şifrelemeden binadan çıkarmak sessizce yapılacak bir iş değil. |
+| **Bozuk** (anahtar var, `openssl` yok / anahtar dosyası okunamıyor) | **Hiçbir şey gönderilmez.** O durumda üretilen yedeklerin şifreli olduğunu söyleyemeyiz. |
+
+Şifreleme açıldıktan **önce** alınmış şifresiz kopyalar bir daha uzağa gitmez.
+Bu doğru davranıştır: uzakta duran en eski şifresiz kopya bile aynı tabloları
+taşır, yani onu göndermek şifrelemeyi açmayı anlamsız kılardı. Şifreli bir
+kopya için o motorun yedeğini yeniden alın.
+
+Ne gideceğini gönderimden **önce**, uzak depoya hiç dokunmadan görmek için:
+
+```bash
+./scripts/sync-remote.sh plan
+```
+
+`.bozuk` dosyalar her iki durumda da gönderilmez — onlar kurtarma noktası
+değil, doğrulamayı geçemediği için kenara alınmış dosyalardır.

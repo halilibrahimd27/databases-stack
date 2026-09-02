@@ -1682,8 +1682,21 @@ ck("dosya üreten her motor finalize_backup'tan geçiyor", not _finalsiz, ", ".j
 # kesilmiş bir yedeğin başı her zaman doğrudur. Her biçimde akışın SONUNA
 # kadar sağlam olduğunu gösteren bir ölçüt aranıyor.
 _arch_dal = _bk.split("*.archive.gz)")[1].split("*.gz)")[0]
-ck("MongoDB arşivinde gzip akışı sonuna kadar açılıyor (zarf yarım mı)",
-   "gzip -dc" in _arch_dal)
+# Kontrol KOMUTA değil ÖZELLİĞE bakıyor. Şifreleme eklenince dallar doğrudan
+# `gzip -dc` çağırmayı bıraktı: hepsi ortak okuyucudan (oku_akis) geçiyor,
+# çünkü artık dosya şifreli de olabilir ve iki yolun aynı kapıdan geçmesi
+# şart. Testi "gzip -dc geçiyor mu" diye bırakmak, doğru bir soyutlamayı
+# regresyon sanmak olurdu; ama gevşetmiyoruz da: okuyucunun akışı SONUNA
+# kadar açtığını ve iki tarafın çıkış kodunu da denetlediğini ayrıca
+# sınıyoruz — "zarf yarım mı" sorusunun cevabı orada.
+_oku_i = _bk.find("oku_akis() {")
+_oku = _bk[_oku_i:_oku_i + 400] if _oku_i >= 0 else ""
+ck("MongoDB arşivi ortak akış okuyucusundan geçiyor (şifreli de olabilir)",
+   "oku_akis" in _arch_dal)
+ck("ortak okuyucu akışı sonuna kadar açıyor (zarf yarım mı)",
+   "gzip -dc" in _oku)
+ck("ortak okuyucu boru hattının HER İKİ ucunun çıkış kodunu denetliyor",
+   "PIPESTATUS" in _oku and 'ps[0]' in _oku and 'ps[1]' in _oku)
 ck("MongoDB arşivinde arşiv sonlandırıcısı aranıyor (gövde yarım mı)",
    "ffffffff" in _arch_dal)
 # 256 baytlık eşik ÖLÇÜT OLMAKTAN ÇIKTI: dayandığı "gerçek arşiv kilobayt

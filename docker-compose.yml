@@ -244,6 +244,18 @@ services:
       # state/tuning.env'e yazar. (Eski compose'daki `command:` bloğu my.cnf'in
       # tamamını eziyordu — burada yalnız bu üç anahtar override edilir.)
       - ${STACK_DIR:-.}/config/mariadb/my.cnf:/etc/mysql/conf.d/custom.cnf:ro
+      # --- PITR: binlog arşiv KOPYASI (docs/PITR.md) ------------------------
+      # BİNLOG'UN KENDİSİ BURAYA YAZILMAZ, buraya KOPYALANIR
+      # (./scripts/pitr.sh arsivle mariadb).
+      # log_bin yolunu buraya taşımak cazip görünüyor ama yıkıcı: MariaDB
+      # hangi binlog'ların var olduğunu mysql-bin.index dosyasından bilir ve
+      # PURGE'ü ona göre yapar. Yol değişince yeni bir index açılır, datadir'de
+      # kalan eski dosyalar hiçbir zaman silinmez —
+      # binlog_expire_logs_seconds onları artık görmez. Sessizce dolan bir
+      # veri hacmi, çözmeye çalıştığımız sorunun daha kötüsü olurdu.
+      # Kopya ise host'ta durur: motorun hacmi ölse bile binlog elde kalır ve
+      # arşiv, yedeklerle aynı saklama politikasına girer.
+      - ${STACK_DIR:-.}/backups/mariadb/binlog:/binlog-archive
     command:
       - "--server-id=${MARIADB_SERVER_ID:-1}"
       - "--read-only=${MARIADB_READ_ONLY:-OFF}"
@@ -363,8 +375,25 @@ services:
       PG_SLOT: ${POSTGRES_SLOT_PRIMARY:-replica_from_primary}
       POSTGRES_REPLICATION_USER: ${POSTGRES_REPLICATION_USER:-replicator}
       POSTGRES_REPLICATION_PASSWORD: ${POSTGRES_REPLICATION_PASSWORD:-${POSTGRES_PASSWORD:-${DB_PASSWORD}}}
+      # archive_command postmaster'ın çocuğu olarak koşar ve ortamı ondan
+      # devralır; yolu betiğe böyle geçiyoruz. Yol iki yerde (compose mount'u
+      # ve betik) sabit yazılsaydı, birini değiştirip diğerini unutmak
+      # arşivlemeyi sessizce durdururdu.
+      PG_WAL_ARSIV: /wal-archive
     volumes:
       - postgresql_data:/var/lib/postgresql/data
+      # --- PITR (docs/PITR.md) ---------------------------------------------
+      # WAL arşivi YIĞININ KENDİ DİZİNİNDE, yedeklerin yanında:
+      # host'ta backups/postgresql/wal. Docker hacmine yazsaydık arşiv
+      # `docker volume ls` dışında görünmez olurdu; oysa arşiv yedeklerle
+      # AYNI saklama politikasına tabi (scripts/pitr.sh temizle) ve aynı
+      # disk doluluk uyarısına girmek zorunda — sessizce dolan bir WAL
+      # arşivi, PostgreSQL'i PANIC ile durduran arıza sınıfının kendisi.
+      - ${STACK_DIR:-.}/backups/postgresql/wal:/wal-archive
+      # archive_command / restore_command betikleri. Salt okunur: arşivleme
+      # yolundaki bir betiği motorun kendisi değiştirebilseydi, kurtarmanın
+      # doğruluğu container'ın bütünlüğüne bağlı olurdu.
+      - ${STACK_DIR:-.}/config/postgresql:/etc/pitr:ro
     # ROL SABİT DEĞİL — PG_STANDBY_OF ile belirlenir:
     #   boş     → bu düğüm PRIMARY
     #   dolu    → o düğümden klonlanıp STANDBY olarak açılır
@@ -414,6 +443,33 @@ services:
       - max_replication_slots=10
       - -c
       - hot_standby=on
+      # --- PITR: WAL arşivleme (docs/PITR.md) -------------------------------
+      # wal_level=replica YETERLİDİR; PITR ayrı bir seviye istemez (logical
+      # daha fazlasını yazar ve diski boşuna şişirir). Eksik olan tek şey
+      # arşivlemeydi: replica seviyesi WAL'ı ÜRETİR ama pg_wal dolunca geri
+      # dönüştürür — yani "dün 14:32" o segment geri dönüştürüldüğü anda
+      # ulaşılamaz olur. archive_mode onu kalıcı bir dosyaya kopyalatır.
+      #
+      # archive_mode DEĞİŞİKLİĞİ YENİDEN BAŞLATMA İSTER (reload yetmez):
+      # bu satırı ekledikten sonra `docker compose up -d postgresql` şart.
+      # ./scripts/pitr.sh durum postgresql bunu ölçer ve söyler.
+      #
+      # KAPATMAK İÇİN .env'e POSTGRES_ARCHIVE_MODE=off yazın. Kapatmak PITR'ı
+      # bitirir ama arşiv dizinine yazamayan bir kurulumda pg_wal'ın veri
+      # diskini doldurmasından iyidir; bu kaçış yolu bilerek var.
+      - -c
+      - archive_mode=${POSTGRES_ARCHIVE_MODE:-on}
+      - -c
+      - archive_command=sh /etc/pitr/wal-archive.sh %p %f
+      # Boştaki bir veritabanında segment dolmaz; arşive hiçbir şey düşmez ve
+      # "en yeni dönülebilir an" saatlerce geride kalır. archive_timeout, YAZI
+      # OLMUŞSA segmenti zorla kapatır — yani RPO'nun üst sınırı budur.
+      # 300 sn'nin bedeli: yazı olan her 5 dakikada bir, yarısı boş olsa da
+      # TAM BOYUTLU (16 MB) bir segment arşive düşer. Sürekli yazılan bir
+      # sunucuda bu zaten olurdu; boştakinde ise hiç olmaz (PostgreSQL yazı
+      # yoksa segment değiştirmez), o yüzden sabit bir disk maliyeti değil.
+      - -c
+      - archive_timeout=${POSTGRES_ARCHIVE_TIMEOUT:-300}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-root} -d ${DEFAULT_DATABASE:-defaultdb}"]
       interval: 30s

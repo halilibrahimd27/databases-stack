@@ -43,6 +43,294 @@ blog() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG_F
 bok()  { ok   "$*"; printf '[%s] [OK] %s\n'   "$(date '+%F %T')" "$*" >> "$LOG_FILE"; }
 berr() { err  "$*"; printf '[%s] [ERR] %s\n'  "$(date '+%F %T')" "$*" >> "$LOG_FILE"; }
 
+# =============================================================================
+# YEDEK ŞİFRELEME
+# =============================================================================
+# NEDEN VAR: sync-remote.sh bu dosyaları Google Drive / S3 / SFTP'ye kopyalıyor
+# ve dosyalar DÜZ GZIP'ti. Yani veritabanı dökümü şifrelenmeden binadan
+# çıkıyordu; uzak depo hesabını ele geçiren biri `gzip -dc` ile bütün veriyi
+# okurdu — dump'ların içinde tablo verisinin yanı sıra kullanıcı satırları,
+# e-posta adresleri ve parola hash'leri de var (pg_dumpall rolleri ve
+# parolaları da alıyor). İç ağda kalan bir yığın için bile kabul edilemez.
+#
+# NEDEN openssl (age ya da gpg DEĞİL):
+#   • BULUNABİLİRLİK — install.sh:42 zaten `require_cmd openssl python3 awk
+#     grep sed` diyor: openssl bu ürünün KURULUM ŞARTI. gen-certs.sh TLS
+#     sertifikalarını, common.sh rand_secret parolaları onunla üretiyor.
+#     age ya da gpg seçmek, "tek komutla kurulur" diyen bir ürüne YENİ bir
+#     kurulum bağımlılığı eklemek olurdu; hiçbir dağıtımda ikisi de öntanımlı
+#     kurulu gelmiyor.
+#   • ANAHTAR YÖNETİMİNİN SADELİĞİ — simetrik parola demek, .env'de TEK satır
+#     demek: DB_PASSWORD ile aynı dosyada, aynı izinlerle, aynı yedekleme
+#     alışkanlığıyla. age bir kimlik DOSYASI ister (kaybedilecek İKİNCİ bir
+#     sır, ayrı bir saklama yeri, ayrı bir yedekleme kuralı). gpg ise
+#     ~/.gnupg anahtarlığı + agent ister — ve bu betik ÜÇ ayrı kimlikle
+#     koşuyor: host cron'u (kullanıcı), controller container'ı (root),
+#     operatörün terminali. Üç farklı $HOME = üç farklı anahtarlık =
+#     "panelden çalışıyor, cron'dan çalışmıyor" sınıfı arıza. Bu dosyanın
+#     geçmişi tam olarak o sınıf hatalarla dolu (common.sh'taki /tmp kilit
+#     dosyası hikâyesi aynı kalıbın bir başka örneği).
+#   • KURTARMA — felaket günü elde yığın değil yalnız DOSYA kalırsa, çözme
+#     komutu tek satır ve her Linux'ta çalışır (docs/BACKUP.md'de yazılı).
+#     age/gpg'de önce aracı kurmak, sonra anahtarı içe aktarmak gerekir; en
+#     kötü günde en fazla adım.
+#
+# NE VAAT ETMİYORUZ: `openssl enc` AEAD (GCM) desteklemez — bu şifreleme
+# GİZLİLİK sağlar, kriptografik BÜTÜNLÜK İMZASI (MAC) sağlamaz. Kurcalanmış
+# bir dosya neredeyse kesinlikle CBC dolgusunda, gzip CRC'sinde ya da
+# verify_backup'ın biçim kontrollerinde düşer; ama bu bir MAC değildir ve
+# belgede de böyle yazıyor. Vaat edilmeyen bir güvenceyi vaat etmiş gibi
+# göstermek, hiç şifrelememekten daha tehlikelidir.
+#
+# ÖLÇÜM (openssl 3.5.5, AES-NI'li bir x86-64):
+#   • PBKDF2-HMAC-SHA512 600000 iterasyon = DOSYA BAŞINA ~0,56 sn (tek
+#     seferlik anahtar türetme; akış uzunluğundan bağımsız).
+#   • Akış hızı ~130-220 MB/sn. Şifreleme gzip'ten SONRA geldiği için
+#     SIKIŞTIRILMIŞ baytları işliyor: 5 GB'lık bir dump 400 MB'a inip
+#     ~3 sn'de şifreleniyor. Darboğaz hâlâ gzip.
+# =============================================================================
+
+# DOSYA BİÇİMİ: 64 baytlık DÜZ METİN başlık + `openssl enc` çıktısı.
+#
+# Parametreler betiğin içinde DEĞİL dosyanın İÇİNDE duruyor. Sebep: yarın
+# iterasyon sayısını yükseltirsek ya da şifreyi değiştirirsek, BUGÜN alınmış
+# yedekler açılabilir kalmalı. Sabit yazsaydık o değişikliğin yapıldığı gün
+# bütün arşiv sessizce okunamaz hâle gelirdi — ve bunu ancak felaket günü
+# öğrenirdik.
+#
+# Başlık SABİT UZUNLUKTA: gövde her zaman 65. bayttan başlar (`tail -c +65`),
+# hiçbir ayrıştırma gerekmeden. Değişken uzunlukta bir satır, ikili verinin
+# içinde "ilk satır sonuna kadar oku" oyununa dönerdi; ciphertext'in ilk
+# baytları arasında 0x0a çıkması olasıdır ve o gün okuma kayardı.
+ENC_SIHIR="DBSTACK-ENC1"
+ENC_BASLIK=64
+ENC_CIPHER="aes-256-cbc"
+ENC_KDF="pbkdf2"
+ENC_MD="sha512"
+ENC_ITER="600000"
+ENC_EXT="enc"
+
+# UZANTI SÖZLEŞMESİ — bu iki ad DIŞARIDAN da okunuyor (restore-drill.sh,
+# sync-remote.sh, controller):
+#   <motor>_<tip>_<TARİH>.<biçim>.gz       şifresiz  (eski akış; hâlâ geçerli)
+#   <motor>_<tip>_<TARİH>.<biçim>.gz.enc   şifreli
+#   …<herhangi biri>.bozuk                 doğrulamayı geçemedi; KURTARMA
+#                                          NOKTASI DEĞİLDİR
+# Sıra bilerek "önce gz, sonra enc": dosya önce sıkıştırıldı, SONRA
+# şifrelendi; ad soldan sağa bunu anlatıyor. Ters sıra yalan olurdu.
+# `.enc` uzantısının `*.gz` desenine UYMAMASI kasıtlı: şifreli bir dosyayı
+# `.gz` diye adlandırsaydık, onu tanımayan her araç `gzip -dc` deneyip
+# "not in gzip format" ile ölürdü — hata gürültülü ama YANLIŞ yere işaret
+# ederdi. Şimdi eski araçlar dosyayı hiç görmüyor; görmemek, yanlış anlamaktan
+# iyidir.
+YEDEK_BUL=( '(' -name '*.gz' -o -name "*.gz.$ENC_EXT" ')' )
+
+# Şifreleme durumu BİR KEZ, betiğin başında hesaplanıyor. Her çağrıda yeniden
+# bakmak yerine tek yerde olması şart: alt kabuklarda (boru hattı, komut
+# ikamesi) durumun farklı çıkması, AYNI koşumda bazı motorları şifreleyip
+# bazılarını şifresiz bırakabilirdi — sessiz ve fark edilmesi neredeyse
+# imkânsız bir sızıntı.
+ENC_DURUM="kapali"    # kapali | acik | bozuk
+ENC_SEBEP=""
+ENC_KAYNAK=""
+ENC_KEY=""
+enc_durumu_belirle() {
+    # Anahtar dosya yolu verildiyse O kazanır: .env'i kopyalayan/gönderen
+    # akışlar var (install.sh üretiyor, operatör taşıyor), anahtarı ayrı ve
+    # 0600 bir dosyada tutmak isteyen bunu bilerek seçer.
+    # DOSYA VERİLİP OKUNAMIYORSA SESSİZCE .env'e DÜŞMÜYORUZ: o düşüş,
+    # "şifreleme açık" sanılırken düz metin yedek üretmek demektir.
+    if [ -n "${BACKUP_ENCRYPT_KEY_FILE:-}" ]; then
+        if [ ! -r "$BACKUP_ENCRYPT_KEY_FILE" ]; then
+            ENC_DURUM="bozuk"
+            ENC_SEBEP="BACKUP_ENCRYPT_KEY_FILE okunamıyor: $BACKUP_ENCRYPT_KEY_FILE"
+            return 0
+        fi
+        IFS= read -r ENC_KEY < "$BACKUP_ENCRYPT_KEY_FILE" || ENC_KEY="${ENC_KEY:-}"
+        ENC_KEY="${ENC_KEY%$'\r'}"
+        if [ -z "$ENC_KEY" ]; then
+            ENC_DURUM="bozuk"
+            ENC_SEBEP="BACKUP_ENCRYPT_KEY_FILE boş: $BACKUP_ENCRYPT_KEY_FILE"
+            return 0
+        fi
+        ENC_KAYNAK="BACKUP_ENCRYPT_KEY_FILE"
+    else
+        ENC_KEY="${BACKUP_ENCRYPT_KEY:-}"
+        [ -n "$ENC_KEY" ] && ENC_KAYNAK="BACKUP_ENCRYPT_KEY"
+    fi
+
+    if [ -z "$ENC_KEY" ]; then
+        ENC_SEBEP="anahtar tanımlı değil (BACKUP_ENCRYPT_KEY boş)"
+        return 0
+    fi
+    # BACKUP_ENCRYPT=false: anahtar .env'de DURURKEN üretimi kapatmak için.
+    # Anahtar yine yüklü kalıyor — yani eski ŞİFRELİ yedekler doğrulanmaya ve
+    # geri yüklenmeye devam eder. Anahtarı .env'den silmek bunu yapmaz;
+    # geçişten vazgeçen operatör o gün bütün şifreli arşivini kaybederdi.
+    case "${BACKUP_ENCRYPT:-}" in
+        false|no|0|hayir|kapali)
+            ENC_SEBEP="BACKUP_ENCRYPT=false — anahtar duruyor, eski şifreli yedekler açılabilir"
+            return 0 ;;
+    esac
+    if ! command -v openssl >/dev/null 2>&1; then
+        ENC_DURUM="bozuk"
+        ENC_SEBEP="anahtar tanımlı ama 'openssl' komutu yok"
+        return 0
+    fi
+    ENC_DURUM="acik"
+    ENC_SEBEP="$ENC_KAYNAK · $ENC_CIPHER · $ENC_KDF-$ENC_MD · $ENC_ITER iterasyon"
+    return 0
+}
+enc_durumu_belirle
+
+enc_acik()  { [ "$ENC_DURUM" = "acik" ]; }
+enc_bozuk() { [ "$ENC_DURUM" = "bozuk" ]; }
+
+# ŞİFRELEME BOZUKSA YEDEK ALMIYORUZ. Sebep tam da yukarıdaki tasarımda
+# saklı: "bozuk" durumda enc_acik() false döner, yani betik hiçbir şey
+# söylemeden DÜZ METİN yedek üretirdi — kullanıcı şifreleme açık sanırken.
+# Yedekte sessiz yanlış, yedeğin hiç olmamasından beterdir.
+enc_onkosul() {
+    enc_bozuk || return 0
+    berr "Yedek şifrelemesi yapılandırılmış ama KULLANILAMIYOR: $ENC_SEBEP"
+    case "$ENC_SEBEP" in
+        *openssl*)
+            err "  Kurulum:  Debian/Ubuntu → sudo apt-get install -y openssl"
+            err "            Alpine        → apk add --no-cache openssl" ;;
+    esac
+    berr "  Şifresiz yedek ÜRETMİYORUZ. Bilerek şifresiz devam edecekseniz .env'de: BACKUP_ENCRYPT=false"
+    return 1
+}
+
+enc_baslik() {
+    # '%-63s' + '\n' = tam 64 bayt. Buradaki alanların hiçbiri kullanıcıdan
+    # gelmiyor (hepsi bu dosyada sabit) ve toplamı 45 karakter; 63'ü aşarsa
+    # printf KIRPMAZ, başlık büyür ve `tail -c +65` gövdeyi kaçırır.
+    printf '%-63s\n' "$ENC_SIHIR $ENC_CIPHER $ENC_KDF $ENC_MD $ENC_ITER"
+}
+
+# Anahtar ARGÜMANA değil ORTAMA konuyor. Fark somut: `ps aux` çıktısı
+# sistemdeki HERKESE açıktır (hidepid ayarlı değilse), /proc/<pid>/environ ise
+# yalnız sürecin sahibine ve root'a. Ortamı okuyabilen zaten .env'i de
+# okuyabilir — yani ortam yeni bir açık yaratmıyor; argüman ise anahtarı
+# makinedeki her kullanıcıya açardı. (Aynı gerekçe MYSQL_PWD/PGPASSWORD/
+# SQLCMDPASSWORD için de geçerli, dosyanın geri kalanı bu deseni kullanıyor.)
+sifrele() {   # stdin → stdout
+    DBSTACK_ENC_PASS="$ENC_KEY" openssl enc "-$ENC_CIPHER" "-$ENC_KDF" \
+        -md "$ENC_MD" -iter "$ENC_ITER" -salt -pass env:DBSTACK_ENC_PASS
+}
+
+# Dosya ADINA değil İÇİNE bakıyoruz. Sebep somut: aynı dosya `.bozuk` ekiyle
+# kenara alınmış olabilir, operatör elle `.gz` diye yeniden adlandırmış
+# olabilir, uzak depodan farklı bir adla inmiş olabilir. Ada bakan bir kontrol
+# o dosyaya "bozuk gzip" derdi; oysa doğru cevap "bu dosya ŞİFRELİ".
+sifreli_mi() {   # sifreli_mi <dosya>
+    [ -f "$1" ] || return 1
+    # KOMUT İKAMESİ ($( )) BİLEREK KULLANILMIYOR. Kabuk değişkeni NUL baytı
+    # taşıyamaz ve bash ikamede NUL görünce HER ÇAĞRIDA stderr'e
+    # "warning: command substitution: ignored null byte in input" basar.
+    # Bu fonksiyon her verify ve her geri yükleme yolunda çağrılıyor, gzip
+    # başlığında da NUL var — yani o uyarı her gece cron mail'ine düşerdi.
+    # (Aynı sınıf gürültü için yukarıdaki awk `[.]` yorumuna bakın.)
+    # grep boruda çalıştığı için ikame yok: -a ikili girdiyi metin sayar,
+    # -x satırın TAMAMININ eşleşmesini ister, -F deseni düz metin olarak alır.
+    head -c "${#ENC_SIHIR}" "$1" 2>/dev/null | grep -qaxF "$ENC_SIHIR"
+}
+
+# Şifresi ÇÖZÜLMÜŞ ama hâlâ SIKIŞTIRILMIŞ baytlar. Şifresiz dosyada dosyanın
+# kendisi. Çıkış kodu "akış sonuna kadar okunabildi mi" sorusunu cevaplar.
+#   3 = anahtar yok · 4 = openssl yok · 5 = başlık tanınmıyor
+oku_ham() {   # oku_ham <dosya>
+    local f="$1"
+    if ! sifreli_mi "$f"; then cat "$f"; return $?; fi
+    [ -n "$ENC_KEY" ] || return 3
+    command -v openssl >/dev/null 2>&1 || return 4
+    local sihir c kdf md it
+    read -r sihir c kdf md it _ <<< "$(head -c "$ENC_BASLIK" "$f" 2>/dev/null)"
+    [ "$sihir" = "$ENC_SIHIR" ] || return 5
+    # Başlık DOSYADAN geliyor ve dosya uzak depodan da inmiş olabilir; yani
+    # bu alanlar güvenilmez girdidir. Beyaz liste olmadan `-$c` doğrudan
+    # openssl'e bayrak olarak geçerdi ("-help", "-out /etc/…" gibi) — dosya
+    # adı sözleşmesinden çok daha pahalı bir açık.
+    case "$c"   in aes-256-cbc|aes-256-ctr|aes-128-cbc) ;; *) return 5 ;; esac
+    case "$kdf" in pbkdf2) ;;                               *) return 5 ;; esac
+    case "$md"  in sha256|sha512) ;;                        *) return 5 ;; esac
+    case "$it"  in ''|*[!0-9]*) return 5 ;; esac
+    tail -c "+$((ENC_BASLIK + 1))" "$f" \
+        | DBSTACK_ENC_PASS="$ENC_KEY" openssl enc -d "-$c" "-$kdf" \
+              -md "$md" -iter "$it" -pass env:DBSTACK_ENC_PASS
+    local ps=("${PIPESTATUS[@]}")
+    [ "${ps[0]}" -eq 0 ] && [ "${ps[1]}" -eq 0 ]
+}
+
+# Yedeğin İÇERİĞİ: şifresi çözülmüş VE gzip'i açılmış akış. Eski koddaki
+# `gzip -dc "$f"`nin yerini BİREBİR tutuyor — çıkış kodu yine "dosya sonuna
+# kadar okunabildi mi" demek. Bu şart: verify/restore yollarındaki
+# PIPESTATUS[0] kontrolleri anlamını korusun diye (o kontroller kesik gzip'i
+# yakalamak için tek tek yazıldı; buradaki bir kayma hepsini sessizce iptal
+# ederdi).
+oku_akis() {   # oku_akis <dosya>
+    oku_ham "$1" | gzip -dc
+    local ps=("${PIPESTATUS[@]}")
+    [ "${ps[0]}" -eq 0 ] && [ "${ps[1]}" -eq 0 ]
+}
+
+oku_tar() {   # oku_tar <dosya> — arşiv üye listesi (uzun biçim)
+    oku_akis "$1" | tar -tvf -
+    local ps=("${PIPESTATUS[@]}")
+    [ "${ps[0]}" -eq 0 ] && [ "${ps[1]}" -eq 0 ]
+}
+
+# Şifreli dosyada verify_backup'ın İLK işi: bu dosyayı AÇABİLİYOR MUYUZ?
+# Önce sormanın sebebi mesaj kalitesidir. Sormasaydık gzip "not in gzip
+# format" derdi ve operatör yedeğin BOZUK olduğunu sanıp onu silerdi — oysa
+# dosya sapasağlam, eksik olan anahtar.
+enc_dogrula() {   # enc_dogrula <dosya>
+    local f="$1" base sihir c kdf md it
+    base="$(basename "$f")"
+    read -r sihir c kdf md it _ <<< "$(head -c "$ENC_BASLIK" "$f" 2>/dev/null)"
+    if [ "$sihir" != "$ENC_SIHIR" ]; then
+        berr "Şifreli yedeğin başlığı tanınmıyor: $base"
+        berr "  Bu betiğin ürettiği bir yedek değil ya da dosyanın BAŞI kesilmiş."
+        return 1
+    fi
+    if ! command -v openssl >/dev/null 2>&1; then
+        berr "Bu yedek ŞİFRELİ ama 'openssl' komutu yok: $base"
+        err  "  Kurun:  Debian/Ubuntu → sudo apt-get install -y openssl"
+        err  "          Alpine        → apk add --no-cache openssl"
+        return 1
+    fi
+    if [ -z "$ENC_KEY" ]; then
+        berr "Bu yedek ŞİFRELİ, BACKUP_ENCRYPT_KEY tanımlı değil: $base"
+        berr "  .env'de BACKUP_ENCRYPT_KEY (ya da BACKUP_ENCRYPT_KEY_FILE) verin, sonra tekrar deneyin."
+        berr "  ANAHTAR KAYIPSA BU DOSYA AÇILAMAZ; kurtarmanın başka yolu yoktur (docs/BACKUP.md)."
+        return 1
+    fi
+    # Anahtar DOĞRU mu? Bu yığında şifrelenen her akış gzip'tir (sql.gz,
+    # tar.gz, rdb.gz, json.gz, archive.gz, dump.gz) — yani çözülen ilk iki
+    # bayt 1f 8b OLMALI.
+    # openssl'in kendi çıkış koduna güvenmiyoruz: CBC dolgu hatası akışın
+    # SONUNDA anlaşılır, yani 30 GB'lık bir dosyayı yanlış anahtarla baştan
+    # sona okuduktan sonra "bad decrypt" der. Cevabı 40 dakika geç vermek,
+    # geri yükleme sırasında verilebilecek en pahalı cevaptır. İlk iki bayt
+    # aynı cevabı ANINDA veriyor.
+    if ! command -v od >/dev/null 2>&1; then
+        warn "od bulunamadı: $base'in anahtarı ÖN KONTROLDEN geçirilemedi."
+        log  "  Yanlış anahtar ancak dosya sonuna gelindiğinde anlaşılacak."
+        return 0
+    fi
+    local m
+    m="$(oku_ham "$f" 2>/dev/null | head -c 2 | od -An -tx1 | tr -d ' \n')"
+    if [ "$m" != "1f8b" ]; then
+        berr "Bu yedeğin ŞİFRESİ ÇÖZÜLEMEDİ: $base"
+        berr "  Elinizdeki anahtar bu dosyaya ait değil (ya da dosya kurcalanmış)."
+        berr "  Çözülen ilk baytlar: ${m:-yok} — beklenen: 1f8b (gzip)."
+        berr "  Anahtar kaynağı: ${ENC_KAYNAK:-?}. Yedeğin alındığı gün geçerli olan anahtarı kullanın."
+        return 1
+    fi
+    return 0
+}
+
 # ------------------------------------------------------------------ yardımcı
 engine_field() {   # engine_field <id> <python-ifade>
     python3 -c '
@@ -60,10 +348,55 @@ c=json.load(open(sys.argv[1],encoding="utf-8"))
 print("\n".join(e["id"] for e in c["engines"] if e.get("backup",{}).get("supported")))' "$CATALOG"
 }
 
+# Şifreli dosya adı BURADA doğuyor, motor fonksiyonlarında değil: on bir
+# motorun her birine `.enc` eklemeyi hatırlatmak yerine tek yerde ekliyoruz.
+# Unutulan tek motor, "şifreleme açık" denen bir kurulumda düz metin dosya
+# üretirdi ve bunu kimse fark etmezdi.
 out_path() {  # out_path <motor> <tip> <uzantı>
     local d="$BACKUP_DIR/$1/$2"
     mkdir -p "$d"
-    printf '%s/%s_%s_%s.%s' "$d" "$1" "$2" "$DATE" "$3"
+    local ad; ad="$(printf '%s/%s_%s_%s.%s' "$d" "$1" "$2" "$DATE" "$3")"
+    enc_acik && ad="$ad.$ENC_EXT"
+    printf '%s' "$ad"
+}
+
+# Yedek akışının SON HALKASI. Bütün motorlar dökümlerini buraya boru ile
+# veriyor; sıkıştırma ve (açıksa) şifreleme tek yerde.
+#
+# NEDEN BORUDA, "önce .gz yaz sonra şifrele" DEĞİL: ikinci yol daha kolay
+# yazılırdı ama düz metin dump bir süre DİSKTE dururdu. BACKUP_DIR çoğu
+# kurulumda ayrı bir birimdir — .env.example'ın kendisi
+# `BACKUP_DIR=/mnt/backups` örneğini veriyor ve bu tipik olarak ağdan
+# bağlanmış bir NAS'tır. Orada düz
+# metin dump'ın saniyeler durması bile, şifrelemenin engellemeye çalıştığı
+# şeyin ta kendisidir. Boruda şifrelerken düz metin diske HİÇ yazılmaz.
+paketle() {   # stdin → <dosya>   (gzip + varsa şifreleme)
+    local hedef="$1"
+    if enc_acik; then
+        # İki adım: önce başlık, sonra ekleme. Tek bir `{ …; } > dosya`
+        # grubunda PIPESTATUS'un hangi boru hattına ait olduğu okuyana göre
+        # değişir; burada belirsizliğe yer yok, çünkü bu iki kodun kaybolması
+        # "sessizce yarım yedek" demek.
+        enc_baslik > "$hedef" || return 1
+        "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" | sifrele >> "$hedef"
+        local ps=("${PIPESTATUS[@]}")
+        [ "${ps[0]}" -eq 0 ] && [ "${ps[1]}" -eq 0 ]
+        return $?
+    fi
+    "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$hedef"
+}
+
+# Akışın ZATEN sıkıştırılmış geldiği tek motor için (mongodump --archive
+# --gzip kendi gzip'ini yazar). Burada ikinci kez gzip'lemek boşuna CPU ve
+# `.archive.gz` sözleşmesini bozardı; yapılacak tek iş varsa şifrelemek.
+paketle_hazir() {   # stdin → <dosya>
+    local hedef="$1"
+    if enc_acik; then
+        enc_baslik > "$hedef" || return 1
+        sifrele >> "$hedef"
+        return $?
+    fi
+    cat > "$hedef"
 }
 
 check_disk() {
@@ -90,9 +423,35 @@ verify_backup() {
     [ -n "$f" ] || { berr "Doğrulanacak dosya belirtilmedi. Örnek: ./scripts/backup.sh verify backups/mariadb/full/<dosya>"; return 1; }
     [ -f "$f" ] || { berr "Yedek dosyası yok: $f"; return 1; }
     [ -s "$f" ] || { berr "Yedek dosyası boş: $f — bu yedek KULLANILAMAZ."; return 1; }
-    local base detay=""; base="$(basename "$f")"
+    local base detay="" enc_not=""; base="$(basename "$f")"
 
+    # ŞİFRELİ DOSYA. Önce AÇILABİLİRLİK, sonra biçim: şifreleme bir ZARFTIR,
+    # dosyanın biçimini değiştirmez. Bu yüzden addan yalnız `.enc` düşürülüyor
+    # ve aşağıdaki biçim dalları (tar.gz / archive.gz / gz) HİÇ DEĞİŞMEDEN
+    # çalışıyor. `.bozuk` dosyalarda şifre çözmeye hiç girişmiyoruz: o dal
+    # zaten reddedecek, önce "anahtar yok" diye bağırmak yanlış yere işaret
+    # etmek olurdu.
+    local bicim="$base"
     case "$base" in
+        *.bozuk) ;;
+        *)  if sifreli_mi "$f"; then
+                enc_dogrula "$f" || return 1
+                bicim="${bicim%.$ENC_EXT}"
+                enc_not=", şifreli"
+            elif [ "${base%.$ENC_EXT}" != "$base" ]; then
+                # Adı ".gz.enc" diyor ama başında imza yok. Bu dosya aşağıdaki
+                # hiçbir biçim dalına uymadığı için case'in sonundaki
+                # "Tanınmayan biçim → UYARI, çıkış 0" satırına düşerdi: yani
+                # doğrulanmamış bir dosya YEŞİL geçerdi. Adın söylediği ile
+                # içeriğin söylediği çelişiyorsa cevap "bilmiyorum" değil,
+                # "bu dosyayla geri yükleme yapılmaz"dır.
+                berr "Adı şifreli yedek diyor ama içeriği öyle değil: $base"
+                berr "  Dosyanın başında '$ENC_SIHIR' imzası yok — başı kesilmiş ya da bu betiğin ürettiği bir yedek değil."
+                return 1
+            fi ;;
+    esac
+
+    case "$bicim" in
         *.bozuk)
             # Bu dosyayı BU BETİK kenara aldı (finalize_backup). Uzantısı
             # aşağıdaki dalların hiçbirine uymadığı için case'in sonundaki
@@ -123,7 +482,11 @@ verify_backup() {
             #      duruyor; aynı ölçütü yedek alınırken uygulamamak için bir
             #      sebep yok).
             local gerek="" gerek_ad=""
-            case "$base" in
+            # $bicim, $base DEĞİL: şifreli dosyada ad ".enc" ile biter ve
+            # ".gz" ile biten dalların hiçbiri tutmaz. Ölçüldü — bu satır
+            # $base iken kesik bir RDB yedeği şifresizken REDDEDİLİYOR,
+            # AYNI dosya şifreliyken "Bütünlük doğrulandı" alıyordu.
+            case "$bicim" in
                 # Desenlerde ters bölü YOK: awk -v ile geçen değerde `\.`
                 # kaçış olarak ÇÖZÜLÜR ("escape sequence treated as plain .")
                 # ve her koşumda stderr'e uyarı basar — cron mail'inde her gece
@@ -144,7 +507,7 @@ verify_backup() {
             # GNU tar'da sayıdır; sayı değilse boyut ölçütü sessizce devre dışı
             # kalır (yanlış yere "bozuk" demek, kaçırmaktan daha pahalıdır).
             local sayim trc uye sayilir dolu esles
-            sayim="$(tar -tzvf "$f" 2>/dev/null | awk -v d="$gerek" '
+            sayim="$(oku_tar "$f" 2>/dev/null | awk -v d="$gerek" '
                 $0 ~ /\/$/ { next }                       # dizin üyesi
                 { uye++
                   if ($3 ~ /^[0-9]+$/) { sayilir++; if ($3 + 0 > 0) dolu++ }
@@ -224,18 +587,21 @@ verify_backup() {
                 return 0
             fi
             local magic ic_magic son arc
-            magic="$(head -c 4 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+            # Baytlar `oku_ham`dan geliyor: dosya şifreliyse ÖNCE çözülür.
+            # Aşağıdaki bütün imza/son kontrolleri artık "zarfın içindeki"
+            # akışa bakıyor; şifreleme onların hiçbirini değiştirmiyor.
+            magic="$(oku_ham "$f" 2>/dev/null | head -c 4 | od -An -tx1 | tr -d ' \n')"
             case "$magic" in
                 1f8b*)
                     # `head -c 4` erken çıkar (SIGPIPE): koca arşiv için bile
                     # tek blokluk okuma.
-                    ic_magic="$(gzip -dc "$f" 2>/dev/null | head -c 4 | od -An -tx1 | tr -d ' \n')"
+                    ic_magic="$(oku_akis "$f" 2>/dev/null | head -c 4 | od -An -tx1 | tr -d ' \n')"
                     # Tek TAM geçiş: gzip'in çıkış kodu (zarf sonuna kadar sağlam
                     # mı) ve arşivin son dört baytı aynı okumadan çıkıyor —
                     # büyük yedeklerde dosyayı ikinci kez açmak boşuna dakikalar
                     # demek. Alt kabuğun sonundaki `exit`, gzip'in çıkış kodunu
                     # dışarı taşır; od/tr'ninkini değil.
-                    son="$(gzip -dc "$f" 2>>"$LOG_FILE" | tail -c 4 | od -An -tx1 | tr -d ' \n'
+                    son="$(oku_akis "$f" 2>>"$LOG_FILE" | tail -c 4 | od -An -tx1 | tr -d ' \n'
                            exit "${PIPESTATUS[0]}")"; arc=$?
                     if [ "$arc" -ne 0 ]; then
                         berr "MongoDB arşivi YARIM: $base — gzip akışı sonuna gelmeden kesilmiş."
@@ -247,7 +613,7 @@ verify_backup() {
                 6de29981)
                     # Sıkıştırmasız --archive: zarf yok, dosyanın kendisi arşiv.
                     ic_magic="$magic"
-                    son="$(tail -c 4 "$f" 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+                    son="$(oku_ham "$f" 2>/dev/null | tail -c 4 | od -An -tx1 | tr -d ' \n')"
                     ;;
                 *)
                     berr "MongoDB arşivi tanınmıyor: $base — mongodump çıktısı değil."
@@ -281,22 +647,25 @@ verify_backup() {
             # davranışa düşüyoruz: zarf sınanır, sona bakılmaz.
             local kuyruk="" grc
             if command -v od >/dev/null 2>&1; then
-                kuyruk="$(gzip -dc "$f" 2>>"$LOG_FILE" | tail -c 16 | od -An -tx1 | tr -d ' \n'
+                kuyruk="$(oku_akis "$f" 2>>"$LOG_FILE" | tail -c 16 | od -An -tx1 | tr -d ' \n'
                           exit "${PIPESTATUS[0]}")"; grc=$?
             else
-                gzip -t "$f" 2>/dev/null; grc=$?
+                # `gzip -t` yerine oku_akis: dosya şifreliyse `gzip -t` zaten
+                # onu okuyamaz ve SAPASAĞLAM bir yedeğe "bozuk gzip" derdi.
+                oku_akis "$f" >/dev/null 2>&1; grc=$?
             fi
             [ "$grc" -eq 0 ] || { berr "Bozuk gzip: $base — bu yedek KULLANILAMAZ."; return 1; }
             # Açılmış ilk 64 KB hem "içi tamamen boş mu" hem de "beklenen biçimde
             # mi" sorusunu tek okumada cevaplar. NUL baytları atılıyor: kabuk
             # değişkeni ikili veriyi olduğu gibi taşıyamaz (RDB dosyaları ikili).
-            local head64; head64="$(gzip -dc "$f" 2>/dev/null | head -c 65536 | tr -d '\000')"
+            local head64; head64="$(oku_akis "$f" 2>/dev/null | head -c 65536 | tr -d '\000')"
             if [ "${#head64}" -eq 0 ]; then
                 berr "Yedeğin İÇİ BOŞ: $base — açıldığında tek bayt bile çıkmıyor."
                 berr "  Motorun o anki hatası burada: $LOG_FILE"
                 return 1
             fi
-            case "$base" in
+            # $bicim şart — yukarıdaki tar.gz dalındaki gerekçenin aynısı.
+            case "$bicim" in
                 *.sql.gz)
                     # Geri yüklenebilir bir dump en az bir DDL/DML satırı taşır.
                     # Yalnızca SET/başlık satırları varsa döküm yarıda kesilmiştir.
@@ -372,7 +741,7 @@ verify_backup() {
             return 0
             ;;
     esac
-    bok "Bütünlük doğrulandı: $base ($(du -h "$f" | cut -f1)$detay)"
+    bok "Bütünlük doğrulandı: $base ($(du -h "$f" | cut -f1)$detay$enc_not)"
 }
 
 # Yedek ALMA yolunda verify_backup yerine bu kullanılır. Doğrulamayı geçemeyen
@@ -423,7 +792,7 @@ backup_mariadb() {
             --all-databases --single-transaction --quick --routines --triggers \
             --events --hex-blob --add-drop-database --add-drop-table \
             --master-data=2 --skip-comments $ignore \
-        2>>"$LOG_FILE" | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
+        2>>"$LOG_FILE" | paketle "$f"
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "MariaDB dump başarısız"; rm -f "$f"; return 1; }
     finalize_backup "$f"
 }
@@ -437,7 +806,7 @@ backup_postgresql() {
     # pg_dump'ın aksine geri yüklemede kullanıcılar da geri gelir.
     "${IO_NICE[@]}" docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" "$C" \
         pg_dumpall -U "${POSTGRES_USER:-root}" --clean --if-exists --quote-all-identifiers \
-        2>>"$LOG_FILE" | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
+        2>>"$LOG_FILE" | paketle "$f"
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "PostgreSQL dump başarısız"; rm -f "$f"; return 1; }
     finalize_backup "$f"
 }
@@ -453,7 +822,7 @@ backup_mongodb() {
     "${IO_NICE[@]}" docker exec "$C" mongodump \
         --username "${MONGO_USER:-root}" --password "${MONGO_PASSWORD:-$DB_PASSWORD}" \
         --authenticationDatabase admin --archive --gzip --quiet \
-        2>>"$LOG_FILE" > "$f"
+        2>>"$LOG_FILE" | paketle_hazir "$f"
     # Diğer dokuz motor finalize_backup'a çevrilirken mongodb ATLANMIŞTI: kendi
     # `[ -s "$f" ]` kontrolüyle yetiniyor, "MongoDB yedeklendi" deyip
     # geçiyordu. Sonuç, *.archive.gz için yazılan imza/boyut kontrolünün yedek
@@ -487,7 +856,7 @@ backup_redis() {
     [ $i -lt 120 ] || warn "BGSAVE 120 sn'de bitmedi; mevcut dump.rdb kopyalanıyor"
 
     "${IO_NICE[@]}" docker exec "$C" cat /data/dump.rdb 2>>"$LOG_FILE" \
-        | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
+        | paketle "$f"
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "Redis dump kopyalanamadı"; rm -f "$f"; return 1; }
     finalize_backup "$f"
 }
@@ -530,7 +899,7 @@ backup_mssql() {
     [ "$failed" -eq 0 ] || { docker exec "$C" sh -c 'rm -f /var/opt/mssql/backup/*.bak'; return 1; }
 
     "${IO_NICE[@]}" docker exec "$C" tar -cf - -C /var/opt/mssql/backup . 2>>"$LOG_FILE" \
-        | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
+        | paketle "$f"
     local rc="${PIPESTATUS[0]}"
     docker exec "$C" sh -c 'rm -f /var/opt/mssql/backup/*.bak' 2>/dev/null
     [ "$rc" -eq 0 ] || { berr "MSSQL arşivi alınamadı"; rm -f "$f"; return 1; }
@@ -579,7 +948,7 @@ backup_cassandra() {
     fi
     "${IO_NICE[@]}" docker exec cassandra sh -c \
         "tar -cf - -C /tmp schema.cql \$(find /var/lib/cassandra/data -type d -name '$snap' -printf '%P\n' 2>/dev/null | sed 's|^|-C /var/lib/cassandra/data |') 2>/dev/null || tar -cf - -C /var/lib/cassandra/data . --wildcards '*/snapshots/$snap/*'" \
-        2>>"$LOG_FILE" | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
+        2>>"$LOG_FILE" | paketle "$f"
     local rc="${PIPESTATUS[0]}"
     docker exec cassandra nodetool clearsnapshot -t "$snap" >>"$LOG_FILE" 2>&1
     [ "$rc" -eq 0 ] || { berr "Cassandra arşivi alınamadı"; rm -f "$f"; return 1; }
@@ -618,7 +987,7 @@ backup_elasticsearch() {
     done
 
     "${IO_NICE[@]}" docker exec elasticsearch tar -cf - -C /snapshots . 2>>"$LOG_FILE" \
-        | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
+        | paketle "$f"
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "ES arşivi alınamadı"; rm -f "$f"; return 1; }
     finalize_backup "$f"
 }
@@ -648,7 +1017,7 @@ backup_clickhouse() {
             || { berr "  BACKUP başarısız: $db"; return 1; }
     done <<< "$dbs"
     "${IO_NICE[@]}" docker exec clickhouse tar -cf - -C /var/lib/clickhouse/backups . 2>>"$LOG_FILE" \
-        | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
+        | paketle "$f"
     rc="${PIPESTATUS[0]}"
     docker exec clickhouse sh -c 'rm -rf /var/lib/clickhouse/backups/*' 2>/dev/null
     [ "$rc" -eq 0 ] || { berr "ClickHouse arşivi alınamadı"; rm -f "$f"; return 1; }
@@ -662,7 +1031,7 @@ backup_rabbitmq() {
     # şey exchange/queue/binding/policy tanımlarıdır.
     docker exec rabbitmq rabbitmqctl export_definitions /tmp/defs.json >>"$LOG_FILE" 2>&1 \
         || { berr "export_definitions başarısız"; return 1; }
-    docker exec rabbitmq cat /tmp/defs.json 2>>"$LOG_FILE" | gzip -"$COMPRESSION_LEVEL" > "$f"
+    docker exec rabbitmq cat /tmp/defs.json 2>>"$LOG_FILE" | paketle "$f"
     # Boru hattının SOL tarafı hiç kontrol edilmiyordu (dosyadaki tek yerdi):
     # `cat` düşse bile gzip boş girdiden 20 baytlık GEÇERLİ bir dosya üretiyor,
     # verify de ona "doğrulandı" diyordu. İçinde tek exchange/queue tanımı
@@ -683,7 +1052,7 @@ backup_minio() {
     # ve imajın içinde hiçbir araç gerektirmez.
     # Nesneler değişmezdir (immutable), veri dizinini kopyalamak tutarlıdır.
     "${IO_NICE[@]}" docker cp "minio:/data/." - 2>>"$LOG_FILE" \
-        | "${IO_NICE[@]}" gzip -"$COMPRESSION_LEVEL" > "$f"
+        | paketle "$f"
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "MinIO arşivi alınamadı"; rm -f "$f"; return 1; }
     finalize_backup "$f"
 }
@@ -703,7 +1072,7 @@ backup_neo4j() {
     docker run --rm -v "${STACK_PROJECT:-databases-stack}_neo4j_data:/data" \
         "neo4j:${NEO4J_VERSION:-5-community}" \
         neo4j-admin database dump neo4j --to-stdout 2>>"$LOG_FILE" \
-        | gzip -"$COMPRESSION_LEVEL" > "$f"
+        | paketle "$f"
     local rc="${PIPESTATUS[0]}"
     blog "Neo4j yeniden başlatılıyor…"
     compose --profile neo4j up -d neo4j >>"$LOG_FILE" 2>&1
@@ -716,9 +1085,18 @@ backup_neo4j() {
 # =============================================================================
 backup_all() {
     acquire_lock "$STACK_ROOT/state/backup.lock"
+    enc_onkosul || exit 1
     check_disk || exit 1
 
     heading "Yedekleme — $(date '+%Y-%m-%d %H:%M')"
+    # Şifreleme durumunu HER turda yazıyoruz. Sessiz bir "kapalı", uzak depoya
+    # düz metin gönderen bir kurulumun tek uyarısı olurdu.
+    if enc_acik; then
+        log "Şifreleme AÇIK: $ENC_SEBEP — dosyalar .gz.$ENC_EXT olarak yazılacak"
+    else
+        warn "Şifreleme KAPALI ($ENC_SEBEP) — yedekler DÜZ GZIP yazılıyor."
+        warn "  Uzak depo kullanıyorsanız açın: .env → BACKUP_ENCRYPT_KEY (docs/BACKUP.md)"
+    fi
     local start; start="$(date +%s)"
     local okc=0 failc=0 skipc=0 eid primary
 
@@ -765,7 +1143,7 @@ restore_mariadb() {
     # yükleme, veriyi geri getirmez, sadece yok eder.
     verify_backup "$f" || die "Bu dosyayla geri yükleme yapılmaz."
     confirm_restore "MariaDB" || return 1
-    gzip -dc "$f" | MYSQL_PWD="${MARIADB_PASSWORD:-$DB_PASSWORD}" \
+    oku_akis "$f" | MYSQL_PWD="${MARIADB_PASSWORD:-$DB_PASSWORD}" \
         docker exec -e MYSQL_PWD -i "$C" mariadb -u root
     # gzip tarafı da kontrol ediliyor: kesik bir .gz kısmi SQL üretip 1 ile
     # çıkar, istemci o kısmı sorunsuz yutar ve YARIM geri yükleme "başarılı"
@@ -803,7 +1181,7 @@ restore_postgresql() {
     # içinde çalıştırılamaz.)
     # ------------------------------------------------------------------------
     local errf; errf="$(mktemp)"
-    gzip -dc "$f" | docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" -i "$C" \
+    oku_akis "$f" | docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" -i "$C" \
         psql -U "${POSTGRES_USER:-root}" -d postgres 2>"$errf" >>"$LOG_FILE"
     local ps=("${PIPESTATUS[@]}")
     cat "$errf" >>"$LOG_FILE"
@@ -837,10 +1215,22 @@ restore_mongodb() {
     local f="$1"; [ -f "$f" ] || die "Dosya yok: $f"
     verify_backup "$f" || die "Bu dosyayla geri yükleme yapılmaz."
     confirm_restore "MongoDB" || return 1
-    docker exec -i "$C" mongorestore \
+    # mongorestore SIKIŞTIRILMIŞ arşiv bekliyor (--gzip), o yüzden oku_akis
+    # değil oku_ham: şifre çözülür, gzip'e dokunulmaz.
+    # Boru hattının İKİ ucu da kontrol ediliyor. Eskiden dosya `< "$f"` ile
+    # doğrudan veriliyordu ve yalnız mongorestore'un kodu görülüyordu; dosya
+    # açılamadığında (yanlış anahtar, kesik gzip) mongorestore BOŞ girdiyle
+    # 0 dönebilir ve "MongoDB geri yüklendi" yazılırdı.
+    oku_ham "$f" | docker exec -i "$C" mongorestore \
         --username "${MONGO_USER:-root}" --password "${MONGO_PASSWORD:-$DB_PASSWORD}" \
-        --authenticationDatabase admin --archive --gzip --drop < "$f" \
-        && bok "MongoDB geri yüklendi" || { berr "başarısız"; return 1; }
+        --authenticationDatabase admin --archive --gzip --drop
+    local ps=("${PIPESTATUS[@]}")
+    if [ "${ps[0]}" -eq 0 ] && [ "${ps[1]}" -eq 0 ]; then
+        bok "MongoDB geri yüklendi"
+    else
+        berr "MongoDB geri yüklenemedi (dosya rc=${ps[0]}, mongorestore rc=${ps[1]}). Ayrıntı: $LOG_FILE"
+        return 1
+    fi
 }
 
 restore_redis() {
@@ -873,7 +1263,7 @@ restore_redis() {
 
     blog "2/5 RDB yerine konuyor, AOF kalıntıları siliniyor"
     # Container durmuş durumda; işi volume'u bağlayan yardımcı container yapar.
-    gzip -dc "$f" | docker run -i --rm -v "$vol:/d" --entrypoint sh "$img" -c         'rm -rf /d/appendonlydir /d/appendonly.aof* /d/dump.rdb && cat > /d/dump.rdb && chown 999:999 /d/dump.rdb'
+    oku_akis "$f" | docker run -i --rm -v "$vol:/d" --entrypoint sh "$img" -c         'rm -rf /d/appendonlydir /d/appendonly.aof* /d/dump.rdb && cat > /d/dump.rdb && chown 999:999 /d/dump.rdb'
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "RDB yazılamadı"; return 1; }
 
     blog "3/5 Redis AOF KAPALI başlatılıyor (RDB okunabilsin diye)"
@@ -923,7 +1313,7 @@ restore_mssql() {
     confirm_restore "MSSQL" || return 1
     local SQLCMD=/opt/mssql-tools18/bin/sqlcmd rc=0 bulunan=0 yuklenen=0
     docker exec "$C" sh -c 'mkdir -p /var/opt/mssql/backup && rm -f /var/opt/mssql/backup/*.bak'
-    gzip -dc "$f" | docker exec -i "$C" tar -xf - -C /var/opt/mssql/backup
+    oku_akis "$f" | docker exec -i "$C" tar -xf - -C /var/opt/mssql/backup
     # Arşiv açma hiç kontrol edilmiyordu: açılmazsa klasör boş kalıyor, aşağıdaki
     # döngü hiç dönmüyor, rc başlangıç değeri 0'da kalıyor ve betik HİÇBİR ŞEY
     # yapmadan "MSSQL geri yüklendi" deyip 0 ile çıkıyordu.
@@ -974,9 +1364,9 @@ clean_old() {
     local d korunan aday liste="" n=0 kalan=0 f
     for d in "$BACKUP_DIR"/*/; do
         [ -d "$d" ] || continue
-        korunan="$(find "$d" -type f -name '*.gz' -printf '%T@\t%p\n' 2>/dev/null \
+        korunan="$(find "$d" -type f "${YEDEK_BUL[@]}" -printf '%T@\t%p\n' 2>/dev/null \
                    | sort -rn | head -n "$keep" | cut -f2-)"
-        aday="$(find "$d" -type f -name '*.gz' -mtime +"$days" 2>/dev/null)"
+        aday="$(find "$d" -type f "${YEDEK_BUL[@]}" -mtime +"$days" 2>/dev/null)"
         while IFS= read -r f; do
             [ -n "$f" ] || continue
             if printf '%s\n' "$korunan" | grep -Fxq "$f"; then
@@ -1008,10 +1398,10 @@ list_backups() {
     heading "Mevcut yedekler"
     local eid n
     for eid in $(backupable_engines); do
-        n="$(find "$BACKUP_DIR/$eid" -type f -name '*.gz' 2>/dev/null | wc -l)"
+        n="$(find "$BACKUP_DIR/$eid" -type f "${YEDEK_BUL[@]}" 2>/dev/null | wc -l)"
         printf '\n  %s%s%s  (%d yedek)\n' "$BOLD" "$eid" "$NC" "$n"
         [ "$n" -eq 0 ] && { printf '    yedek yok\n'; continue; }
-        find "$BACKUP_DIR/$eid" -type f -name '*.gz' -printf '%T@\t%TY-%Tm-%Td %TH:%TM\t%s\t%f\n' 2>/dev/null \
+        find "$BACKUP_DIR/$eid" -type f "${YEDEK_BUL[@]}" -printf '%T@\t%TY-%Tm-%Td %TH:%TM\t%s\t%f\n' 2>/dev/null \
             | sort -rn | head -5 \
             | awk -F'\t' '{printf "    %s  %8.1f MB  %s\n", $2, $3/1048576, $4}'
     done
@@ -1025,14 +1415,15 @@ stats() {
     printf '  Boş disk   : %s (%s dolu)\n' \
         "$(df -Ph "$BACKUP_DIR" | awk 'NR==2{print $4}')" \
         "$(df -Ph "$BACKUP_DIR" | awk 'NR==2{print $5}')"
-    printf '  Saklama    : %s gün\n\n' "$RETENTION_DAYS"
+    printf '  Saklama    : %s gün\n' "$RETENTION_DAYS"
+    printf '  Şifreleme  : %s (%s)\n\n' "$ENC_DURUM" "${ENC_SEBEP:-yok}"
     printf '  %-14s %6s  %10s  %s\n' "MOTOR" "ADET" "BOYUT" "EN SON"
     printf '  %s\n' "------------------------------------------------------------"
     local eid n sz last
     for eid in $(backupable_engines); do
-        n="$(find "$BACKUP_DIR/$eid" -type f -name '*.gz' 2>/dev/null | wc -l)"
+        n="$(find "$BACKUP_DIR/$eid" -type f "${YEDEK_BUL[@]}" 2>/dev/null | wc -l)"
         sz="$(du -sh "$BACKUP_DIR/$eid" 2>/dev/null | cut -f1)"
-        last="$(find "$BACKUP_DIR/$eid" -type f -name '*.gz' -printf '%TY-%Tm-%Td %TH:%TM\n' 2>/dev/null | sort -r | head -1)"
+        last="$(find "$BACKUP_DIR/$eid" -type f "${YEDEK_BUL[@]}" -printf '%TY-%Tm-%Td %TH:%TM\n' 2>/dev/null | sort -r | head -1)"
         printf '  %-14s %6s  %10s  %s\n' "$eid" "$n" "${sz:-0}" "${last:-hiç}"
     done
     echo
@@ -1045,6 +1436,7 @@ case "${1:-help}" in
                 acquire_lock "$STACK_ROOT/state/backup.lock"
                 primary="$(primary_of "$1")"
                 container_running "$primary" || die "$1 çalışmıyor. Önce: ./stack.sh enable $1"
+                enc_onkosul || exit 1
                 check_disk || exit 1
                 "backup_$1" ;;
     restore-mariadb|restore-postgresql|restore-mongodb|restore-redis|restore-mssql)
@@ -1061,6 +1453,31 @@ case "${1:-help}" in
     list)       list_backups ;;
     stats)      stats ;;
     verify)     verify_backup "${2:-}" ;;
+    sifreleme|sifreleme-durumu|encrypt-status)
+                # ÇIKIŞ KODU MAKİNE İÇİNDİR — sync-remote.sh bunu okuyor:
+                #   0 şifreleme AÇIK ve kullanılabilir
+                #   1 yapılandırılmış ama KULLANILAMIYOR (openssl yok, anahtar
+                #     dosyası okunamıyor) → çağıran DURMALI, "kapalı" sanmamalı
+                #   2 şifreleme KAPALI
+                # Kararı ikinci bir betiğe yeniden hesaplatmak yerine buraya
+                # sordurmanın sebebi: sözleşmenin tek sahibi bu dosya. İki
+                # kopya, .env'e BACKUP_ENCRYPT=false eklendiği gün ayrışır ve
+                # sync-remote "nasılsa şifreli" deyip düz metin gönderirdi.
+                printf 'durum   : %s\n' "$ENC_DURUM"
+                printf 'sebep   : %s\n' "${ENC_SEBEP:-yok}"
+                printf 'yöntem  : %s · %s-%s · %s iterasyon\n' \
+                    "$ENC_CIPHER" "$ENC_KDF" "$ENC_MD" "$ENC_ITER"
+                if enc_acik; then
+                    printf 'uzantı  : .gz.%s (yeni yedekler ŞİFRELİ)\n' "$ENC_EXT"
+                else
+                    printf 'uzantı  : .gz (yeni yedekler ŞİFRESİZ)\n'
+                fi
+                if [ -n "$ENC_KEY" ]; then
+                    printf 'anahtar : tanımlı (%s) — eski şifreli yedekler açılabilir\n' "$ENC_KAYNAK"
+                else
+                    printf 'anahtar : YOK — şifreli bir yedek varsa AÇILAMAZ\n'
+                fi
+                case "$ENC_DURUM" in acik) exit 0 ;; bozuk) exit 1 ;; *) exit 2 ;; esac ;;
     *)
 cat <<EOF
 
@@ -1072,6 +1489,7 @@ Yedekleme — databases-stack
   ./scripts/backup.sh stats               İstatistikler
   ./scripts/backup.sh clean [gün]         Eski yedekleri sil (varsayılan $RETENTION_DAYS)
   ./scripts/backup.sh verify <dosya>      Bütünlük kontrolü
+  ./scripts/backup.sh sifreleme           Yedek şifrelemesinin durumu
 
   Geri yükleme:
   ./scripts/backup.sh restore-mariadb <dosya>
@@ -1079,6 +1497,11 @@ Yedekleme — databases-stack
   ./scripts/backup.sh restore-mongodb <dosya>
   ./scripts/backup.sh restore-redis <dosya>
   ./scripts/backup.sh restore-mssql <dosya>
+
+Dosya adı sözleşmesi:
+  *.gz       şifresiz yedek
+  *.gz.enc   şifreli yedek (BACKUP_ENCRYPT_KEY ile — docs/BACKUP.md)
+  *.bozuk    doğrulamayı geçemedi; KURTARMA NOKTASI DEĞİLDİR
 
 Yedeklenebilen motorlar: $(backupable_engines | tr '\n' ' ')
 Kafka yedeklenmez (log'dur, veritabanı değil — replication.factor kullanın).

@@ -41,6 +41,10 @@
 # prod_tables/prod_rows/match, üretim kapalıyken JSON null'dur — false DEĞİL.
 # "Eşleşmedi" ile "karşılaştıramadım" aynı şey değildir; false yazsaydık
 # panel, kapalı bir motoru "yedeği tutmuyor" diye gösterirdi.
+# seconds HER ZAMAN bir tam sayıdır (null değil): ÖLÇÜLEN RTO. Geri yükleme
+# tamamlanmadıysa 0'dır — yani "0 saniyede geri geldi" değil, "geri gelmedi";
+# o hâlde ok zaten false ve sebebi detail'de yazar. Alanın tipini sabit
+# tutuyoruz ki controller her satırı aynı şekilde ayrıştırabilsin.
 #
 # ALAN ADLARI HER MOTORDA AYNI, ANLAMLARI MOTORA GÖRE:
 #   mariadb/postgresql/mssql : tablo = tablo,      satır = satır

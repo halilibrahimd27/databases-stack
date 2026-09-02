@@ -45,7 +45,11 @@ RUN_LOG="$LOG_DIR/e2e_$(date +%Y%m%d_%H%M%S).log"
 # drill ve import, yedekleme ailesinin hemen ardından: ikisi de yedek
 # dosyalarını girdi olarak kullanıyor, backup paketi koştuktan sonra
 # elde taze bir dump oluyor.
-GUVENLI=(security sizing replication failover backup drill import monitoring lifecycle)
+# pitr ve encrypt yedekleme ailesinden: ikisi de backup paketinden sonra
+# koşmalı (taze bir dump ve arşiv gerekiyor). ha-drill GERÇEK bir devir
+# yapar — failover paketiyle aynı aileden, onun hemen ardında.
+GUVENLI=(security sizing replication failover ha-drill backup drill import
+         encrypt pitr monitoring lifecycle)
 ISTEGE_BAGLI=(k8s)
 
 declare -A ACIKLAMA=(
