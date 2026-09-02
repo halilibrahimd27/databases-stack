@@ -29,6 +29,7 @@
     13. Alt bilgi
     14. Kurulum sayfası (setup.html — ortak stil dosyası)
     15. Duyarlılık ve erişilebilirlik
+    16. Yedekler bölümü (zamanlama satırı + motor listesi)
    ========================================================================== */
 
 /* ---------------------------------------------- 1. Tasarım değişkenleri --- */
@@ -1485,4 +1486,204 @@ main {
   /* Dar ekranda metni gizle; ikon tek başına yer kaplamasın. */
   .theme-txt { display: none; }
   .theme-btn { margin-right: 8px; padding: 5px 9px; }
+}
+
+/* --------------------------------------------- 16. Yedekler bölümü ------- */
+/* Bu bölümün HTML'i app.js tarafından üretiliyor (index.html'de karşılığı
+   yok); burada yalnız görünüm var.
+
+   RENK KURALI BOZULMUYOR: bölümde renk yalnız iki şey için çıkar —
+   zamanlama KAPALIYKEN (sarı) ve son yedek BAŞARISIZKEN (kırmızı). İkisi de
+   kullanıcının bilmemesi pahalıya patlayan durumlar; “3 yedek · 142 MB” gibi
+   her satırda tekrar eden bilgiler gri kalıyor.
+
+   YENİ RENK DEĞİŞKENİ TANIMLANMADI. Bölüm tamamen var olan token'larla
+   (--warn, --err, --border, --surface…) çiziliyor; ikisi de hem açık hem koyu
+   temada tanımlı olduğu için koyu tema kendiliğinden doğru çalışıyor ve iki
+   koyu tema bloğunun aynı kalmasını isteyen selftest denetimi de bozulmuyor.
+   Saat/gün kutuları da native: color-scheme kalıtımla geldiği için tarayıcının
+   kendi saat seçici arayüzü koyu temada koyu açılıyor. */
+
+.bk-sched {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px 22px;
+  padding: 13px 15px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+/* Zamanlama kapalıyken bölümün tek sarı işareti burası. “KAPALI” kelimesi
+   sayfada nötr okunuyordu; oysa söylediği şey bir risk. */
+.bk-sched.is-off {
+  border-color: var(--warn-border);
+  border-left-color: var(--warn-dot);
+  background: var(--warn-bg);
+}
+
+.bk-sched-txt { flex: 1 1 340px; min-width: 0; }
+
+.bk-state { margin: 0; font-size: 14.5px; color: var(--text); }
+.bk-state b { font-weight: 650; }
+.bk-state .badge { margin-left: 8px; }
+
+.bk-last, .bk-next {
+  margin: 4px 0 0;
+  color: var(--text-2);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+}
+.bk-muted { color: var(--muted); }
+
+/* Başarısız yedek: sayfadaki kırmızı, gerçekten sorun olduğu anlamına gelir.
+   Sebep metni sunucudan geldiği gibi basılıyor, uzun olabilir. */
+.bk-err {
+  color: var(--err);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.bk-warn {
+  margin: 6px 0 0;
+  max-width: 64ch;
+  color: var(--warn);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.bk-ctrl {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.bk-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.bk-inp {
+  height: var(--ctl-h);
+  min-width: 0;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  font-variant-numeric: tabular-nums;
+}
+.bk-inp:focus-visible { border-color: var(--accent); }
+.bk-inp-num { width: 68px; }
+.bk-unit { color: var(--muted); font-size: var(--fs-sm); }
+
+.bk-hint {
+  margin: 8px 0 0;
+  max-width: 72ch;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+/* Motor listesi: kapalı motor satırıyla aynı dil — çizgi, ikon, ad, sessiz
+   bilgiler, sağda tek düğme. Kutu ve zebra yok. */
+.bk-list { margin: 18px 0 0; padding: 0; list-style: none; }
+
+.bk-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--row-h);
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.bk-list > .bk-row:first-child { border-top: 0; }
+.bk-row:hover { background: var(--surface-2); }
+.bk-row:focus-within { background: var(--surface-2); }
+
+.bk-icon { flex: none; width: 20px; text-align: center; font-size: 16px; line-height: 1; }
+
+.bk-name {
+  flex: 0 0 168px;
+  min-width: 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  overflow-wrap: anywhere;
+}
+
+.bk-facts {
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Satırın en önemli bilgisi: adet ve boyut sütunları boş kaldığı için
+   yedeksiz motor eskiden gözden kaçıyordu. Yalnız renge de dayanmıyor —
+   metnin kendisi “hiç yedek yok” diyor. */
+.bk-none { color: var(--warn); font-weight: 600; }
+
+.bk-row .btn { flex: none; margin-left: auto; }
+
+@media (max-width: 760px) {
+  /* Dar ekranda ad ve bilgiler alt alta; düğme satırın sağında kalır. */
+  .bk-row { flex-wrap: wrap; }
+  .bk-name { flex: 1 1 auto; }
+  .bk-facts { flex: 1 1 100%; margin-left: 32px; padding-bottom: 8px; }
+}
+
+@media (max-width: 640px) {
+  .bk-sched { padding: 12px 13px; }
+  .bk-ctrl { flex: 1 1 100%; }
+  .bk-ctrl .btn { margin-left: auto; }
+}
+
+/* Üst bar yapışkan; #backups çıpasına gelen bir bağlantı, bu kural olmadan
+   bölüm başlığını üst barın ALTINA sokuyordu (aynısı .row/.card için de var). */
+.bk-zone { scroll-margin-top: 110px; }
+
+@media print {
+  /* Kâğıda basılan şey listedir: hangi motorun ne zamandan kalma yedeği var.
+     Saat/gün kutuları ve “Yedek al” düğmesi kâğıtta tıklanamaz. */
+  .bk-ctrl, .bk-row .btn { display: none !important; }
+}
+
+/* --- yedek dosyası listesi ------------------------------------------------
+   Satırın ALTINDA açılan liste: motor satırı grid olduğu için liste tüm
+   genişliği kaplasın diye grid-column: 1 / -1. Kaynak rozeti üç durumu
+   ayırır — elle alınan, gecenin turu ve dışarıdan (host cron / komut satırı)
+   gelen. Renk yalnız "dış"ta kullanılıyor: diğer ikisi bizim ürettiğimiz,
+   beklenen şeyler; "dış" ise açıklanması gereken tek durum. */
+.bk-files { grid-column: 1 / -1; margin: 6px 0 0; }
+.bk-files > .sum { font-size: 12px; color: var(--muted); padding: 4px 0; }
+.bk-flist { list-style: none; margin: 4px 0 0; padding: 0;
+            border-top: 1px solid var(--border); }
+.bk-file { display: grid; gap: 10px; align-items: center;
+           grid-template-columns: 90px 62px 1fr auto;
+           padding: 5px 0; border-bottom: 1px solid var(--border);
+           font-size: 12px; }
+.bk-file-when { color: var(--text); white-space: nowrap; }
+.bk-file-kind { justify-self: start; font-size: 11px; padding: 1px 6px;
+                border: 1px solid var(--border); border-radius: 999px;
+                color: var(--muted); white-space: nowrap; }
+.bk-kind-dis { border-color: var(--warn); color: var(--warn); }
+.bk-file-name { color: var(--muted); overflow-wrap: anywhere; }
+.bk-file-size { color: var(--muted); white-space: nowrap; }
+.bk-flist-hint { margin-top: 8px; }
+@media (max-width: 640px) {
+  .bk-file { grid-template-columns: 1fr auto; }
+  .bk-file-name { grid-column: 1 / -1; }
 }

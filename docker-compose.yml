@@ -175,6 +175,13 @@ services:
       - ${STACK_DIR:-.}:/project:ro
       - ${STACK_DIR:-.}/state:/project/state
       - ${STACK_DIR:-.}/overrides:/project/overrides:ro
+      # Yedek dosyalarını ve yedek günlüğünü CONTROLLER yazıyor (zamanlanmış
+      # yedek onun içinde koşan scripts/backup.sh ile alınıyor). /project ro
+      # bağlı olduğu için bu iki dizin ayrıca rw bağlanmasa dump'lar
+      # "Read-only file system" ile ölürdü; üstelik hatanın kendisi de
+      # logs/ altına yazılamayacağı için ortada iz bile kalmazdı.
+      - ${STACK_DIR:-.}/backups:/project/backups
+      - ${STACK_DIR:-.}/logs:/project/logs
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8000/healthz || exit 1"]
       interval: 30s

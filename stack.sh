@@ -353,6 +353,30 @@ HINT
             [ -n "$_img_md5" ] && ok "controller imajı depodaki kodla aynı"
         fi
     fi
+    # --- PANELİN STATİK DOSYALARI gateway'in gördüğüyle AYNI mı? -----------
+    # Controller bir imajdan çalıştığı için yukarıda md5 karşılaştırması var;
+    # panelin html/js/css'i ise bind-mount'tur ve "git pull yeter" sanılır.
+    # Sanılmaz: dosyalar başka bir yoldan (elle kopyalama, kısmi kurulum)
+    # eskimiş olabilir ve HİÇBİR HATA ÇIKMAZ — panel açılır, yalnız yeni
+    # özellik yoktur. Gerçek olay: tema düğmesi depoda vardı, sunucudaki
+    # index.html eskiydi; kullanıcı düğmeyi göremedi, biz de günlerce
+    # fark etmedik çünkü hiçbir şey bozuk görünmüyordu.
+    if container_running gateway; then
+        _panel_fark=""
+        for _f in index.html app.js style.css setup.html inactive.html; do
+            [ -f "gateway/html/$_f" ] || continue
+            _a="$(md5sum "gateway/html/$_f" 2>/dev/null | cut -d' ' -f1)"
+            _b="$(docker exec gateway md5sum "/usr/share/nginx/html/$_f" 2>/dev/null | cut -d' ' -f1)"
+            [ -n "$_b" ] && [ "$_a" != "$_b" ] && _panel_fark="$_panel_fark $_f"
+        done
+        if [ -n "$_panel_fark" ]; then
+            warn "Panelin gateway'de GÖRÜNEN dosyaları depodakinden farklı:$_panel_fark"
+            warn "→ Bu sessiz bir arızadır: panel açılır ama yeni özellikler yoktur."
+            warn "→ Düzeltmek için: docker restart gateway  (bind-mount ise dosyaları kopyalayın)"
+        else
+            ok "panelin statik dosyaları depodakiyle aynı"
+        fi
+    fi
     ./scripts/check-catalog.sh || true
     if container_running controller; then
         _api GET /api/status | python3 -c '
@@ -373,6 +397,58 @@ if artik:
 else:
     print("  ✓ kapalı motorlardan artık container kalmamış")
 '
+    fi
+    # --- Yedekleme GERÇEKTEN koşuyor mu? -------------------------------------
+    # En pahalı yanılgı, yedek alındığını SANMAKTIR. Eski kurulum çıktısı
+    # "state/crontab hazır" diyordu; dosyayı kuran olmadığı için bir test
+    # sunucusunda `crontab -l` boş, backups/ altındaki klasörler de boştu ve
+    # bu aylarca fark edilmedi. Bu yüzden doctor artık dosyaya/varsayıma değil,
+    # zamanlamayı asıl yürüten controller'a soruyor: açık mı, son koşu ne oldu?
+    if container_running controller; then
+        if _api GET /api/backups > /tmp/.bk.$$ 2>/dev/null; then
+            python3 -c '
+import json, sys, time
+d = json.load(sys.stdin)
+s = d.get("schedule") or {}
+if not s.get("enabled"):
+    print("  ⚠  Otomatik yedek KAPALI — hiçbir yedek alınmıyor.")
+    print("     Panelde Yedekler bölümünden açın; saat ve saklama süresi orada.")
+else:
+    print("  ✓ otomatik yedek açık — her gün %s, %s gün saklanıyor"
+          % (s.get("time") or "??:??", s.get("retention_days")))
+    last = s.get("last_run")
+    if not last:
+        print("  ⚠  Zamanlama açık ama HENÜZ HİÇ koşmadı — ilk koşudan önce")
+        print("     bu normaldir; saati geçtiyse: docker logs controller")
+    elif not s.get("last_ok"):
+        print("  ⚠  Son yedekleme BAŞARISIZ: %s%s" % (
+              time.strftime("%Y-%m-%d %H:%M", time.localtime(last)),
+              " — " + str(s.get("last_error")) if s.get("last_error") else ""))
+        print("     Ayrıntı: logs/backup_<tarih>.log")
+    else:
+        print("  ✓ son yedekleme başarılı: %s"
+              % time.strftime("%Y-%m-%d %H:%M", time.localtime(last)))
+    if s.get("running"):
+        print("  ✓ şu anda bir yedekleme koşuyor")
+print("__SCHED__ %d" % (1 if s.get("enabled") else 0))
+' < /tmp/.bk.$$ > /tmp/.bkout.$$
+            grep -v '^__SCHED__' /tmp/.bkout.$$ || true
+            _sched="$(awk '$1=="__SCHED__" {print $2}' /tmp/.bkout.$$)"
+            rm -f /tmp/.bk.$$ /tmp/.bkout.$$
+            # Host cron ile panel zamanlaması AYNI ANDA açık olabilir: eski
+            # kurulumda `crontab state/crontab` yükleyip sonra panelden de
+            # açanlar böyle kalıyor. Veri riski yok — backup.sh acquire_lock
+            # ile tek koşuya zorlar, ikincisi kilide takılıp çıkar — ama iki
+            # ayrı yerden yönetilen bir zamanlama, ilerideki "neden 02:00'de
+            # koştu" sorusunu iki kat zorlaştırır. Bilgi olarak yazıyoruz.
+            if [ "${_sched:-0}" = "1" ] && command -v crontab >/dev/null 2>&1 \
+               && crontab -l 2>/dev/null | grep -q "backup\.sh"; then
+                log "Host crontab'ında da backup.sh var; panel zamanlaması açık olduğu için yedek iki yerden tetikleniyor. Zararsız (backup.sh kilit alır) ama gereksiz — birini bırakın, panel tek başına yeterli."
+            fi
+        else
+            warn "Yedek durumu okunamadı (/api/backups) — controller imajı eski olabilir: ./install.sh"
+            rm -f /tmp/.bk.$$
+        fi
     fi
 }
 

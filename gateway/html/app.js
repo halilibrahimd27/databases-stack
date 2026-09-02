@@ -23,6 +23,11 @@ let CATALOG = null;
 let STATE   = { engines: [], system: {}, plans: {} };
 let timer   = null;
 
+/* GET /api/backups'ın son yanıtı. null = uç hiç cevap vermedi (controller
+   kapalı ya da bu ucu tanımayan eski bir sürüm); o hâlde “Yedekler” bölümü
+   sayfaya hiç konmaz — bkz. renderBackups(). */
+let BACKUPS = null;
+
 /* ---------------------------------------------------------------- yardımcı */
 async function api(path, opts) {
   const r = await fetch(API + path, opts);
@@ -33,6 +38,35 @@ const mb = (v) => (v == null ? '—'
   : v >= 1024 ? (v / 1024).toFixed(v >= 10240 ? 0 : 1) + ' GB' : Math.round(v) + ' MB');
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/* mb() MEGABAYT alır; yedek boyutları ise BAYT gelir ve bu ölçekte küçük
+   dosyalar kayboluyordu: 40 KB'lık taze bir Redis rdb'si “0 MB” görünüyor,
+   kullanıcı da dosyanın boş olduğunu sanıyordu. Ayrı bir birim gerekiyor. */
+const bayt = (n) => {
+  if (n == null) return '—';
+  if (n < 1024) return Math.round(n) + ' B';
+  if (n < 1048576) return Math.round(n / 1024) + ' KB';
+  if (n < 1073741824) return (n / 1048576).toFixed(n < 10485760 ? 1 : 0) + ' MB';
+  return (n / 1073741824).toFixed(1) + ' GB';
+};
+
+/* “1772412000” kimseye bir şey anlatmıyor, “2 saat önce” anlatıyor: yedeğin
+   TAZE olup olmadığı bu bölümdeki tek gerçek soru. Mutlak tarih kaybolmuyor,
+   title'da duruyor (bkz. tamTarih). Gelecek zamanı da aynı işlev veriyor;
+   “sıradaki yedek” için ikinci bir işlev yazmak ikisinin ayrışması demekti. */
+function bagilZaman(ep) {
+  if (!ep) return '';
+  const fark = Math.round(Date.now() / 1000) - ep;
+  const gecmis = fark >= 0;
+  const s = Math.abs(fark);
+  let n, ad;
+  if (s < 90) return gecmis ? 'az önce' : 'birazdan';
+  if (s < 5400)        { n = Math.round(s / 60);    ad = 'dakika'; }
+  else if (s < 129600) { n = Math.round(s / 3600);  ad = 'saat'; }
+  else                 { n = Math.round(s / 86400); ad = 'gün'; }
+  return n + ' ' + ad + (gecmis ? ' önce' : ' sonra');
+}
+const tamTarih = (ep) => (ep ? new Date(ep * 1000).toLocaleString('tr-TR') : '');
 
 /* ------------------------------------------------------------- pencereler */
 function confirmBox(title, bodyHtml, okLabel = 'Devam') {
@@ -62,7 +96,19 @@ function infoBox(title, bodyHtml) {
 
 /* Aktivasyon uzun sürebilir (imaj indirme) — işi arka planda izleyip
    log'u canlı gösteriyoruz ki kullanıcı "takıldı mı?" diye merak etmesin. */
-async function watchJob(jobId, title) {
+/* Pencerenin ipucu cümlesi index.html'de AKTİVASYON için yazılmış: “imaj
+   indirileceği için birkaç dakika sürebilir”. Yedek alırken indirilen bir imaj
+   yok; o cümle olduğu gibi kalınca bekleyişin sebebini YANLIŞ anlatıyordu.
+   Üçüncü parametre boş bırakılırsa HTML'deki özgün metin geri konur — bir
+   yedekten sonra açılan aktivasyon penceresi yedeğin cümlesiyle kalmasın. */
+let JOB_HINT0 = null;
+
+async function watchJob(jobId, title, hint) {
+  const ipucu = $('#job-hint');
+  if (ipucu) {
+    if (JOB_HINT0 == null) JOB_HINT0 = ipucu.textContent;
+    ipucu.textContent = hint || JOB_HINT0;
+  }
   $('#job-title').textContent = title;
   $('#job-log').textContent = '';
   $('#job-close').disabled = true;
@@ -225,6 +271,57 @@ async function showConnection(engine) {
      <code>./stack.sh app-user</code></p>`);
 }
 
+/* ------------------------------------------------------- yedek eylemleri */
+
+/* Zamanlama TEK uçtan, gövdenin TAMAMIYLA gider. Sözleşme kısmi güncelleme
+   tanımıyor: yalnız değişen alanı yollasaydık, saati düzelten kullanıcı
+   aynı istekle otomatik yedeği de kapatmış olurdu. Bu yüzden eksik alanlar
+   ekrandaki son duruma göre tamamlanıyor. */
+async function saveSchedule(patch) {
+  const s = (BACKUPS && BACKUPS.schedule) || {};
+  await api('/backup/schedule', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      enabled: patch.enabled != null ? !!patch.enabled : !!s.enabled,
+      time: patch.time || s.time || '02:00',
+      retention_days: patch.retention_days != null
+        ? patch.retention_days : (s.retention_days || 7)
+    })
+  });
+  await refreshBackups(true);
+}
+
+/* Açmak sessizce olur, KAPATMAK sorulur. Tek tıkla kapanan bir zamanlama,
+   kapandığını yalnız o an ekranda yazar; sonuç ise haftalar sonra, veri
+   kaybının olduğu gün anlaşılır. Onay penceresi bunun bedelini bir cümleyle
+   söylüyor. */
+async function toggleSchedule(on) {
+  if (!on) {
+    const ok = await confirmBox('Otomatik yedek kapatılsın mı?', `
+      <p>Bundan sonra <b>hiçbir yedek alınmaz</b>. Var olan dosyalar silinmez
+         ama yaşlanır: bugünden sonraki veriler hiçbir kopyada bulunmaz.</p>
+      <p class="note">İstediğiniz zaman aynı düğmeyle geri açabilirsiniz.</p>`,
+      'Kapat');
+    if (!ok) return;
+  }
+  await saveSchedule({ enabled: on });
+}
+
+/* Elle yedek, aktivasyonla AYNI iş mekanizmasını kullanır: uzun süren her
+   işlem controller'da bir "job"a dönüşür, panel de log'u canlı gösterir.
+   Ayrı bir bekleme akışı yazmak, kullanıcıya iki farklı "sürüyor" ekranı
+   göstermek olurdu. */
+async function takeBackup(engine) {
+  const r = await api('/engines/' + engine.id + '/backup', { method: 'POST' });
+  await watchJob(r.job, engine.name + ' yedekleniyor…',
+    'Yedek, veritabanı çalışırken alınır. Büyük bir veritabanında birkaç ' +
+    'dakika sürebilir; pencereyi kapatsanız da iş sunucuda devam eder.');
+  // Liste normalde 30 saniyede bir tazeleniyor; işi kendi başlatan kullanıcı
+  // ise yeni dosyayı HEMEN görmeli, yoksa "yedek alındı ama listede yok".
+  await refreshBackups(true);
+}
+
 /* ================================================================== çizim */
 
 /* Bir motorun “ne kadar dikkat istiyor” sırası. 0 en acil.
@@ -324,6 +421,26 @@ function cardHtml(engine, st) {
       <button class="btn btn-danger" data-act="off" data-id="${esc(engine.id)}"
         aria-label="${esc(engine.name)} veritabanını kapat">Kapat</button>
     </div>`;
+
+  /* ŞİMDİ YEDEK AL — kartın kendi üstünde. Yedekler bölümünde de aynı düğme
+     var ama oraya inmek gerekiyordu; oysa "bu veritabanına dokunmadan önce
+     bir yedek alayım" isteği tam da motorla uğraşırken, burada doğuyor.
+     Zamanlanmış gece yedeği bundan BAĞIMSIZ çalışmaya devam eder — bu düğme
+     onun yerine geçmez, ek bir kurtarma noktası üretir. */
+  if ((engine.backup || {}).supported) {
+    const bkOzet = (BACKUPS && BACKUPS.engines && BACKUPS.engines[engine.id]) || null;
+    const bkSon  = bkOzet && bkOzet.latest
+      ? `Son yedek ${bagilZaman(bkOzet.latest.epoch)} · ${bayt(bkOzet.latest.bytes)}.`
+      : 'Bu motorun henüz hiç yedeği yok.';
+    more += `
+    <div class="act">
+      <div class="act-txt"><b>Şimdi yedek al</b>
+        <span>${bkSon} Gece alınan zamanlanmış yedek ayrıca sürer;
+          bu, ek bir kurtarma noktası oluşturur.</span></div>
+      <button class="btn" data-act="backup" data-id="${esc(engine.id)}"
+        aria-label="${esc(engine.name)} için şimdi yedek al">Yedek al</button>
+    </div>`;
+  }
 
   if (st.failed_over) {
     more += `
@@ -678,6 +795,245 @@ function render() {
     if (tl.innerHTML !== th) tl.innerHTML = th;
     tl.hidden = !toolLinks.length;
   }
+
+  // Yedek bölümü de burada tazeleniyor: satırlardaki “Yedek al” düğmesi
+  // motorun AÇIK olmasına bağlı, o bilgi ise 5 saniyelik turda geliyor.
+  // Ağa çıkılmıyor; içerik değişmediyse innerHTML'e dokunulmuyor.
+  renderBackups();
+}
+
+/* ================================================== Yedekler bölümü (çizim) */
+/* Bölümün HTML'i index.html'de YOK, buraya JS ile ekleniyor ve “Son olaylar”ın
+   hemen üstüne konuyor. Sebep: panel dosyalarını nginx, veriyi controller
+   veriyor; controller kapalıyken ya da /api/backups'ı tanımayan eski bir
+   sürümdeyken başlığı HTML'e sabitlemek, ekranda sonsuza kadar boş bir
+   “Yedekler” bölümü bırakırdı. Kullanıcı da bunu “yedeğim yok” diye değil
+   “panel bozuk” diye okur. Veri gelmiyorsa bölüm hiç görünmez. */
+function bkZone() {
+  let z = document.getElementById('backups');
+  if (z) return z;
+  const ev = document.querySelector('.events-section');
+  if (!ev || !ev.parentNode) return null;
+  z = document.createElement('section');
+  z.className = 'zone bk-zone';
+  z.id = 'backups';
+  ev.parentNode.insertBefore(z, ev);
+  return z;
+}
+
+/* --- zamanlama satırı --------------------------------------------------- */
+function bkSchedHtml(s) {
+  const acik = !!s.enabled;
+  const saat = /^\d{1,2}:\d{2}$/.test(s.time || '') ? s.time : '02:00';
+  const gun  = s.retention_days > 0 ? Math.round(s.retention_days) : 7;
+
+  const durum = acik
+    ? 'Otomatik yedek: <b>AÇIK</b> — her gün ' + esc(saat)
+    : 'Otomatik yedek: <b>KAPALI</b>';
+  const calisiyor = s.running ? ' <span class="badge busy">Yedek alınıyor</span>' : '';
+
+  /* “KAPALI” tek başına bir ayarın durumu gibi okunuyor; oysa söylediği şey
+     bir risk. Sessizce kapalı kalmasın diye sonucunu da yazıyoruz. */
+  const kapaliNot = acik ? ''
+    : `<p class="bk-warn">Hiçbir yedek alınmıyor — bugün silinen ya da bozulan
+         bir veriyi geri getirebileceğiniz kopya oluşmuyor.</p>`;
+
+  let son;
+  if (!s.last_run) {
+    son = '<p class="bk-last bk-muted">Henüz hiç yedek alınmadı.</p>';
+  } else if (s.last_ok === false) {
+    // Sayfadaki kırmızı bir şey gerçekten sorun demek: başarısız yedek,
+    // "yedeğim var" sanan kullanıcının en pahalı yanılgısıdır. Sebebi de
+    // burada duruyor; kullanıcıyı log dosyasına göndermiyoruz.
+    son = `<p class="bk-last bk-err" title="${esc(tamTarih(s.last_run))}">
+             Son yedek: ${esc(bagilZaman(s.last_run))} · <b>BAŞARISIZ</b>${
+             s.last_error ? ' — ' + esc(s.last_error) : ''}</p>`;
+  } else if (s.last_ok === true) {
+    son = `<p class="bk-last" title="${esc(tamTarih(s.last_run))}">
+             Son yedek: ${esc(bagilZaman(s.last_run))} · başarılı</p>`;
+  } else {
+    son = `<p class="bk-last bk-muted" title="${esc(tamTarih(s.last_run))}">
+             Son yedek: ${esc(bagilZaman(s.last_run))} · sonucu bilinmiyor</p>`;
+  }
+
+  const sira = (acik && s.next_run && !s.running)
+    ? `<p class="bk-next" title="${esc(tamTarih(s.next_run))}">Sıradaki yedek:
+         ${esc(bagilZaman(s.next_run))}</p>` : '';
+
+  return `
+  <div class="bk-sched${acik ? '' : ' is-off'}">
+    <div class="bk-sched-txt">
+      <p class="bk-state">${durum}${calisiyor}</p>
+      ${son}${sira}${kapaliNot}
+    </div>
+    <div class="bk-ctrl">
+      <label class="bk-field"><span>Saat</span>
+        <input class="bk-inp" type="time" step="60" data-bk="time"
+               value="${esc(saat)}" aria-label="Günlük yedek saati"></label>
+      <label class="bk-field"><span>Saklama</span>
+        <input class="bk-inp bk-inp-num" type="number" min="1" max="365" step="1"
+               data-bk="keep" value="${gun}"
+               aria-label="Yedeklerin saklanacağı gün sayısı">
+        <span class="bk-unit">gün</span></label>
+      <button class="btn${acik ? '' : ' btn-open'}"
+              data-act="${acik ? 'bk-off' : 'bk-on'}">${acik ? 'Kapat' : 'Aç'}</button>
+    </div>
+  </div>
+  <p class="bk-hint">Saklama süresinden eski yedekler temizlik turunda silinir.
+     Her motorun en yeni birkaç kopyası, yaşı ne olursa olsun korunur — kapalı
+     kalmış bir motor son kurtarma noktasını da kaybetmesin diye.</p>`;
+}
+
+/* --- motor satırı ------------------------------------------------------- */
+function bkRowHtml(engine, b, st, s) {
+  const facts = [];
+  if (!b.latest) {
+    // Bu satırın en önemli bilgisi bu: yedeksiz bir veritabanı, boyut ve
+    // adet sütunları boş kaldığı için eskiden gözden kaçıyordu.
+    facts.push('<span class="bk-none">hiç yedek yok</span>');
+  } else {
+    facts.push('<span>' + (b.count || 0) + ' yedek</span>');
+    facts.push('<span>' + esc(bayt(b.total_bytes)) + '</span>');
+    facts.push(`<span title="${esc(b.latest.file || '')} · ${esc(tamTarih(b.latest.epoch))}"
+                  >en yeni ${esc(bagilZaman(b.latest.epoch))}</span>`);
+  }
+
+  /* Kapalı motorun yedeği ALINAMAZ: döküm araçları (mysqldump, pg_dump…)
+     veritabanına bağlanır, betik de kapalı motoru “atlandı (kapalı)” diye
+     geçer — tek motor istendiğinde doğrudan hata verir. Düğmeyi tıklanır
+     bırakmak, kullanıcıya bir iş başlatıp saniyesinde hata penceresi
+     göstermekten başka bir işe yaramıyordu. */
+  const kapali = !st.active;
+  const mesgul = !!s.running;
+  if (kapali) facts.push('<span class="bk-muted">motor kapalı</span>');
+
+  const not = kapali ? 'Motor kapalı — yedek almak için önce açın'
+            : mesgul ? 'Şu an başka bir yedek alınıyor' : '';
+
+  /* DOSYA LİSTESİ. Özet satırı "3 yedek" diyor ama hangi tarihlerde ve hangisi
+     elle alınmış, hangisi gecenin turu — bunu görmeden "dün gece yedek alındı
+     mı" sorusuna cevap veremiyorsunuz. Liste kapalı bir <details> içinde:
+     yedeksiz bir kurulumda ekranı doldurmasın, gereken anda tek tıkla açılsın.
+     KAYNAK etiketi dosya adından tahmin edilmiyor, controller kendi
+     başlattığı koşumu deftere yazıyor; deftere girmemiş dosya "dış"tır
+     (host cron'u ya da komut satırı) ve öyle yazılır — tahmin etmiyoruz. */
+  const dosyalar = b.files || [];
+  const kaynakEtiket = { 'elle': 'elle', 'zamanlı': 'zamanlı', 'dış': 'dış' };
+  const liste = dosyalar.length
+    ? `<details class="bk-files" data-key="bk:${esc(engine.id)}:files">
+         <summary class="sum"><span class="chev" aria-hidden="true"></span>
+           Yedekleri göster${b.count > dosyalar.length
+             ? ` (son ${dosyalar.length} / ${b.count})` : ''}</summary>
+         <ul class="bk-flist">
+           ${dosyalar.map((f) => `
+           <li class="bk-file">
+             <span class="bk-file-when" title="${esc(tamTarih(f.epoch))}"
+               >${esc(bagilZaman(f.epoch))}</span>
+             <span class="bk-file-kind bk-kind-${esc(f.kind === 'zamanlı' ? 'auto' : (f.kind === 'elle' ? 'man' : 'dis'))}"
+               >${esc(kaynakEtiket[f.kind] || f.kind || '?')}</span>
+             <span class="bk-file-name" title="${esc(f.file)}">${esc(f.file)}</span>
+             <span class="bk-file-size">${esc(bayt(f.bytes))}</span>
+           </li>`).join('')}
+         </ul>
+         <p class="bk-hint bk-flist-hint">Geri yükleme panelden yapılmaz —
+           veriyi silip yerine koyan bir işlem olduğu için sunucuda,
+           bilerek çalıştırılır:
+           <code>./scripts/backup.sh restore-${esc(engine.id)} &lt;dosya&gt;</code></p>
+       </details>`
+    : '';
+
+  return `
+  <li class="bk-row">
+    <span class="bk-icon" aria-hidden="true">${esc(engine.icon)}</span>
+    <span class="bk-name">${esc(engine.name)}</span>
+    <span class="bk-facts">${facts.join('')}</span>
+    <button class="btn btn-sm" data-act="backup" data-id="${esc(engine.id)}"
+      ${kapali || mesgul ? 'disabled' : ''}${not ? ' title="' + esc(not) + '"' : ''}
+      aria-label="${esc(engine.name)} yedeğini şimdi al">Yedek al</button>
+    ${liste}
+  </li>`;
+}
+
+let lastBkHtml = '';
+
+function renderBackups() {
+  const z = bkZone();
+  if (!z) return;
+  if (!BACKUPS || !BACKUPS.schedule) { z.hidden = true; lastBkHtml = ''; return; }
+
+  const s   = BACKUPS.schedule || {};
+  const eng = BACKUPS.engines || {};
+  const byId = {};
+  (STATE.engines || []).forEach((e) => { byId[e.id] = e; });
+
+  /* Yalnız katalogda backup.supported olan motorlar. Kafka gibi yedeği
+     TANIMSIZ olan kayıtlar listeye girseydi her satırında ömür boyu “hiç
+     yedek yok” yazacaktı; gerçekten yedeksiz kalmış bir veritabanı da o
+     gürültünün içinde kaybolacaktı. */
+  const list = (CATALOG.engines || []).filter((e) => (e.backup || {}).supported);
+  const eksik = list.filter((e) => !(eng[e.id] || {}).latest).length;
+
+  let html = '<div class="zone-head">' +
+    '<h2 class="zone-title">Yedekler</h2>' +
+    `<span class="zone-count">${list.length}</span>` +
+    (eksik
+      ? `<p class="zone-note zone-note-err">${eksik} motorun hiç yedeği yok.</p>`
+      : '<p class="zone-note">Her motorun diskteki yedek dosyaları.</p>') +
+    '</div>';
+
+  html += '<div class="zone-body">' + bkSchedHtml(s) +
+    '<ul class="bk-list">' +
+    list.map((e) => bkRowHtml(e, eng[e.id] || {}, byId[e.id] || {}, s)).join('') +
+    '</ul></div>';
+
+  if (html === lastBkHtml) return;
+
+  /* Kullanıcı saat ya da gün kutusunun İÇİNDEYKEN yeniden yazmıyoruz: tur
+     tam “0” yazılmışken gelip kutuyu sunucudaki değere döndürüyor, ikinci
+     haneyi yazan kullanıcı kendi yazdığını kaybediyordu. Izgarada olduğu
+     gibi odak ve açık ayrıntılar da korunuyor (snapshotGrid/restoreGrid). */
+  const ae = document.activeElement;
+  if (ae && ae.tagName === 'INPUT' && z.contains(ae)) return;
+
+  const snap = snapshotGrid(z);
+  z.hidden = false;
+  z.innerHTML = html;
+  lastBkHtml = html;
+  restoreGrid(z, snap);
+}
+
+/* Yedek listesi 5 saniyelik tura GİRMİYOR: yanıtı üretmek yedek klasörünü
+   gezip dosya saymayı gerektiriyor ve sunucu boştayken bile diski sürekli
+   uyandırmanın anlamı yok — yedekler dakikalarca değişmez. Tek istisna, yedek
+   ALINIRKEN: orada 30 saniye beklemek “Yedek alınıyor” rozetini ve kilitli
+   düğmeleri iş bittikten sonra yarım dakika daha ekranda tutuyordu. */
+const BK_ARALIK        = 30000;
+const BK_ARALIK_MESGUL = 8000;
+let bkSon   = 0;
+let bkIstek = null;
+
+function refreshBackups(zorla) {
+  // Uçuşta bir istek varken ikincisini açmıyoruz; “zorla” diyen (düğmeye
+  // basmış) çağrı ise eski yanıtla yetinmesin diye sıraya giriyor.
+  if (bkIstek) return zorla ? bkIstek.then(() => refreshBackups(true)) : bkIstek;
+
+  const mesgul = !!(BACKUPS && BACKUPS.schedule && BACKUPS.schedule.running);
+  if (!zorla && Date.now() - bkSon < (mesgul ? BK_ARALIK_MESGUL : BK_ARALIK)) {
+    return Promise.resolve();
+  }
+
+  bkIstek = api('/backups').then(
+    (d) => { BACKUPS = d; },
+    /* Uç yoksa ya da hata verdiyse bölüm sessizce kaybolur; üstteki uyarı
+       şeridine dokunmuyoruz. /api/status çalışıyorken oraya kırmızı bir
+       satır yazmak, panelin tamamı çökmüş gibi görünmesine yol açıyordu. */
+    () => { BACKUPS = null; }
+  ).then(() => {
+    bkSon = Date.now();
+    bkIstek = null;
+    renderBackups();
+  });
+  return bkIstek;
 }
 
 /* ------------------------------------------------------------------ döngü */
@@ -700,6 +1056,8 @@ async function refresh() {
     STATE = Object.assign({}, st, { plans: plans.plans || {} });
     render();
     renderEvents(ev.events || []);
+    // Kendi sıklığını kendisi biliyor (30 saniye); tur onu yalnız yokluyor.
+    refreshBackups();
   } catch (e) {
     $('#banner').textContent = 'Kontrol servisine ulaşılamıyor: ' + e.message;
     $('#banner').hidden = false;
@@ -759,6 +1117,9 @@ document.addEventListener('click', (ev) => {
     case 'fo-on':   p = toggleAutoFailover(engine, true); break;
     case 'fo-off':  p = toggleAutoFailover(engine, false); break;
     case 'rebuild': p = rebuildStandby(engine); break;
+    case 'backup':  p = takeBackup(engine); break;
+    case 'bk-on':   p = toggleSchedule(true); break;
+    case 'bk-off':  p = toggleSchedule(false); break;
     case 'panel': {
       // Paneller gateway üzerinde kendi HTTPS portlarında durur.
       const url = 'https://' + location.hostname + ':' + engine.panel.port +
@@ -778,6 +1139,30 @@ document.addEventListener('click', (ev) => {
      gelmediği için durduruldu") kullanıcıya hiç ulaşmıyordu — kullanıcı da
      düğmeye bir kez daha basıyordu. */
   if (p) p.catch((e) => infoBox('İşlem yapılamadı', '<p>' + esc(e.message) + '</p>'));
+});
+
+/* Saat ve saklama alanları 'change' ile kaydediliyor, 'input' ile DEĞİL: her
+   tuş vuruşunda POST atmak, “03:00” yazan kullanıcının ayarını yol boyunca
+   “00:00”a düşürüyordu. Hata yakalaması yukarıdaki tıklama dinleyicisiyle
+   aynı sebeple burada: api() 403/504'te fırlatıyor ve yakalanmazsa kullanıcı
+   ayarın kaydedilmediğini hiç öğrenemiyor. */
+document.addEventListener('change', (ev) => {
+  const el = ev.target.closest ? ev.target.closest('[data-bk]') : null;
+  if (!el) return;
+  const s = (BACKUPS && BACKUPS.schedule) || {};
+  let p;
+  if (el.dataset.bk === 'time') {
+    // Boşaltılmış ya da yarım bir saat kutusu KAYDEDİLMEZ; alan sunucudaki
+    // değerine döner. Tarayıcı geçersiz girdide value'yu "" veriyor ve bu
+    // sözleşmede geçerli bir saat değil.
+    if (!/^\d{1,2}:\d{2}$/.test(el.value)) { el.value = s.time || '02:00'; return; }
+    p = saveSchedule({ time: el.value });
+  } else if (el.dataset.bk === 'keep') {
+    const n = parseInt(el.value, 10);
+    if (!(n >= 1)) { el.value = s.retention_days || 7; return; }
+    p = saveSchedule({ retention_days: Math.min(365, n) });
+  } else return;
+  p.catch((e) => infoBox('Zamanlama kaydedilemedi', '<p>' + esc(e.message) + '</p>'));
 });
 
 (async function init() {

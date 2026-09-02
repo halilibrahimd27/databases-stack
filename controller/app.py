@@ -258,13 +258,18 @@ def _as_text(v):
     return v if isinstance(v, str) else v.decode("utf-8", "replace")
 
 
-def run(cmd, timeout=900, env=None):
-    """Kabuk YOK (shell=False) — argümanlar liste olarak geçer, enjeksiyon olamaz."""
+def run(cmd, timeout=900, env=None, cwd=None):
+    """Kabuk YOK (shell=False) — argümanlar liste olarak geçer, enjeksiyon olamaz.
+
+    cwd: göreli yol kullanan betikleri (yedekleme) /project'ten başlatmak için;
+    verilmezse controller'ın kendi dizini (/app) kullanılır.
+    """
     e = dict(os.environ)
     if env:
         e.update(env)
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=e)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           env=e, cwd=cwd)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired as ex:
         # Zaman aşımı bir SONUÇTUR, istisna değil. Eskiden bu istisna hiçbir
@@ -2619,6 +2624,499 @@ def do_replication(jid, eid, enable):
 
 
 # =============================================================================
+# YEDEKLEME
+# =============================================================================
+# Yedeği ALAN taraf scripts/backup.sh'tır; controller yalnız onu çağırır.
+# Aynı işin ikinci bir uygulamasını buraya yazmak, iki uygulamanın er geç
+# ayrışması demekti: gece cron'un ürettiği dosya ile panelin ürettiği dosya
+# farklı yollardan geçseydi, hangisinin geri yüklenebildiği ancak felaket
+# günü anlaşılırdı. Buradaki iş üçle sınırlı: ne zaman koşacağına karar
+# vermek, aynı anda ikinci bir koşum başlatmamak, sonucu görünür kılmak.
+
+BACKUP_SCRIPT = os.path.join(PROJECT_DIR, "scripts", "backup.sh")
+BACKUP_CFG_FILE = os.path.join(STATE_DIR, "backup.json")
+BACKUP_DEFAULTS = {"enabled": False, "time": "02:00", "retention_days": 7}
+BACKUP_RETENTION_MIN = 1
+BACKUP_RETENTION_MAX = 365
+# Zamanlayıcı yarım dakikada bir uyanır: "time" alanı DAKİKA hassasiyetinde,
+# yani hedef dakikanın penceresine en az bir kez düşmek zorundayız.
+BACKUP_TICK = 30
+# Tam bir dump saatler sürebilir; run()'ın 900 sn'lik varsayılanı yedeği
+# ORTASINDAN keserdi. Yine de sınırsız değil: takılmış bir dump'ı sonsuza
+# dek beklemek, o motorda bir daha hiç yedek alınmaması demektir.
+BACKUP_TIMEOUT = int(os.environ.get("BACKUP_TIMEOUT", "14400"))
+
+_HHMM = re.compile(r"^([01][0-9]|2[0-3]):([0-5][0-9])$")
+
+# Yedekleme işleri controller içinde de TEK SIRADA yürür. Betiğin kendi
+# flock'u ikinci koşumu zaten reddediyor, ama bunu ÖNCEDEN bilmek gerekiyor:
+# aksi halde elle başlatılan iş betiğin "Başka bir işlem kilidi tutuyor"
+# ölümüyle düşüyor ve panelde "yedekleme başarısız" görünüyordu — oysa yedek
+# alınıyordu, sadece başka bir koşum tarafından. Bu kilit aynı zamanda "şu an
+# yedek alınıyor mu" sorusunun tek cevabı (GET /api/backups → running).
+BACKUP_LOCK = threading.Lock()
+BACKUP_BUSY_MSG = ("Şu anda başka bir yedekleme sürüyor. İki dump aynı anda "
+                   "koşarsa aynı container'ın belleğini iki kez zorlar; "
+                   "bitmesini bekleyip tekrar deneyin.")
+
+
+# Panelde gösterilecek dosya listesinin üst sınırı ve YEDEĞİN KAYNAĞI defteri.
+#
+# "Alınan yedeklerin hepsi bu sayfada olsun" isteği, listeyi tek tek dosya
+# düzeyine indiriyor. İki şeye dikkat: (1) liste sınırsız olamaz — bir yıllık
+# günlük yedek 365 satır demek ve panel bunu 30 saniyede bir yeniden çiziyor;
+# (2) bir dosyaya bakıp "bunu elle mi aldım, gece mi alındı" demek mümkün
+# değil, çünkü backup.sh dosya adına kaynağını yazmıyor ve yazdırmak dosya
+# adı sözleşmesini değiştirmek olurdu (geri yükleme, temizlik ve e2e hepsi o
+# ada bakıyor). Bu yüzden kaynağı AYRI bir defterde tutuyoruz: controller
+# kendi başlattığı koşumdan sonra oluşan dosyaları etiketler. Defterde
+# olmayan dosya "dış"tır — host cron'u ya da komut satırından alınmış
+# demektir; bunu "zamanlı" saymak yalan olurdu.
+BACKUP_LIST_MAX = 40
+BACKUP_INDEX_FILE = os.path.join(STATE_DIR, "backup_index.json")
+
+
+def load_backup_index():
+    try:
+        with open(BACKUP_INDEX_FILE, encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}          # bozuk/boş defter, yedeklerin kendisini etkilemez
+
+
+def tag_new_backups(kind, since, eids=None):
+    """`since`dan sonra oluşan yedek dosyalarını `kind` ile işaretler.
+
+    Dosya adını değil dosyanın KENDİSİNİ arıyoruz: backup.sh'ın ürettiği ad
+    biçimi motora göre değişiyor ve buradan tahmin etmek kırılgan olurdu.
+    Defter, artık var olmayan dosyalardan temizlenir — yoksa saklama süresi
+    dosyaları sildikçe defter sonsuza kadar büyürdü.
+    """
+    root = backups_dir()
+    idx = load_backup_index()
+    hedef = eids if eids is not None else [e["id"] for e in CATALOG.engines]
+    mevcut = set()
+    for eid in hedef:
+        d = os.path.join(root, eid)
+        for dirpath, _dirs, files in os.walk(d):
+            for name in files:
+                if not name.endswith(".gz"):
+                    continue
+                try:
+                    stt = os.stat(os.path.join(dirpath, name))
+                except OSError:
+                    continue
+                mevcut.add(name)
+                if stt.st_mtime >= since - 1:
+                    idx[name] = kind
+    # temizlik: yalnız TARANAN motorların artık var olmayan kayıtları atılır
+    for name in list(idx):
+        if name not in mevcut and any(
+                name.startswith(eid) for eid in hedef):
+            idx.pop(name, None)
+    try:
+        tmp = BACKUP_INDEX_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(idx, fh, ensure_ascii=False)
+        os.replace(tmp, BACKUP_INDEX_FILE)
+    except OSError as e:
+        log("yedek defteri yazılamadı: %r" % e)
+
+
+def backups_dir():
+    """Yedeklerin durduğu dizin — backup.sh ile AYNI sırayla çözülür:
+    ortam değişkeni, sonra .env, sonra <kök>/backups. (common.sh'ın load_env'i
+    de ortamda tanımlı bir değişkene dokunmaz; öncelik birebir aynı.)
+
+    İki taraf ayrışırsa panel "hiç yedek yok" derken diskte yedekler durur —
+    üstelik do_backup'ın "yeni dosya oluştu mu" kontrolü sapasağlam bir yedeğe
+    "bu koşum çıktı üretmedi" derdi.
+    """
+    d = os.environ.get("BACKUP_DIR") or _dotenv().get("BACKUP_DIR") or ""
+    return d.strip() or os.path.join(PROJECT_DIR, "backups")
+
+
+def _parse_hhmm(value):
+    """'HH:MM' → (saat, dakika); geçersizse None."""
+    m = _HHMM.match(str(value or "").strip())
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def _same_local_day(a, b):
+    """İki epoch aynı YEREL güne mi düşüyor?
+
+    Gün sınırı UTC'ye göre sorulursa, saat 02:00'de koşan bir yedek UTC+3'te
+    bir önceki günün hanesine yazılır ve zamanlayıcı aynı günü "koşulmadı"
+    sayardı. Kullanıcının girdiği saat yerel; karşılaştırma da yerel.
+    """
+    la, lb = time.localtime(a), time.localtime(b)
+    return (la.tm_year, la.tm_yday) == (lb.tm_year, lb.tm_yday)
+
+
+def load_backup_cfg():
+    """state/backup.json — yoksa varsayılan, BOZUKSA da varsayılan.
+
+    Bozuk/boş dosyada çökmek en pahalı seçenekti: sunucu tam bu dosya
+    yazılırken kapandığında geriye 0 baytlık bir backup.json kaldı; okuyan
+    taraf çöktüğü için zamanlayıcı thread'i öldü ve gece yedeği kimseye haber
+    vermeden durdu. Artık varsayılana dönüyoruz — ama sessizce değil: "ayarım
+    neden 02:00'ye döndü" sorusunun cevabı bu log satırıdır.
+
+    Alanlar TEK TEK doğrulanır: elle düzenlenmiş bir dosyada tek bozuk alan
+    yüzünden bütün zamanlamayı çöpe atmak gerekmiyor.
+    """
+    cfg = dict(BACKUP_DEFAULTS)
+    cfg.update({"last_run": None, "last_ok": None, "last_error": None})
+    try:
+        with open(BACKUP_CFG_FILE, encoding="utf-8") as f:
+            raw = f.read()
+    except FileNotFoundError:
+        return cfg                       # ilk açılış — varsayılan
+    except OSError as e:
+        log("backup.json okunamadı (%s) — varsayılan zamanlama kullanılıyor"
+            % e)
+        return cfg
+    try:
+        if not raw.strip():
+            raise ValueError("dosya boş")
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("içerik bir nesne değil")
+    except ValueError as e:
+        log("backup.json bozuk (%s) — varsayılan zamanlamaya dönüldü" % e)
+        return cfg
+
+    if isinstance(data.get("enabled"), bool):
+        cfg["enabled"] = data["enabled"]
+    hm = _parse_hhmm(data.get("time"))
+    if hm:
+        cfg["time"] = "%02d:%02d" % hm
+    rd = data.get("retention_days")
+    if isinstance(rd, int) and not isinstance(rd, bool) \
+            and BACKUP_RETENTION_MIN <= rd <= BACKUP_RETENTION_MAX:
+        cfg["retention_days"] = rd
+    lr = data.get("last_run")
+    if isinstance(lr, (int, float)) and not isinstance(lr, bool):
+        cfg["last_run"] = int(lr)
+    if isinstance(data.get("last_ok"), bool):
+        cfg["last_ok"] = data["last_ok"]
+    if isinstance(data.get("last_error"), str):
+        cfg["last_error"] = data["last_error"]
+    return cfg
+
+
+def save_backup_cfg(cfg):
+    """Yalnız sözleşmedeki alanları yazar — elle eklenmiş çöpü taşımayalım."""
+    out = {
+        "enabled": bool(cfg.get("enabled")),
+        "time": cfg.get("time") or BACKUP_DEFAULTS["time"],
+        "retention_days": int(cfg.get("retention_days")
+                              or BACKUP_DEFAULTS["retention_days"]),
+        "last_run": cfg.get("last_run"),
+        "last_ok": cfg.get("last_ok"),
+        "last_error": cfg.get("last_error"),
+    }
+    _write_json(BACKUP_CFG_FILE, out)
+    return out
+
+
+def backup_next_run(cfg=None, now=None):
+    """Bir sonraki zamanlanmış yedeğin epoch'u; zamanlama kapalıysa None."""
+    cfg = load_backup_cfg() if cfg is None else cfg
+    if not cfg.get("enabled"):
+        return None
+    hm = _parse_hhmm(cfg.get("time"))
+    if not hm:
+        return None
+    now = time.time() if now is None else now
+    # İkiye değil ÜÇ güne bakıyoruz: yaz saatinin bittiği 25 saatlik günde
+    # "now + 86400" hâlâ AYNI güne düşebiliyor; hedef saat o gün geçmişse
+    # elde tek aday kalmıyor ve panel "sonraki koşum: —" gösteriyordu.
+    for gun in (0, 1, 2):
+        lt = time.localtime(now + gun * 86400)
+        try:
+            t = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday,
+                             hm[0], hm[1], 0, 0, 0, -1))
+        except (OverflowError, ValueError):
+            return None
+        if t > now:
+            return int(t)
+    return None
+
+
+def backup_stats(eid, root=None):
+    """backups/<motor>/ altındaki yedekler: (adet, toplam bayt, en yeni).
+
+    `root` verilebilir: dashboard bu bilgiyi saniyeler arayla istiyor ve
+    dizini her motor için yeniden çözmek .env'i motor sayısı kadar okumak
+    demekti.
+
+    Dizin yoksa (0, 0, None) — os.walk boş bir ağaçta hata vermez.
+
+    Yalnız *.gz sayılır. Doğrulamayı geçemeyip `.bozuk` uzantısıyla kenara
+    alınmış dosyalar KURTARMA NOKTASI DEĞİLDİR; onları saymak panelde "3
+    yedeğiniz var" yazdırıp elde hiç yedek olmaması demek olurdu. backup.sh'ın
+    list/stats komutları da aynı süzgeci kullanıyor — iki taraf aynı şeyi
+    sayıyor.
+    """
+    root = os.path.join(root or backups_dir(), eid)
+    idx = load_backup_index()
+    count = total = 0
+    latest = None
+    latest_at = -1.0
+    liste = []          # `files` DEĞİL: os.walk'ın döngü değişkeni o adı
+                        # kullanıyor ve her dizinde üzerine yazıyordu
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            if not name.endswith(".gz"):
+                continue
+            try:
+                stt = os.stat(os.path.join(dirpath, name))
+            except OSError:
+                continue          # tam o anda temizlik silmiş olabilir
+            count += 1
+            total += stt.st_size
+            liste.append({"file": name, "epoch": int(stt.st_mtime),
+                          "bytes": stt.st_size, "kind": idx.get(name, "dış")})
+            if stt.st_mtime > latest_at:
+                latest_at = stt.st_mtime
+                latest = liste[-1]
+    # En yeni üstte. Liste PANELDE gösteriliyor: "hepsi burada olsun" isteği
+    # bunu gerektiriyor, ama sınırsız da olamaz — bir yıllık günlük yedek 365
+    # satır demek ve JSON her 30 saniyede bir yeniden çiziliyor. Üst sınır
+    # dışında kalanların VARLIĞI count'ta duruyor, panel de "listede son N"
+    # yazıyor; sayı ile liste birbirini yalanlamıyor.
+    liste.sort(key=lambda x: x["epoch"], reverse=True)
+    return count, total, latest, liste[:BACKUP_LIST_MAX]
+
+
+def backups_overview():
+    """GET /api/backups gövdesi: zamanlama + motor başına yedek özeti."""
+    cfg = load_backup_cfg()
+    root = backups_dir()
+    engines = {}
+    for e in CATALOG.engines:
+        bk = e.get("backup") or {}
+        count, total, latest, files = backup_stats(e["id"], root)
+        engines[e["id"]] = {"supported": bool(bk.get("supported")),
+                            "count": count, "total_bytes": total,
+                            "latest": latest, "files": files,
+                            "listed": len(files)}
+    return {
+        "schedule": {
+            "enabled": bool(cfg["enabled"]),
+            "time": cfg["time"],
+            "retention_days": int(cfg["retention_days"]),
+            "last_run": cfg["last_run"],
+            "last_ok": cfg["last_ok"],
+            "last_error": cfg["last_error"],
+            "next_run": backup_next_run(cfg),
+            "running": BACKUP_LOCK.locked(),
+        },
+        "engines": engines,
+    }
+
+
+def _backup_run(args, jl):
+    """backup.sh'ı çalıştırır, çıktısını günlüğe döker: (rc, hata_metni).
+
+    `bash` ŞART: betik dizi, PIPESTATUS ve `<<<` kullanıyor; busybox sh ile
+    çalıştırılırsa hata bile vermeden YANLIŞ davranır — ve bu ürünün yedekleme
+    tarafının tamamı, sessizce yanlış davranan bir yedeklemenin ne kadar
+    pahalı olduğu üzerine yazılmış. Yoksa çalıştırmıyoruz; ne yapılması
+    gerektiğini söyleyip duruyoruz.
+    """
+    if not shutil.which("bash"):
+        return 1, ("Bu container'da `bash` yok. scripts/backup.sh saf bash "
+                   "betiğidir ve busybox sh ile çalıştırılamaz; controller "
+                   "imajına bash eklenmeli (controller/Dockerfile).")
+    rc, out, err = run(["bash", BACKUP_SCRIPT] + list(args), cwd=PROJECT_DIR,
+                       timeout=BACKUP_TIMEOUT, env=script_env())
+    text = (out + err).strip()
+    for line in text.splitlines()[-120:]:
+        jl(line)
+    if rc == RC_TIMEOUT:
+        return rc, ("Yedekleme %d saniyede bitmedi ve kesildi; yarım kalmış "
+                    "bir dosya kalmış olabilir (backup.sh doğrulamayı "
+                    "geçemeyeni .bozuk diye kenara alır)." % BACKUP_TIMEOUT)
+    if rc != 0:
+        return rc, ("backup.sh çıkış %d: %s"
+                    % (rc, text[-500:] or "(çıktı yok)"))
+    return 0, None
+
+
+def do_backup(jid, eid):
+    """Tek motoru yedekler — aktivasyonla AYNI iş (job) mekanizması."""
+    engine = CATALOG.engine(eid)
+    # HTTP ucu motor kimliğini zaten katalogla doğruluyor; buradaki kontrol,
+    # doğrudan çağrılan bir iş thread'inin sessizce "devam ediyor" kalmasını
+    # önler.
+    if not engine:
+        return job_done(jid, False, "Bilinmeyen motor: %s" % eid)
+    bk = engine.get("backup") or {}
+    if not bk.get("supported"):
+        # Katalog "neden yedeklenmiyor"u zaten yazıyor (Kafka bir log'dur;
+        # izleme verisi kaybolursa yeniden toplanır). Kullanıcıya kendi
+        # cümlemizi değil onu veriyoruz — tek yetki kaynağı katalog.
+        return job_done(jid, False, "%s yedeklenmiyor: %s" % (
+            engine["name"],
+            bk.get("note") or "bu motorda yedekleme desteklenmiyor."))
+
+    # Yedekleme de aç/durdur ve devirle AYNI SIRADA yürür. Kilitsiz kalırsa
+    # dump, tam o anda fence edilen ya da hacmi silinen bir düğümden alınır;
+    # elde "başarılı" damgalı ama yarım bir kurtarma noktası kalırdı.
+    lock = engine_lock(eid)
+    if not lock.acquire(blocking=False):
+        return job_done(jid, False, BUSY_MSG % engine["name"])
+    try:
+        # Kapalı motorun container'ı yoktur; `docker exec` hedefi bulamaz.
+        # Betik de aynı kontrolü yapıyor ama oradan gelen cevap bir kabuk
+        # hatası gibi okunuyor — panelden basılan düğmeye panelin diliyle
+        # cevap vermek gerekiyor. Ana kopya devirden sonra başka bir
+        # container olabilir; o yüzden topolojiden soruyoruz.
+        prim = current_primary(engine)
+        pstat, _phealth = _health_of(prim)
+        if pstat != "running":
+            return job_done(jid, False,
+                            "%s kapalı (%s) — yedeklenecek çalışan bir kopya "
+                            "yok. Önce motoru aktif edin."
+                            % (engine["name"], pstat))
+        if not BACKUP_LOCK.acquire(blocking=False):
+            return job_done(jid, False, BACKUP_BUSY_MSG)
+        try:
+            before_count, _bt, before_latest, _bf = backup_stats(eid)
+            before_at = before_latest["epoch"] if before_latest else 0
+            basladi = time.time()
+            job_log(jid, "%s yedekleniyor…" % engine["name"])
+            rc, err = _backup_run([eid], lambda *m: job_log(jid, *m))
+            tag_new_backups("elle", basladi, [eid])
+            count, _t, latest, _f = backup_stats(eid)
+            yeni = (count > before_count
+                    or (latest is not None and latest["epoch"] > before_at))
+            if rc == 0 and not yeni:
+                # Betik 0 ile bitip DOSYA ÜRETMEMİŞ olabilir: Neo4j
+                # Community'de çevrimdışı yedek açıkça istenmediyse backup.sh
+                # uyarıp 0 ile geçiyor. Buna "yedeklendi" demek, olmayan bir
+                # kurtarma noktasına güvenmek olurdu.
+                rc = 1
+                err = ("Betik hatasız bitti ama backups/%s altında yeni bir "
+                       "dosya oluşmadı — bu koşumdan kurtarma noktası "
+                       "ÇIKMADI. Sebebi iş günlüğünün son satırlarında." % eid)
+            if rc == 0:
+                mb = (latest["bytes"] / 1048576.0) if latest else 0.0
+                record_event("backup", eid, "%s yedeklendi: %s (%.1f MB)"
+                             % (engine["name"],
+                                latest["file"] if latest else "?", mb))
+                return job_done(jid, True)
+            record_event("backup_failed", eid,
+                         "%s yedeklenemedi: %s" % (engine["name"], err),
+                         level="warning")
+            return job_done(jid, False, err)
+        finally:
+            BACKUP_LOCK.release()
+    except Exception as e:
+        job_log(jid, "HATA:", repr(e))
+        job_done(jid, False, repr(e))
+    finally:
+        lock.release()
+
+
+def _run_scheduled_backup(cfg):
+    """Zamanlanmış tur: önce tüm AKTİF motorlar, sonra saklama temizliği.
+
+    (backup.sh `all` kapalı motoru zaten atlar — kapalı motorun container'ı
+    yoktur, dump alınacak bir yer de yoktur.)
+
+    last_run işin BAŞINDA yazılır. Sonda yazsaydık: tam yedek saatler
+    sürebiliyor ve controller o sırada yeniden başlarsa (imaj güncellemeleri
+    tam da gece bakım penceresinde yapılıyor) aynı gün İKİNCİ bir tur
+    başlardı — iki paralel dump, aynı container'ın cgroup'unda çift bellek
+    baskısı, yani backup.sh'ın başında anlatılan OOM demek.
+    """
+    cfg = dict(cfg)
+    cfg.update({"last_run": int(time.time()), "last_ok": None,
+                "last_error": None})
+    save_backup_cfg(cfg)
+    log("zamanlanmış yedekleme başlıyor (saklama: %d gün)"
+        % cfg["retention_days"])
+
+    basladi = time.time()
+    rc, err = _backup_run(["all"], log)
+    # Bu turda oluşan dosyaları "zamanlı" diye işaretle. Panelde elle alınanla
+    # gecenin turu ayrı görünsün diye: "dün gece yedek alındı mı" sorusunun
+    # cevabı, elle alınmış bir yedeğin varlığıyla karışmamalı.
+    tag_new_backups("zamanlı", basladi)
+    cfg["last_ok"] = (rc == 0)
+    cfg["last_error"] = err
+    if rc == 0:
+        # Olay satırındaki "motor" alanı panelde olduğu gibi yazılıyor; tek
+        # motor değil bütün tur olduğu için Türkçe bir etiket veriyoruz.
+        record_event("backup", "tümü", "Zamanlanmış yedekleme tamamlandı.")
+    else:
+        # Seviye "critical": bu tur kimsenin başında olmadığı saatte koşuyor.
+        # Elle basılan düğmenin sonucunu kullanıcı ekranda görür, buranınkini
+        # yalnız bildirim gösterir — "gece yedeği alınamadı", öğrenilmesinde
+        # en geç kalınmaması gereken şeydir.
+        record_event("backup_failed", "tümü",
+                     "Zamanlanmış yedekleme başarısız: %s" % err,
+                     level="critical")
+
+    # Temizlik, yedekleme düşse bile çalışır: yedeğin düşme sebebi çoğu zaman
+    # diskin dolmasıdır ve tam o durumda temizliği atlamak işi kötüleştirir.
+    rc2, err2 = _backup_run(["clean", str(cfg["retention_days"])], log)
+    if rc2 != 0:
+        # last_ok'a YANSITMIYORUZ: elde geçerli kurtarma noktaları var, yalnız
+        # eskiler birikiyor. Bunu "gece yedeği alınamadı" diye göstermek
+        # alarmı yanlış yere çalardı; uyarı olarak olay günlüğüne düşüyor.
+        record_event("backup_clean_failed", "tümü",
+                     "Eski yedekler temizlenemedi: %s — yedek dizini büyümeye "
+                     "devam eder." % err2, level="warning")
+    save_backup_cfg(cfg)
+
+
+def backup_scheduler():
+    """Zamanlanmış yedekleme — prometheus_target_refresher ile aynı desen.
+
+    Neden ayrı bir cron değil: zamanlamayı panelden değiştirmek, container
+    içindeki crontab'ı yeniden yazmak demekti — üstelik o dosya READ-ONLY
+    mount'un altında. Ayarı okuyanla koşturanın aynı süreç olması,
+    "kaydettim ama gece yine eski saatte koştu" sınıfından hataları baştan
+    imkânsız kılıyor.
+
+    Her tur try/except ile sarılı. Thread ölürse hiçbir yerde hata görünmez,
+    yalnız yedekler durur — bu üründeki en pahalı sessizlik odur.
+    """
+    log("yedek zamanlayıcısı başladı (her %d sn kontrol)" % BACKUP_TICK)
+    while True:
+        time.sleep(BACKUP_TICK)
+        try:
+            cfg = load_backup_cfg()
+            if not cfg.get("enabled"):
+                continue
+            hm = _parse_hhmm(cfg.get("time"))
+            if not hm:
+                continue
+            lt = time.localtime()
+            if (lt.tm_hour, lt.tm_min) != hm:
+                continue
+            # Aynı gün ikinci kez koşmaz: hedef dakika 30 sn'lik turlarla en
+            # az iki kez yakalanıyor, tur uzun sürerse daha da fazla.
+            if cfg.get("last_run") and _same_local_day(cfg["last_run"],
+                                                       time.time()):
+                continue
+            if not BACKUP_LOCK.acquire(blocking=False):
+                log("zamanlanmış yedek atlandı: başka bir yedekleme sürüyor")
+                continue
+            try:
+                _run_scheduled_backup(cfg)
+            finally:
+                BACKUP_LOCK.release()
+        except Exception as e:
+            log("yedek zamanlayıcısı hatası:", repr(e))
+
+
+# =============================================================================
 # DURUM
 # =============================================================================
 def status():
@@ -2784,6 +3282,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/topology":
             return self._send(200, {"topology": load_topology(),
                                     "auto_failover": sorted(auto_failover_engines())})
+        if path == "/api/backups":
+            return self._send(200, backups_overview())
         if path.startswith("/api/engines/") and path.endswith("/connection"):
             eid = self._engine_from(path)
             if not eid:
@@ -2815,6 +3315,45 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(401, {"error": "yetkisiz"})
         body = self._body()
 
+        # --- yedekleme zamanlaması ------------------------------------
+        # Gövde BURADA doğrulanır, zamanlayıcıda değil: geçersiz bir saat
+        # diske yazılırsa hata ancak gece, kimse bakmazken ortaya çıkar ve
+        # o gecenin yedeği hiç alınmaz. Reddi kullanıcı ekranda görsün.
+        if path == "/api/backup/schedule":
+            if not isinstance(body.get("enabled"), bool):
+                return self._send(400, {"error": "'enabled' alanı true ya da "
+                                                 "false olmalı."})
+            hm = _parse_hhmm(body.get("time"))
+            if not hm:
+                return self._send(400, {"error": "Saat 'SS:DD' biçiminde "
+                                                 "olmalı (00:00 – 23:59)."})
+            rd = body.get("retention_days")
+            # Panel sayıyı dizge olarak da gönderebilir (<input type="number">
+            # değeri bir dizgedir). Ekranda 7 yazarken "tam sayı olmalı"
+            # demek kullanıcıya çözülemeyen bir hata verirdi.
+            if isinstance(rd, str) and rd.strip().isdigit():
+                rd = int(rd.strip())
+            if isinstance(rd, bool) or not isinstance(rd, int):
+                return self._send(400, {"error": "'retention_days' gün sayısı "
+                                                 "(tam sayı) olmalı."})
+            if not BACKUP_RETENTION_MIN <= rd <= BACKUP_RETENTION_MAX:
+                return self._send(400, {
+                    "error": "Saklama süresi %d ile %d gün arasında olmalı."
+                             % (BACKUP_RETENTION_MIN, BACKUP_RETENTION_MAX)})
+            cfg = load_backup_cfg()
+            cfg.update({"enabled": body["enabled"], "time": "%02d:%02d" % hm,
+                        "retention_days": rd})
+            save_backup_cfg(cfg)
+            nxt = backup_next_run(cfg)
+            record_event("config", "tümü",
+                         "Yedek zamanlaması: %s, saat %s, %d gün saklama%s"
+                         % ("açık" if cfg["enabled"] else "kapalı",
+                            cfg["time"], rd,
+                            (" — sonraki koşum %s" % time.strftime(
+                                "%Y-%m-%d %H:%M", time.localtime(nxt)))
+                            if nxt else ""))
+            return self._send(200, {"ok": True, "next_run": nxt})
+
         if path.startswith("/api/engines/"):
             eid = self._engine_from(path)
             if not eid:
@@ -2829,6 +3368,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if action == "deactivate":
                 jid = new_job("deactivate", eid)
                 threading.Thread(target=do_deactivate, daemon=True, args=(jid, eid)).start()
+                return self._send(202, {"job": jid})
+            if action == "backup":
+                jid = new_job("backup", eid)
+                threading.Thread(target=do_backup, daemon=True,
+                                 args=(jid, eid)).start()
                 return self._send(202, {"job": jid})
             if action in ("replication-enable", "replication-disable"):
                 jid = new_job(action, eid)
@@ -2939,6 +3483,10 @@ def main():
             log("yönlendirme tablosu yazılamadı:", e)
         threading.Thread(target=failover_supervisor, daemon=True).start()
         threading.Thread(target=prometheus_target_refresher, daemon=True).start()
+        # Yedek zamanlayıcısı da yalnız Docker backend'inde: backup.sh
+        # dump'ları `docker exec` ile alıyor, K8s'te karşılığı yok. Orada
+        # başlatmak, her gece "container bulunamadı" ile düşen bir tur demek.
+        threading.Thread(target=backup_scheduler, daemon=True).start()
 
     Server(("0.0.0.0", LISTEN_PORT), Handler).serve_forever()
 

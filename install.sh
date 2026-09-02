@@ -260,8 +260,16 @@ fi
 # =============================================================================
 # ZAMANLANMIŞ GÖREVLER (şablondan gerçek yollarla üretilir)
 # =============================================================================
+# Bu dosya ÜRETİLİYORDU ama KURULMUYORDU: `crontab state/crontab` satırını
+# kimsenin çalıştırması gerektiği yalnız burada, bir kez, geçerken yazıyordu.
+# Test sunucusunda `crontab -l` bomboştu ve backups/ altındaki motor
+# klasörleri de öyleydi — kullanıcı ise kurulum çıktısında "state/crontab
+# hazır" satırını gördüğü için aylardır yedek alındığını sanıyordu. Varsayılan
+# zamanlama artık controller'ın içinde koşuyor ve PANELDEN açılıyor; aşağıdaki
+# dosya yalnızca host cron'u tercih edenler için üretilmeye devam ediyor.
 sed "s|__STACK_DIR__|$STACK_DIR_VAL|g" scripts/crontab.template > state/crontab
-ok "state/crontab hazır — yüklemek için: crontab state/crontab"
+ok "Otomatik yedek panelden yönetilir (Yedekler bölümü) — açmadan yedek alınmaz"
+log "state/crontab da üretildi; İSTEĞE BAĞLIDIR (host cron isterseniz: crontab state/crontab)"
 
 # =============================================================================
 # ÖZET
@@ -318,6 +326,12 @@ cat <<EOF
   Panele girin, ihtiyacınız olan veritabanının kartındaki
   "Aktif Et" düğmesine basın. Sistem sunucunuzun belleğini ölçer,
   ayarları kendisi hesaplar. Hiçbir teknik değer girmenize gerek yok.
+
+  ${BOLD}Otomatik yedek${NC}: panelden açılır (Yedekler bölümü)
+  Kurulum bunu SİZİN YERİNİZE AÇMAZ; açmadığınız sürece hiçbir yedek
+  alınmaz. Açtığınızda saati ve kaç gün saklanacağını da orada seçersiniz.
+  Host cron'u tercih edenler için state/crontab hâlâ üretiliyor
+  (isteğe bağlı; kurmak için: crontab state/crontab).
 
   Terminalden yönetmek isterseniz:
     ./stack.sh list              # motorlar ve durumları
