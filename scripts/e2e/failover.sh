@@ -738,12 +738,25 @@ onkosullar() {   # 0 = zincire devam edilebilir
     if [ "$rc" -ne 0 ]; then
         if [ "$KUR" != "1" ]; then
             t_skip "$eid: devir zinciri" \
-                   "yedek kopya kurulu değil ve E2E_KUR=0. Kurmak için: ./stack.sh replica on $eid"
+                   "yedek kopya kurulu değil ve E2E_KUR=0. Kurmak için: ./stack.sh replica on $eid (roller takas edilmişse: ./stack.sh failover rebuild $eid)"
             return 1
         fi
         log "$eid: yedek kopya kurulu değil — './stack.sh replica on $eid' çalıştırılıyor"
         log "   (ilk kopyalama veritabanı büyüklüğüne göre dakikalar sürebilir; üst sınır ${REPLIKA_TO} sn)"
-        timeout "$REPLIKA_TO" ./stack.sh replica on "$eid" > "$TMP/replica.log" 2>&1
+        # ROLLER TAKAS EDİLMİŞSE DOĞRU KOMUT BAŞKA. Bir devirden sonra ana
+        # kopya artık kataloğun ilk servisi değildir ve ürün bu durumda
+        # 'replica on' isteğini BİLEREK reddeder: hangi düğümün güncel veriyi
+        # taşıdığı belirsizken yedek kurmak, yanlış düğümü silmek olabilir.
+        # O durumda doğru komut 'failover rebuild' — eski düğümü, YENİ ana
+        # kopyadan baştan kurar. Test bunu bilmediği için paket her devir
+        # sonrası 'yedek kopya kurulu değil' deyip düşüyordu; ürün doğru
+        # davranırken test yanlış kapıyı çalıyordu.
+        if [ "$prim" != "$M_PRIM_SVC" ]; then
+            log "$eid: roller takas (ana kopya $prim) — 'failover rebuild' kullanılıyor"
+            timeout "$REPLIKA_TO" ./stack.sh failover rebuild "$eid"                 > "$TMP/replica.log" 2>&1
+        else
+            timeout "$REPLIKA_TO" ./stack.sh replica on "$eid"                 > "$TMP/replica.log" 2>&1
+        fi
         rc=$?
         if [ "$rc" -eq 124 ]; then
             t_unknown "$eid: yedek kopya kuruldu (./stack.sh replica on)" \
