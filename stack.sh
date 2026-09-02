@@ -582,6 +582,30 @@ print("__SCHED__ %d" % (1 if s.get("enabled") else 0))
         fi
     fi
 
+    # --- Betiklerde Windows satır sonu (\r) var mı? ------------------
+    # Depo LF'e zorlanmış (.gitattributes) ama dosyalar depoyu ATLAYARAK da
+    # gelebiliyor: WinSCP/FileZilla ile kopyalama, Windows'ta düzenleyip
+    # yapıştırma, panoya alıp `cat > dosya` ile yazma. Sonucu her seferinde
+    # aynı ve teşhisi zor:
+    #     ./backup.sh: /bin/bash^M: bad interpreter: No such file or directory
+    #     set: line 7: illegal option -
+    # İkinci mesaj hiçbir yerde "\r" demiyor; insan hatayı betikte arar.
+    local _cr=0 _f
+    for _f in "$STACK_ROOT"/stack.sh "$STACK_ROOT"/install.sh \
+              "$STACK_ROOT"/scripts/*.sh "$STACK_ROOT"/scripts/*/*.sh; do
+        [ -f "$_f" ] || continue
+        if LC_ALL=C grep -q "$(printf '\r')" "$_f" 2>/dev/null; then
+            [ "$_cr" -eq 0 ] && err "Bu betiklerde Windows satır sonu (\r) var — kabuk onları komutun parçası sanar:"
+            printf '    %s\n' "${_f#$STACK_ROOT/}" >&2
+            _cr=$((_cr+1))
+        fi
+    done
+    if [ "$_cr" -eq 0 ]; then
+        ok "betiklerde Windows satır sonu yok"
+    else
+        printf '\n    Onarım:  sed -i "s/\r$//" <dosya>\n\n' >&2
+    fi
+
     # --- Paylaşılan dosyalar gerçekten yazılabilir mi? -----------------------
     local _kotu
     _kotu="$(_yazilamayanlar)"
