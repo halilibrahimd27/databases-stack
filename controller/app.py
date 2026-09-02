@@ -648,7 +648,15 @@ def _docker_containers_uncached():
             "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}\t"
             "{{.HostConfig.Memory}}\t"
             "{{index .Config.Labels \"com.docker.compose.service\"}}\t"
-            "{{.Id}}")
+            # ".Id" DEĞİL ".ID". İkisi de kimlik veriyor gibi görünür ama ".Id"
+            # docker'ı ham JSON (map) yoluna düşürüyor; o yolda sağlık
+            # kontrolü OLMAYAN container'da ".State.Health" "olmayan anahtar"
+            # hatası veriyor ve docker o container'ı HİÇ YAZMIYOR. Ölçüldü:
+            # ".Id" ile 15 container'ın 11'i geliyordu, düşenlerin hepsi
+            # healthcheck'i olmayanlardı (bütün exporter'lar). Sonuç:
+            # Prometheus hedef listesi boş, BÜTÜN panolar boş, bellek
+            # muhasebesi eksik — ve hiçbir hata görünmüyordu. ".ID" ile 15/15.
+            "{{.ID}}")
     rc, out, _ = run(["docker", "inspect", "--format", tmpl] + ids, timeout=60)
     res = []
     for line in out.splitlines():
@@ -664,6 +672,14 @@ def _docker_containers_uncached():
                     "health": health, "memory_mb": mem_mb, "id": cid.strip()})
     if rc != 0 and not res:
         _DOCKER_PROBE["ok"] = False     # inspect de cevap vermedi
+    # EKSİK LİSTE, BOŞ LİSTEDEN TEHLİKELİDİR: boş liste hemen fark edilir,
+    # eksik liste "her şey yolunda" gibi görünür. Yukarıdaki .Id hatası
+    # tam olarak böyle görünmez kalmıştı. Artık gürültü çıkarıyor.
+    if len(res) < len(ids):
+        log("UYARI: docker inspect %d container'ın %d'sini döndürdü — "
+            "eksik olanlar hiçbir hesaba girmiyor (hedef listesi, bellek "
+            "muhasebesi, durum). inspect çıkış kodu: %d"
+            % (len(ids), len(res), rc))
     return res
 
 

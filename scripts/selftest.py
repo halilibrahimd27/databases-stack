@@ -1073,6 +1073,21 @@ _dorep = _ctrl_src[_dorep_i:_dorep_i + 6000]
 ck("replika kontrolü plan_engine'in budget_mb'sini KULLANMIYOR",
    "free_budget_mb()" in _dorep and 'p.get("budget_mb"' not in _dorep)
 
+# docker inspect şablonu ".Id" KULLANMAMALI. ".Id" docker'ı ham JSON (map)
+# yoluna düşürüyor; o yolda sağlık kontrolü olmayan container'da
+# ".State.Health" "olmayan anahtar" hatası veriyor ve docker o container'ı
+# hiç yazmıyor. Ölçüldü: 15 container'ın 11'i geliyordu, düşenlerin hepsi
+# healthcheck'i olmayanlardı (bütün exporter'lar). Sonuç: Prometheus hedef
+# listesi boş, bütün panolar boş, bellek muhasebesi eksik — ve hiçbir hata
+# görünmüyordu.
+_dc_i = _ctrl_src.find("def _docker_containers_uncached")
+_dc = _ctrl_src[_dc_i:_dc_i + 2500] if _dc_i >= 0 else ""
+ck("container listeleyici bulundu", _dc_i >= 0)
+ck("docker inspect şablonu '.Id' değil '.ID' kullanıyor",
+   "{{.ID}}" in _dc and "{{.Id}}" not in _dc)
+ck("eksik liste sessiz kalmıyor (uyarı basılıyor)",
+   "len(res) < len(ids)" in _dc)
+
 # Kilit dosyası /tmp'de OLMAMALI. /tmp herkese yazılabilir ama dosyanın SAHİBİ
 # onu ilk yaratandır: root olarak bir kez koşan yedek, kilidi root'a ait bırakıp
 # ondan sonraki her kullanıcı koşusunu "Permission denied" ile öldürüyordu —
