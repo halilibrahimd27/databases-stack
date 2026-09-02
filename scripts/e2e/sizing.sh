@@ -715,6 +715,13 @@ fi
 # =============================================================================
 heading "2) Host bütçesi"
 
+# Rezerve/tavan defteri kontrol düzleminin KENDİ hesabı: docker rezerve
+# değeri tutmuyor (compose mem_reservation kullanmıyor), rezerve motorun iç
+# ayarlarından hesaplanıyor. Bu yüzden sayıyı ürüne soruyoruz.
+ST_SYS="$TMP/status_butce.json"
+sys_code="$(api_get /api/status "$ST_SYS")" || sys_code="000"
+[ "$sys_code" = "200" ] || printf '' > "$ST_SYS"
+
 # Ürünün çekirdek vaadi: açık container limitlerinin toplamı host RAM'ini
 # aşmaz. Aştığında hiçbir uyarı çıkmaz; çekirdek ilk bellek baskısında en
 # büyük container'ı öldürür ve bunu kullanıcıya kimse söylemez.
@@ -756,32 +763,62 @@ else
         toplam_mb=$((toplam_mb + m))
     done
 
-    # Sınır = RAM − OS payı. os_reserve_mb okunamazsa eskiden 0 varsayılıyordu
-    # ve sınır SESSİZCE tüm RAM'e gevşiyordu: 30 GB'lık gerçek bir aşım bu
-    # yüzden GEÇTİ oluyordu. Payı bilmiyorsak sınırı da bilmiyoruz.
-    # DİKKAT: `.get("os_reserve_mb", 0)` yazmak alanın YOKLUĞUNU 0 diye okur ve
-    # sınırı sessizce tüm RAM'e gevşetir — sahte yığında birebir üretildi:
-    # alan silindiğinde kontrol "sınır 32577 MB = RAM − OS payı" deyip GEÇTİ
-    # yazıyordu. Varsayılan yok; alan yoksa pjq hata veriyor.
-    osr="$(pjq "$PLANS" 'list(d["plans"].values())[0]["os_reserve_mb"]')" || osr=""
-    if [ "$HOST_TOTAL_MB" -le 0 ]; then
-        t_unknown "açık container limitlerinin toplamı host RAM'ine sığıyor" \
-                  "host RAM'i okunamadı (/proc/meminfo) — sığıp sığmadığı hesaplanamaz"
-    elif ! tamsayi_mi "${osr:-}"; then
-        t_unknown "açık container limitlerinin toplamı host RAM'ine sığıyor" \
-                  "planda os_reserve_mb yok; OS payı bilinmeden sınır tüm RAM'e gevşer ve gerçek aşımlar geçmiş görünür"
+    # İKİ AYRI KURAL, İKİ AYRI SORU. Bu bölüm eskiden tek bir şey soruyordu:
+    #   Σtavan ≤ RAM − OS payı
+    # Bu kural YANLIŞ ve ürünün modeliyle çelişiyor. docker --memory bir
+    # TAVANDIR, rezervasyon değil: container o belleği açılışta ayırmaz.
+    # Tavanları toplayıp RAM ile kıyaslamak, yoldaki arabaların azami
+    # hızlarını toplayıp "yol kapasitesi aşıldı" demeye benzer. Ölçüldü:
+    # toplam tavan 15151 MB > RAM 15984 − 3196 iken makinenin GERÇEK
+    # kullanımı 2 GB, çekirdeğin bellek baskısı 0.00 idi. Yani kontrol
+    # sağlıklı bir sunucuyu "OOM-killer devreye girer" diye suçluyordu.
+    #
+    # Ürünün uyguladığı iki kural şunlar (controller/app.py):
+    #   SERT   Σrezerve ≤ allocatable_mb            (gerçekten ayrılan bellek)
+    #   YUMUŞAK Σtavan  ≤ allocatable_mb × overcommit_limit
+    # Rezerve docker'dan OKUNAMAZ (compose mem_reservation kullanmıyor);
+    # motorun kendi iç ayarlarından hesaplanır, o yüzden kaynağı kontrol
+    # düzleminin kendi defteri: /api/status system.*
+    S_ALLOC="$(pjq "$ST_SYS" 'd["system"]["allocatable_mb"]')" || S_ALLOC=""
+    S_POL="$(pjq "$ST_SYS"   'd["system"]["overcommit_limit"]')" || S_POL=""
+    S_RES="$(pjq "$ST_SYS"   'd["system"]["stack_reserved_mb"]')" || S_RES=""
+
+    if ! tamsayi_mi "${S_ALLOC:-}" || [ "$S_ALLOC" -le 0 ]; then
+        t_unknown "açık motorların REZERVE toplamı dağıtılabilir belleğe sığıyor (SERT kural)" \
+                  "/api/status system.allocatable_mb okunamadı (gelen: '${S_ALLOC:-yok}') — sığıp sığmadığı hesaplanamaz"
+        t_unknown "açık container TAVANLARI aşırı taahhüt sınırının altında (YUMUŞAK kural)" \
+                  "/api/status system.allocatable_mb okunamadı — aşırı taahhüt sınırı hesaplanamaz"
     else
-        sinir=$(( HOST_TOTAL_MB - osr ))
-        if [ "$toplam_mb" -gt "$sinir" ]; then
-            # Eksik ölçüm olsa bile: elimizdeki PARÇA toplam zaten sınırı
-            # aşıyorsa aşım kanıtlanmıştır, eksik veri bunu iyileştiremez.
-            t_fail "açık container limitlerinin toplamı host RAM'ine sığıyor" \
-                   "toplam $toplam_mb MB > sınır $sinir MB (RAM $HOST_TOTAL_MB − OS payı $osr) — aşırı dağıtım; ilk yoğunlukta OOM-killer devreye girer${okunamayan:+ (üstelik şunlar hiç okunamadı:$okunamayan)}"
-        elif [ -n "$okunamayan" ]; then
-            t_unknown "açık container limitlerinin toplamı host RAM'ine sığıyor" \
-                      "$adet container'ın $olculen tanesi okunabildi; limiti okunamayan:$okunamayan — eksik toplam ($toplam_mb MB) sınırın ($sinir MB) altında görünüyor ama gerçek toplam bilinmiyor"
+        # --- SERT kural: rezerve aşırı taahhüt EDİLEMEZ ----------------------
+        if ! tamsayi_mi "${S_RES:-}"; then
+            t_unknown "açık motorların REZERVE toplamı dağıtılabilir belleğe sığıyor (SERT kural)" \
+                      "/api/status system.stack_reserved_mb üretmiyor — rezerve toplamı bilinmiyor"
+        elif [ "$S_RES" -gt "$S_ALLOC" ]; then
+            t_fail "açık motorların REZERVE toplamı dağıtılabilir belleğe sığıyor (SERT kural)" \
+                   "rezerve toplamı $S_RES MB > dağıtılabilir $S_ALLOC MB — bu bellek açılışta GERÇEKTEN ayrılır; aşıldığında OOM-killer devreye girer"
         else
-            t_ok "açık $adet container'ın limit toplamı ($toplam_mb MB) host RAM'ine sığıyor (sınır $sinir MB = RAM − OS payı)"
+            t_ok "açık motorların rezerve toplamı ($S_RES MB) dağıtılabilir belleğe ($S_ALLOC MB) sığıyor"
+        fi
+
+        # --- YUMUŞAK kural: tavan toplamı politika sınırının altında ---------
+        if [ -z "${S_POL:-}" ]; then
+            t_unknown "açık container TAVANLARI aşırı taahhüt sınırının altında (YUMUŞAK kural)" \
+                      "/api/status system.overcommit_limit üretmiyor — politika bilinmeden sınır hesaplanamaz"
+        else
+            # Kabuk tamsayı aritmetiği 1.5'i 1'e kırpar; awk ile çarpıyoruz.
+            sinir="$(awk -v a="$S_ALLOC" -v p="$S_POL" 'BEGIN{printf "%d", a*p}' 2>/dev/null)"
+            if ! tamsayi_mi "${sinir:-}" || [ "$sinir" -le 0 ]; then
+                t_unknown "açık container TAVANLARI aşırı taahhüt sınırının altında (YUMUŞAK kural)" \
+                          "sınır hesaplanamadı (allocatable=$S_ALLOC × politika=$S_POL)"
+            elif [ "$toplam_mb" -gt "$sinir" ]; then
+                t_fail "açık container TAVANLARI aşırı taahhüt sınırının altında (YUMUŞAK kural)" \
+                       "tavan toplamı $toplam_mb MB > sınır $sinir MB (dağıtılabilir $S_ALLOC × aşırı taahhüt $S_POL)${okunamayan:+ (üstelik şunlar hiç okunamadı:$okunamayan)}"
+            elif [ -n "$okunamayan" ]; then
+                t_unknown "açık container TAVANLARI aşırı taahhüt sınırının altında (YUMUŞAK kural)" \
+                          "$adet container'ın $olculen tanesi okunabildi; limiti okunamayan:$okunamayan — eksik toplam ($toplam_mb MB) sınırın ($sinir MB) altında görünüyor ama gerçek toplam bilinmiyor"
+            else
+                t_ok "açık $adet container'ın tavan toplamı ($toplam_mb MB) politika sınırının ($sinir MB) altında"
+            fi
         fi
     fi
 
