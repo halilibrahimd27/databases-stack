@@ -329,6 +329,64 @@ büyüyen bir liste. Yönetim panelinin altına sıkıştırıldığında, "dün
 yedek alındı mı?" sorusunun cevabı on iki kartın altında, sayfanın
 görünmeyen kısmında kalıyordu.
 
+### Kurtarma provası — yedeğin tek dürüst güvencesi
+
+Bir yedeğin sağlam görünmesi, geri yüklenebileceği anlamına gelmez. Bu ürün
+o boşluğu kapatıyor: **prova**, yedeği tek kullanımlık bir container ve tek
+kullanımlık bir hacimde **gerçekten geri yükler**, süreyi ölçer, tablo/satır
+sayar ve üretimle karşılaştırır. Sonra kendini siler.
+
+```bash
+./scripts/restore-drill.sh mariadb        # en yeni yedekle prova
+```
+
+Üretime, üretim hacmine ve gateway'e dokunmaz — bu bir niyet beyanı değil,
+prova container'ı `--network none` ile ve ayrı bir hacimle açılıyor.
+
+Ölçülmüş bir koşum:
+
+```
+[✓] Geri yükleme tamamlandı — ölçülen RTO: 13 sn
+    geri yüklenen kopya: 1 tablo / 1 satır
+    üretim (mariadb-replica): 1 tablo / 1 satır
+{"engine":"mariadb","ok":true,"seconds":13,"match":true,"cleanup":true, …}
+```
+
+Panelde *Yedekler* sayfasında motor satırında üç durumdan biri görünür:
+
+| Rozet | Anlamı |
+|---|---|
+| `prova geçti 2 saat önce · 13 sn` | Bu yedek gerçekten geri yüklendi, ölçülen süre bu |
+| `PROVA KALDI` | Elde **geri yüklenemeyen** bir yedek var — felaket gününden önce öğrenildi |
+| `prova yapılmadı` | Yedeğiniz var ama geri yüklenip yüklenmeyeceği **bilinmiyor** |
+
+Üçüncüsü bilerek görünür: bilmediğimiz bir şeyi sessizce boş bırakmak,
+olmayan bir güvence hissettirir. Gecelik yedeğin ardından haftada bir
+kendiliğinden koşar (`DRILL_EVERY_DAYS`), düşerse olay **kritik** seviyede
+kaydedilir ve webhook'a düşer.
+
+### Veri getirme — elinizdeki veriyi içeri alma
+
+Yeni bir veritabanı açmak kolay; asıl mesele verinin zaten başka yerde
+olması. `import.sh` bir dump dosyasını ya da uzaktaki canlı bir kaynağı
+içeri alır — ve **yanlış şeyi yapmayı reddeder**:
+
+```bash
+./scripts/import.sh mariadb dump.sql.gz              # yerel dosya
+./scripts/import.sh postgresql --kaynak postgres://…  # uzak canlı kaynak
+./scripts/import.sh mariadb dump.sql.gz --kuru        # ne olacağını göster, yazma
+```
+
+| Durum | Davranış |
+|---|---|
+| Hedef boş değil | **Reddeder** ve ne bulduğunu söyler ("1 şema, 1 tablo, 16 KB") |
+| `--uzerine-yaz` verildi | Önce **güvenlik yedeği** alır, dosya adını yazar |
+| Dosya başka motorun dump'ı | **Reddeder** — biçimi tanır, doğru komutu yazar |
+| Motor kapalı | **Reddeder**, nasıl açılacağını söyler |
+
+Desteklenen biçimler: MariaDB/MySQL `.sql(.gz)`, PostgreSQL `.sql(.gz)` ve
+`-Fc` arşivi, MongoDB `.archive(.gz)`, Redis `.rdb(.gz)`, SQL Server `.bak`.
+
 ### Otomatik yedek
 
 Günlük yedek saati ve saklama süresi bu sayfadan ayarlanır; açıp kapatmak tek
