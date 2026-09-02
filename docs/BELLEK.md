@@ -37,6 +37,12 @@ anahtar(lar)ından türediğini yazar. Boş liste "tabanı yok" demektir:
 (Yine de bir OOM kaynağıdır; `shared_buffers + work_mem × max_connections`
 toplamının tavanı aşmadığı `scripts/selftest.py`de ayrıca sınanır.)
 
+Bağlantı **sayısı** da bir bellek kalemidir: PostgreSQL'de her bağlantı
+ayrı bir süreçtir, yani havuz kullanmayan bir uygulama motoru RAM'le
+değil süreç sayısıyla boğar. Bunun için 6432'de isteğe bağlı bir bağlantı
+havuzu vardır; havuz ayarlarının `POSTGRES_MAX_CONNECTIONS`'tan nasıl
+türediği ve transaction pooling'in sınırları `docs/POOLING.md`de.
+
 ---
 
 ## 2. Dağıtılabilir bellek

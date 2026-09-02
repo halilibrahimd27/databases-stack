@@ -98,3 +98,6 @@ spec:
   - name: postgresql
     port: 5432
     targetPort: 5432
+  - name: pgbouncer
+    port: 6432
+    targetPort: 6432

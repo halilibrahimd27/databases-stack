@@ -156,13 +156,19 @@
       "services": [
         "postgresql",
         "pgadmin",
-        "postgres-exporter"
+        "postgres-exporter",
+        "pgbouncer"
       ],
       "client_ports": [
         {
           "port": 5432,
           "proto": "tcp",
           "label": "PostgreSQL protokolü"
+        },
+        {
+          "port": 6432,
+          "proto": "tcp",
+          "label": "PgBouncer bağlantı havuzu"
         }
       ],
       "panel": {
@@ -185,6 +191,14 @@
         "replica_port": 5433,
         "note": "pg_basebackup + streaming replication. Replika hot-standby (okunabilir)."
       },
+      "pool": {
+        "service": "pgbouncer",
+        "port": 6432,
+        "mode": "transaction",
+        "target_env": "POSTGRES_PRIMARY_HOST",
+        "restart_on_failover": true,
+        "note": "PgBouncer hedefini container YARATILIRKEN pgbouncer.ini'ye yazar; devirden sonra bu servis yeniden yaratılmazsa havuz fence edilmiş eski ana kopyaya bakmaya devam eder. 5432 doğrudan bağlantı olarak kalır: transaction pooling oturum durumunu korumaz (SQL düzeyinde PREPARE/DEALLOCATE, LISTEN/NOTIFY, oturum değişkenleri, geçici tablolar). Ayrıntı: docs/POOLING.md"
+      },
       "backup": {
         "supported": true,
         "kind": "logical",
@@ -204,9 +218,10 @@
         "min_mb": 512,
         "share": 0.15,
         "max_mb": 8192,
-        "overhead_mb": 576,
+        "overhead_mb": 640,
         "panel_mb": 512,
         "exporter_mb": 64,
+        "pool_mb": 64,
         "reserve": {
           "from": [
             "POSTGRES_SHARED_BUFFERS"
@@ -1364,7 +1379,7 @@
       }
     }
   ],
-  "_sizing_note": "resources.* alanlarını controller/app.py okur. ÜÇ AYRI KAVRAM: reserve = motorun AÇILIŞTA gerçekten ayırdığı bellek (reserve.from içindeki tuning anahtarlarından türer, boş liste = taban yok); tuning[kind=limit] = docker --memory TAVANI, aşılırsa cgroup OOM killer devreye girer; dağıtılabilir = toplam RAM - OS payı - çekirdek servisler. Aktivasyon üç kuralı birden ister: SERT (Σ rezerve + yeni rezerve <= dağıtılabilir), YUMUŞAK (Σ tavan + yeni tavan <= dağıtılabilir x OVERCOMMIT_LIMIT, varsayılan 1.5 — tavanların hepsi aynı anda dolmaz) ve ÇEKİRDEK KEMERİ (/proc/meminfo MemAvailable >= yeni rezerve + emniyet payı). Sığıyorsa limit = clamp(toplam*share, min_mb, max_mb) ve tavan bütçesi; tuning kuralları bu limitten türetilip state/tuning.env'e yazılır. Tavanları toplayıp RAM ile kıyaslamak KATEGORİ HATASIDIR: %6 dolu bir sunucuda panel '%122 aşım' yazdırıp bütün motorları reddediyordu.",
+  "_sizing_note": "resources.* alanlarını controller/app.py okur. ÜÇ AYRI KAVRAM: reserve = motorun AÇILIŞTA gerçekten ayırdığı bellek (reserve.from içindeki tuning anahtarlarından türer, boş liste = taban yok); tuning[kind=limit] = docker --memory TAVANI, aşılırsa cgroup OOM killer devreye girer; dağıtılabilir = toplam RAM - OS payı - çekirdek servisler. Aktivasyon üç kuralı birden ister: SERT (Σ rezerve + yeni rezerve <= dağıtılabilir), YUMUŞAK (Σ tavan + yeni tavan <= dağıtılabilir x OVERCOMMIT_LIMIT, varsayılan 1.5 — tavanların hepsi aynı anda dolmaz) ve ÇEKİRDEK KEMERİ (/proc/meminfo MemAvailable >= yeni rezerve + emniyet payı). Sığıyorsa limit = clamp(toplam*share, min_mb, max_mb) ve tavan bütçesi; tuning kuralları bu limitten türetilip state/tuning.env'e yazılır. Tavanları toplayıp RAM ile kıyaslamak KATEGORİ HATASIDIR: %6 dolu bir sunucuda panel '%122 aşım' yazdırıp bütün motorları reddediyordu. pool_mb = motorla BİRLİKTE açılan bağlantı havuzunun (PgBouncer) tavanı; ölçümde boşta 1.9 MB kullanıyor, 64 MB kat kat üstü. overhead_mb bu üçünün toplamıdır: panel + exporter + havuz.",
   "_failover_note": "Otomatik failover tek makinede SÜREÇ/CONTAINER arızasına karşı korur; host'un tamamı düşerse iki kopya da düşer (aynı arıza alanı). Gerçek host arızası koruması için replikayı ikinci bir makinede çalıştırın — docs/FAILOVER.md.",
   "_license_note": "Lisanslar bilgi amaçlıdır, hukuki tavsiye değildir. Bu yığındaki motorlar varsayılan ayarlarıyla üretimde ücretsiz kullanılabilir (SQL Server Express dahil). Dikkat gerektiren iki durum: (1) MSSQL_PID'i Developer yaparsanız o kurulum ÜRETİMDE kullanılamaz, (2) SSPL/AGPL lisanslı motorları üçüncü taraflara SERVİS olarak sunuyorsanız hukuk biriminize danışın. Ayrıntı: docs/LICENSING.md"
 }

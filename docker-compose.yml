@@ -91,6 +91,7 @@ services:
       # arkadaki primary değişse bile uygulamanın adresi aynı kalır.
       - "${MARIADB_PORT:-3306}:3306"   # mariadb
       - "${POSTGRES_PORT:-5432}:5432"   # postgresql
+      - "${PGBOUNCER_PORT:-6432}:6432"   # postgresql bağlantı havuzu
       - "${MONGO_PORT:-27017}:27017"   # mongodb
       - "${REDIS_PORT:-6379}:6379"   # redis
       - "${MSSQL_PORT:-1433}:1433"   # mssql
@@ -124,6 +125,12 @@ services:
       - ${STACK_DIR:-.}/gateway/nginx.conf:/etc/nginx/nginx.conf:ro
       # Yönlendirme tablosu — controller üretir, failover'da yeniden yazar.
       - ${STACK_DIR:-.}/state/routes.conf:/etc/nginx/stream.d/routes.conf:ro
+      # 6432 (bağlantı havuzu) AYRI bir dosyada, çünkü hedefi sabittir:
+      # devirde yer değiştiren pgbouncer değil, pgbouncer'ın kendi
+      # hedefidir. routes.conf'u controller her devirde yeniden yazıyor;
+      # değişmeyen bir kaydı oraya koymak onu üretilen dosyaya bağımlı
+      # kılardı.
+      - ${STACK_DIR:-.}/config/gateway/stream-pgbouncer.conf:/etc/nginx/stream.d/pgbouncer.conf:ro
       - ${STACK_DIR:-.}/gateway/templates:/etc/nginx/templates:ro
       - ${STACK_DIR:-.}/gateway/snippets:/etc/nginx/snippets:ro
       - ${STACK_DIR:-.}/gateway/html:/usr/share/nginx/html:ro
@@ -476,6 +483,123 @@ services:
       resources:
         limits:
           memory: 64M
+
+  # --- Bağlantı havuzu (profile: postgresql) ---------------------------------
+  # NEDEN VAR: PostgreSQL'de her bağlantı ayrı bir SÜREÇTİR. Havuz kullanmayan
+  # bir uygulama (PHP-FPM, cron işleri, kısa ömürlü işçiler) 200 bağlantı
+  # açtığında motoru belleğiyle değil SÜREÇ SAYISIYLA boğar: shared_buffers ve
+  # work_mem hesabı doğru yapılmış 2 GB'lık bir PostgreSQL, "RAM yetiyor"
+  # derken cevap veremez hale gelir. PgBouncer araya girer ve binlerce
+  # istemciyi onlarca sunucu bağlantısına indirger.
+  #
+  # NEDEN YENİ PORT (6432), NEDEN 5432'NİN ÜSTÜNE DEĞİL:
+  #  1) 5432 replikasyonun ve devrin ÖLÇÜLEN yoludur (scripts/e2e/failover.sh
+  #     oradan bağlanır). O portu havuza çevirmek testlerin doğruladığı yolu
+  #     değiştirir; ürün artık kullanıcının kullandığı yolu sınamıyor olurdu.
+  #  2) Transaction pooling oturum durumunu KORUMAZ. SQL düzeyinde PREPARE,
+  #     LISTEN/NOTIFY, oturum değişkenleri ve geçici tablolar kullanan
+  #     istemciler yük altında SESSİZCE bozulur — havuzu varsayılan yapmak,
+  #     çalışan kurulumları haber vermeden kırmak olurdu.
+  # Bu yüzden 5432 doğrudan bağlantı olarak KALIR, 6432 isteyene açıktır.
+  # Ayrıntı: docs/POOLING.md
+  pgbouncer:
+    <<: *svc
+    profiles: [postgresql]
+    image: ${PGBOUNCER_IMAGE:-edoburu/pgbouncer:${PGBOUNCER_VERSION:-v1.25.2-p0}}
+    container_name: pgbouncer
+    environment:
+      # HEDEF ANA KOPYADIR VE DEVİRDE DEĞİŞİR. Adres, container yaratılırken
+      # pgbouncer.ini'ye YAZILIR; çalışan container env'i yeniden okumaz. Yani
+      # devirden sonra bu servis YENİDEN YARATILMALIDIR:
+      #   docker compose --profile postgresql up -d --force-recreate \
+      #                  --no-deps pgbouncer
+      # Yapılmazsa havuz, fence edilmiş eski ana kopyaya bakmaya devam eder ve
+      # 6432'ye bağlanan uygulamalar için devir hiç olmamış gibi görünür.
+      # roles.env'i controller yazar (postgres-exporter ile aynı değişken).
+      DB_HOST: ${POSTGRES_PRIMARY_HOST:-postgresql}
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER:-root}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-${DB_PASSWORD}}
+      # DB_NAME BİLEREK VERİLMİYOR: imaj onu görmezse `*` (joker) veritabanı
+      # girdisi üretir ve havuz her veritabanı adını aynı sunucuya taşır. Sabit
+      # bir ad yazsaydık kullanıcının sonradan açtığı veritabanları 6432'den
+      # erişilemez olurdu — ve hata mesajı bunu söylemezdi.
+      LISTEN_PORT: 6432
+      POOL_MODE: transaction
+      # PostgreSQL scram-sha-256 ile kuruluyor (POSTGRES_INITDB_ARGS). İmajın
+      # varsayılanı md5'tir; bırakılsaydı havuz sunucuya giriş yapamazdı.
+      AUTH_TYPE: scram-sha-256
+      ADMIN_USERS: ${POSTGRES_USER:-root}
+      # PgBouncer, sunucuya AKTARAMADIĞI başlangıç parametrelerini gönderen
+      # istemciyi reddeder. extra_float_digits'i neredeyse her sürücü,
+      # `options`u ise JDBC gönderir; listeye alınmazsa bağlantı hiç kurulmaz.
+      IGNORE_STARTUP_PARAMETERS: extra_float_digits,options
+      # Havuz ayarlarının türetildiği sayı (aşağıdaki entrypoint hesaplar).
+      # Değeri controller host RAM'ine göre bulup state/tuning.env'e yazar;
+      # katalogda per_gb 100, alt/üst sınır 50–400.
+      POSTGRES_MAX_CONNECTIONS: ${POSTGRES_MAX_CONNECTIONS:-200}
+    # HAVUZ AYARLARI max_connections'TAN TÜRETİLİR — sabit yazılamaz.
+    # Sabit bir default_pool_size, sunucunun kabul ettiğinden fazla bağlantı
+    # açmaya çalışan bir havuz üretebilirdi; o zaman havuz sorunu çözmez,
+    # "FATAL: sorry, too many clients already" hatasını uygulamadan alıp
+    # kendi üstüne taşır — üstelik artık hata veren tek nokta havuzdur.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        set -e
+        MAXC="$${POSTGRES_MAX_CONNECTIONS:-200}"
+        # Havuzun sunucuda tutabileceği bağlantı max_connections'ın YARISINI
+        # aşmaz. Kalan yarı doğrudan 5432'ye bağlananlara, pgAdmin'e,
+        # postgres-exporter'a ve yedek alan pg_dump'a kalmalıdır; havuz
+        # onların yerini kapatırsa panelden veritabanına bakamaz, yedek
+        # alamaz hale gelirsiniz. İki tavan birlikte: ROL başına ve
+        # VERİTABANI başına %50. PgBouncer'da genel bir üst sınır yoktur;
+        # bu ikisi, "tek rol + çok veritabanı" ve "tek veritabanı + çok rol"
+        # durumlarının ikisini de %50'de tutar.
+        MAX_USER_CONNECTIONS=$$(( MAXC / 2 ))
+        MAX_DB_CONNECTIONS=$$(( MAXC / 2 ))
+        # Tek bir (kullanıcı, veritabanı) havuzu %25'ten fazlasını almasın:
+        # aynı motoru paylaşan ikinci bir uygulama bağlantı bulamaz olmasın.
+        DEFAULT_POOL_SIZE=$$(( MAXC / 4 ))
+        if [ "$$DEFAULT_POOL_SIZE" -lt 5 ]; then DEFAULT_POOL_SIZE=5; fi
+        # İstemci tarafı BOL — havuzun bütün anlamı burada: PgBouncer'da bir
+        # istemci ~8 KB tampon (2 x pkt_buf), PostgreSQL'de ise bir süreçtir.
+        # 5 kat, tepe anında istemcinin bağlantı REDDİ almak yerine sıraya
+        # girmesini sağlar (query_wait_timeout varsayılanı 120 sn).
+        MAX_CLIENT_CONN=$$(( MAXC * 5 ))
+        export DEFAULT_POOL_SIZE MAX_USER_CONNECTIONS MAX_DB_CONNECTIONS
+        export MAX_CLIENT_CONN
+        echo "[havuz] max_connections=$$MAXC -> pool=$$DEFAULT_POOL_SIZE" \
+             "rol=$$MAX_USER_CONNECTIONS db=$$MAX_DB_CONNECTIONS" \
+             "istemci=$$MAX_CLIENT_CONN"
+        exec /entrypoint.sh "$$@"
+      - sh
+    command: ["/usr/bin/pgbouncer", "/etc/pgbouncer/pgbouncer.ini"]
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    healthcheck:
+      # Bu kontrol HAVUZUN KENDİ SÜRECİNİ ölçer, arkadaki PostgreSQL'i DEĞİL.
+      # Ölçüldü: motor durdurulmuşken de "accepting connections" der, çünkü
+      # pgbouncer istemciyi kabul edip sıraya alır. Bilerek böyle: motorun
+      # sağlığı zaten postgresql servisinin healthcheck'inde ölçülüyor ve
+      # burada ikinci kez ölçmek, havuz sapasağlam ayaktayken onu "hasta"
+      # gösterip gereksiz yeniden başlatma üretirdi.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432 -U ${POSTGRES_USER:-root} || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          # Ölçüm: boşta 1.9 MiB (docker stats). PgBouncer TEK SÜREÇ ve tek
+          # iş parçacığıdır; büyüyen tek kalem istemci başına ~8 KB tampon →
+          # 1000 istemcide ~8 MB. 64 MB ölçülen kullanımın kat kat üstünde ve
+          # exporter'larla aynı sınıf; motorun bütçesinden çaldığı pay ihmal
+          # edilebilir.
+          memory: ${PGBOUNCER_MEM_LIMIT:-64M}
 
   # --- PostgreSQL replikası (profile: postgresql-replica) --------------------
   postgresql-replica:
