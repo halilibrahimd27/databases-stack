@@ -25,6 +25,15 @@ PASS="${MARIADB_PASSWORD:-$DB_PASSWORD}"
 # m()  → tek değerli sorgular (SELECT @@read_only): -N ile, çıplak değer gelsin
 # mv() → DİKEY sorgular (SHOW SLAVE STATUS\G): -N YOK, alan adları korunsun
 m()  { MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD "$SVC" mariadb -u root -N -e "$1" 2>/dev/null; }
+# CONTAINER ÇALIŞMIYORSA BUNU KESİN BİLİYORUZ — öyle söylemeliyiz.
+# Boş cevabı "kötü sonuç" diye yorumlamak bu projenin savaştığı hatanın ta
+# kendisi: ölçülemeyeni ölçülmüş gibi göstermek. Ölçüldü — kapalı bir düğüm
+# için ürün "hiç WAL almamış, yükseltme veri kaybına yol açar" diyordu;
+# doğru cümle "düğüm çalışmıyor"du ve insan yanlış yerde arıyordu.
+ayakta_mi() {   # <servis> → 0 çalışıyor
+    [ "$(docker inspect -f "{{.State.Running}}" "$1" 2>/dev/null)" = "true" ]
+}
+
 mv() { MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD "$SVC" mariadb -u root    -e "$1" 2>/dev/null; }
 mq() { MYSQL_PWD="$PASS" docker exec -e MYSQL_PWD "$SVC" mariadb -u root -N -e "$1" 2>&1; }
 
@@ -38,6 +47,10 @@ case "$ACTION" in
 check) is_primary ;;
 
 ready)
+  if ! ayakta_mi "$SVC"; then
+      echo "[mariadb] ✗ $SVC çalışmıyor — yükseltilecek düğüm yok" >&2
+      exit 3
+  fi
   # SIRA ÖNEMLİ. Önce "replika olarak yapılandırılmış mı" diye bakarız; ancak
   # ondan sonra "zaten primary mi" kısayoluna düşeriz. Ters sırada bakan eski
   # sürüm, SQL iş parçacığı ÖLMÜŞ ama read_only bayrağı kapalı kalmış bozuk bir

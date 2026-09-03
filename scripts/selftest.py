@@ -2831,6 +2831,17 @@ _rds_fo = io.open("scripts/failover/redis.sh", encoding="utf-8").read()
 ck("redis ready: cevapsız düğüm 'yedek değil' sayılmıyor (çıkış 3)",
    'if [ -z "$info" ]' in _rds_fo and "exit 3" in _rds_fo)
 
+# --- "Kapalı" ile "soramadım" da ayrı şeylerdir ------------------------------
+# Container ÇALIŞMIYORSA bunu kesin biliyoruz. Boş cevabı "kötü sonuç" diye
+# yorumlamak, ölçülemeyeni ölçülmüş gibi göstermektir. Ölçüldü: kapalı bir
+# düğüm için PostgreSQL kapısı "hiç WAL almamış — yükseltme veri kaybına yol
+# açar" diyordu (çıkış 1); doğru cümle "düğüm çalışmıyor"du (çıkış 3) ve
+# insan yanlış yerde arıyordu. e2e turu bunu redis tarafında yakaladı.
+for _m, _et in (("redis", "[redis]"), ("postgresql", "[pg]"), ("mariadb", "[mariadb]")):
+    _fo = io.open("scripts/failover/%s.sh" % _m, encoding="utf-8").read()
+    ck("%s devir kapısı: kapalı düğüm 'çalışmıyor' diyor (kötü sonuç değil)" % _m,
+       "çalışmıyor — yükseltilecek düğüm yok" in _fo and "exit 3" in _fo)
+
 # --- DEPODA saklanan satır sonları -------------------------------------------
 # .gitattributes LF'i şart koşuyor ama git bir dosyayı "ikili" sezerse
 # normalize ETMEZ ve CRLF olduğu gibi depoya girer. Linux'ta checkout eden

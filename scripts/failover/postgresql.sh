@@ -9,6 +9,15 @@
 set -eu
 ACTION="${1:-check}"; SVC="${2:-postgresql-replica}"
 SU="${POSTGRES_USER:-root}"
+# CONTAINER ÇALIŞMIYORSA BUNU KESİN BİLİYORUZ — öyle söylemeliyiz.
+# Boş cevabı "kötü sonuç" diye yorumlamak bu projenin savaştığı hatanın ta
+# kendisi: ölçülemeyeni ölçülmüş gibi göstermek. Ölçüldü — kapalı bir düğüm
+# için ürün "hiç WAL almamış, yükseltme veri kaybına yol açar" diyordu;
+# doğru cümle "düğüm çalışmıyor"du ve insan yanlış yerde arıyordu.
+ayakta_mi() {   # <servis> → 0 çalışıyor
+    [ "$(docker inspect -f "{{.State.Running}}" "$1" 2>/dev/null)" = "true" ]
+}
+
 psql_() { docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" "$SVC" \
             psql -U "$SU" -d postgres -tAc "$1" 2>/dev/null | tr -d '[:space:]'; }
 
@@ -18,6 +27,10 @@ check)
   [ "$(psql_ 'SELECT pg_is_in_recovery();')" = "f" ]
   ;;
 ready)
+  if ! ayakta_mi "$SVC"; then
+      echo "[pg] ✗ $SVC çalışmıyor — yükseltilecek düğüm yok" >&2
+      exit 3
+  fi
   # Ana kopya bu noktada ölmüş olabilir — canlı akış ARAMIYORUZ. Aradığımız,
   # standby'ın gerçekten WAL almış olduğunun kanıtı. Hiç WAL almamış bir
   # standby'ı primary yapmak, kullanıcının verisini sessizce yok saymaktır.

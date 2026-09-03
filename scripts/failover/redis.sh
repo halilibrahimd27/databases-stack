@@ -23,8 +23,16 @@ ready)
   # "replika olarak yapılandırılmamış" diye raporlanıyordu. Gerçek bir
   # olayda düğüm bir yapılandırma hatasıyla hiç açılmıyordu; mesaj ise
   # replikasyon ayarını suçluyor, insanı yanlış yere gönderiyordu.
+  # ÜÇ AYRI HÂL, ÜÇ AYRI CÜMLE. "Soramadım" ile "kapalı" aynı şey değildir:
+  # container ÇALIŞMIYORSA bunu KESİN olarak biliyoruz ve öyle söylemeliyiz.
+  # Belirli bir durumu belirsizmiş gibi ("açık mı, parola doğru mu?")
+  # raporlamak, insanı olmayan bir parola sorununu aramaya gönderir.
   if [ -z "$info" ]; then
-      echo "[redis] ✗ $SVC sorgulanamadı (INFO replication cevapsız) — açık mı, parola doğru mu? 'docker logs $SVC'" >&2
+      if [ "$(docker inspect -f "{{.State.Running}}" "$SVC" 2>/dev/null)" != "true" ]; then
+          echo "[redis] ✗ $SVC çalışmıyor — yükseltilecek düğüm yok" >&2
+          exit 3
+      fi
+      echo "[redis] ✗ $SVC ayakta ama sorgulanamadı (INFO replication cevapsız) — parola doğru mu? 'docker logs $SVC'" >&2
       exit 3
   fi
   if printf '%s\n' "$info" | grep -q 'role:slave'; then
