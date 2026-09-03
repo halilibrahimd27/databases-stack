@@ -236,9 +236,20 @@ ck("POST bilinmeyen motor 404",
 s, b = call("/api/engines/redis/activate", method="POST", body="{}")
 ck("activate arka plan işi döndürür", s == 202 and "job" in b)
 if "job" in b:
-    time.sleep(2)
-    s, j = call("/api/jobs/" + b["job"])
-    ck("iş durumu okunabilir", s == 200 and j["state"] != "running", j["state"])
+    # SABİT UYKU KIRILGAN. İş sahte docker çağrılarıyla saniyeler içinde
+    # bitiyor ama yüklü bir makinede 2 saniye yetmiyor ve kontrol rastgele
+    # kırmızı yanıyordu. Kırılgan bir test, testin kendi hatasıdır: ürünü
+    # ölçmüyor, zamanlamayı ölçüyor. Bitmesini BEKLİYORUZ; bitmezse bu da
+    # gerçek bir bulgudur ve süre sınırıyla söylenir.
+    _j_bitis = time.time() + 30
+    j = {"state": "running"}
+    while time.time() < _j_bitis:
+        s, j = call("/api/jobs/" + b["job"])
+        if s != 200 or j.get("state") != "running":
+            break
+        time.sleep(0.5)
+    ck("iş durumu okunabilir", s == 200 and j["state"] != "running",
+       "%s (30 sn beklendi)" % j.get("state"))
     tj = "/tmp/dbstack-selftest/tuning.json"
     ck("hesaplanan ayarlar diske yazıldı",
        os.path.exists(tj) and "redis" in json.load(open(tj, encoding="utf-8")))
@@ -4540,6 +4551,68 @@ ck("motor_parolasi yalnız common.sh'ta tanımlı", not _kopya,
    ", ".join(_kopya) or "tek kaynak")
 ck("common.sh motor_parolasi'nı sağlıyor",
    "motor_parolasi() {" in io.open("scripts/lib/common.sh", encoding="utf-8").read())
+
+
+# =============================================================================
+head("16. Kurtarma noktası seti — 'aynı an' diye satılmamalı")
+# =============================================================================
+# Bir uygulama çoğu zaman birkaç veritabanı kullanır ve yedekler motor motor,
+# dakikalar arayla alınır. "Dün geceye dön" dendiğinde elde birbirinden uzak
+# birkaç AN kalır ve ürün bunu bugüne kadar ne ölçüyor ne söylüyordu.
+#
+# BURADA EN KOLAY YAPILACAK YANLIŞ, bunu "tutarlı yedek" diye sunmaktı:
+# heterojen motorlarda yazmayı durdurmadan gerçek bir anlık görüntü
+# alınamaz ve öyle sunmak yeni bir sessiz yeşil olurdu. Vaat ölçümdür —
+# pencerenin genişliği ve motor başına ne kadar geride kalındığı.
+_set_govde = _capp.split("def do_recovery_set(")[1].split("\ndef ")[0]
+_geri_govde = _capp.split("def do_recovery_set_restore(")[1].split("\ndef ")[0]
+
+# PENCERE ÖLÇÜLÜP KAYDEDİLMELİ: seti bir 'an' gibi sunmanın panzehiri bu tek
+# sayı.
+ck("set pencereyi ölçüp kaydediyor",
+   '"window_seconds"' in _set_govde and "max(anlar) - min(anlar)" in _set_govde)
+# Hedef an, turun BİTTİĞİ an: PITR'lı motorlar oraya ileri sarılabilsin.
+ck("hedef an setin en yeni dosyası", '"target": max(anlar)' in _set_govde)
+
+# TUR SIRAYLA KOŞMALI. Paralel almak pencereyi daraltırdı ama aynı host'ta
+# iki ağır dump, aynı cgroup'ta çift bellek baskısı demek — bu ürünün
+# yedekleme tarafı zaten o hatanın üzerine yazılmış.
+ck("set turu yedekleme kilidini alıyor (iki ağır iş aynı anda koşmasın)",
+   "BACKUP_LOCK.acquire(blocking=False)" in _set_govde)
+
+# GERİ YÜKLEMEDE İKİ YOL AYRI: PITR'ı açık motor hedefe SARILIR, diğeri
+# kendi dosyasına döner ve NE KADAR GERİDE kaldığı raporlanır.
+ck("PITR'ı açık motor hedef ana sarılıyor",
+   "_pitr_ileri_sarabilir(eid)" in _geri_govde and "PITR_SCRIPT" in _geri_govde)
+ck("PITR'sız motorun ne kadar geride kaldığı raporlanıyor",
+   '"behind_seconds"' in _geri_govde and "hedef - int(k.get" in _geri_govde)
+# Özet, 'hepsi aynı ana geldi' DEMEMELİ.
+ck("özet motor motor ne elde edildiğini söylüyor",
+   "hedef anda" in _geri_govde and "gerisinde" in _geri_govde)
+
+# YIKICI İŞ ONAY İSTEMELİ: set geri yükleme TEK motoru değil hepsini değiştirir.
+ck("set geri yükleme açık onay istiyor",
+   'body.get("onayla")' in _capp.split('"/api/recovery-set/restore"')[1][:600])
+# Set ALMAK yıkıcı değildir; onay istemek kullanıcıyı gereksiz yormak olurdu.
+ck("set almak onay istemiyor (yıkıcı değil)",
+   'body.get("onayla")' not in _capp.split('"/api/recovery-set"')[1][:500])
+
+# DOSYASI SİLİNMİŞ SET, DÖNÜLEBİLİR GİBİ GÖRÜNMEMELİ. Saklama temizliği
+# dosyaları sildikçe bu kaçınılmaz; kaydı olup dosyası olmayan bir set,
+# "geri dönebilirim" sanılan ama dönülemeyen bir kapıdır.
+ck("silinmiş dosyalar her listelemede ÖLÇÜLÜYOR",
+   '"present": var' in _capp and '"missing_files"' in _capp)
+_ysrc2 = io.open("gateway/html/yedekler.js", encoding="utf-8").read()
+ck("panel dosyası eksik sette 'dön' düğmesini kapatıyor",
+   "eksik ? 'disabled' : ''" in _ysrc2)
+
+# Defter sınırsız büyümemeli: eski setlerin dosyaları zaten temizleniyor.
+ck("set defteri sınırlı", "RECOVERY_SET_MAX" in _capp)
+
+# Panel pencereyi GÖSTERMELİ: ölçülüp gösterilmeyen bir sayı, ölçülmemiş
+# sayılır.
+ck("panel pencereyi gösteriyor", "set-pencere" in _ysrc2
+   and "window_seconds" in _ysrc2)
 
 # =============================================================================
 print()

@@ -1871,6 +1871,34 @@ main {
    ızgara beş sütunlu ve altıncı bir hücre bütün satırı kaydırırdı. */
 /* Şema parmak izi: dosya boyutunun yanında, sessiz. Bir uyarı değil,
    dosyanın kimliği. */
+/* --- kurtarma noktası setleri --- */
+.set-yeni { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+            padding-bottom: 10px; }
+.set-list { list-style: none; margin: 0; padding: 0; }
+.set-row { padding: 10px 0; border-top: 1px solid var(--border);
+           display: grid; gap: 8px;
+           grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+.set-bas { grid-column: 1; display: flex; gap: 10px; align-items: baseline;
+           flex-wrap: wrap; }
+.set-engs { grid-column: 1; display: flex; gap: 6px; flex-wrap: wrap; }
+.set-acts { grid-column: 2; grid-row: 1 / span 2; }
+/* PENCERE vurgulu: setin bir AN olmadığını söyleyen tek sayı bu. */
+.set-pencere { font-size: 11px; padding: 1px 8px; border-radius: 999px;
+               border: 1px solid var(--border); color: var(--text);
+               white-space: nowrap; }
+.set-eng { font-size: 11px; padding: 1px 8px; border-radius: 999px;
+           border: 1px solid var(--border); color: var(--muted);
+           white-space: nowrap; }
+.set-eng.is-tam { border-color: var(--ok, var(--accent)); color: var(--accent); }
+.set-eng.is-yok { border-color: var(--err); color: var(--err); }
+.set-secim { display: grid; gap: 6px; margin: 10px 0; }
+.set-sec { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+
+@media (max-width: 720px) {
+  .set-row { grid-template-columns: 1fr; }
+  .set-acts { grid-column: 1; grid-row: auto; }
+}
+
 .bk-sema { margin-left: 8px; font-size: 11px; color: var(--muted);
            font-variant-numeric: tabular-nums; white-space: nowrap; }
 

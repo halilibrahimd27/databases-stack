@@ -505,6 +505,148 @@ async function useTicket(engine, bilet) {
 }
 
 
+/* KURTARMA NOKTASI SETLERİ
+   Bir uygulama çoğu zaman tek veritabanı kullanmaz. Yedekler motor motor ve
+   dakikalar arayla alındığı için "dün geceye dön" demek, elde birbirinden
+   dakikalarca uzak birkaç an bırakır. Burada vaat edilen şey "hepsi aynı
+   ana geldi" DEĞİL — ölçüm: pencerenin genişliği ve motor motor ne kadar
+   geride kalındığı. Zamanda geri dönmesi açık olanlar hedefe tam oturur. */
+function setSatiri(s) {
+  const motorlar = Object.entries(s.engines || {});
+  const eksik = motorlar.filter(([, k]) => !k.present).length;
+  const rozet = motorlar.map(([eid, k]) => {
+    const e = (CATALOG.engines || []).find((x) => x.id === eid) || { name: eid };
+    if (!k.present) {
+      return `<span class="set-eng is-yok" title="${esc(k.file || '')}"
+        >${esc(e.name)} — dosya yok</span>`;
+    }
+    if (k.pitr === 'acik') {
+      return `<span class="set-eng is-tam"
+        title="Zamanda geri dönme açık: bu motor hedef ana tam oturur"
+        >${esc(e.name)} — tam</span>`;
+    }
+    return `<span class="set-eng"
+      title="${esc(k.file || '')} · hedefin ${k.behind_seconds} saniye öncesi"
+      >${esc(e.name)} — ${k.behind_seconds} sn geride</span>`;
+  }).join('');
+
+  return `
+    <li class="set-row">
+      <div class="set-bas">
+        <b>${esc(s.name || '')}</b>
+        <span class="card-detail">${esc(tamTarih(s.finished))}</span>
+        <span class="set-pencere"
+          title="Setteki en eski ve en yeni dosya arasındaki fark. Sıfır değilse bu bir AN değil bir aralıktır."
+          >pencere ${s.window_seconds} sn</span>
+        ${eksik ? `<span class="bk-none">${eksik} dosya artık yok</span>` : ''}
+      </div>
+      <div class="set-engs">${rozet}</div>
+      <div class="set-acts">
+        <button class="btn btn-sm btn-danger" data-act="set-restore"
+          data-set="${esc(s.id)}" ${eksik ? 'disabled' : ''}
+          title="${eksik ? 'Setteki bazı dosyalar silinmiş; bu noktaya dönülemez'
+                         : 'Setteki BÜTÜN motorları bu noktaya döndürür'}"
+          >Bu noktaya dön</button>
+      </div>
+    </li>`;
+}
+
+function renderSets() {
+  const zone = $('#bk-set-zone');
+  const govde = $('#bk-sets');
+  if (!zone || !govde) return;
+  const setler = (BACKUPS && BACKUPS.recovery_sets) || [];
+  zone.hidden = false;
+  const yedeklenebilir = (CATALOG.engines || [])
+    .filter((e) => ((BACKUPS.engines || {})[e.id] || {}).supported);
+  govde.innerHTML = `
+    <div class="set-yeni">
+      <button class="btn" data-act="set-new"
+        ${yedeklenebilir.length ? '' : 'disabled'}
+        >Yeni kurtarma noktası al</button>
+      <span class="card-detail">Seçtiğiniz motorların yedeği tek tur olarak alınır.</span>
+    </div>
+    ${setler.length
+      ? `<ul class="set-list">${setler.map(setSatiri).join('')}</ul>`
+      : '<p class="card-detail">Henüz kurtarma noktası alınmadı.</p>'}`;
+}
+
+async function yeniSet() {
+  const secilebilir = (CATALOG.engines || [])
+    .filter((e) => ((BACKUPS.engines || {})[e.id] || {}).supported);
+  const kutular = secilebilir.map((e) => `
+    <label class="set-sec">
+      <input type="checkbox" class="set-eng-cb" value="${esc(e.id)}" checked>
+      <span>${esc(e.icon || '')} ${esc(e.name)}</span>
+      <span class="card-detail">${((BACKUPS.engines || {})[e.id] || {}).drill
+        ? '' : ''}</span>
+    </label>`).join('');
+  const ok = await confirmBox('Yeni kurtarma noktası', `
+    <p>Seçilen motorların yedeği <b>tek tur</b> olarak alınır ve tek bir
+       kurtarma noktası olarak kaydedilir.</p>
+    <p class="note">Tur SIRAYLA koşar; iki ağır yedeği aynı anda çalıştırmak
+       aynı sunucuda belleği iki kez zorlar. Bu yüzden nokta bir AN değil bir
+       PENCEREDİR — genişliği listede yazacak.</p>
+    <div class="set-secim">${kutular}</div>`, 'Kurtarma noktası al');
+  if (!ok) return;
+  const secili = Array.from(document.querySelectorAll('.set-eng-cb'))
+    .filter((c) => c.checked).map((c) => c.value);
+  if (!secili.length) {
+    infoBox('Motor seçilmedi', '<p>Kurtarma noktası için en az bir motor seçin.</p>');
+    return;
+  }
+  const r = await api('/recovery-set', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ engines: secili })
+  });
+  await watchJob(r.job, 'Kurtarma noktası alınıyor…',
+    'Seçilen motorların yedeği sırayla alınıyor; pencere sonunda ölçülüp yazılacak.');
+  await refreshBackups(true);
+}
+
+async function setGeriYukle(sid) {
+  const s = ((BACKUPS && BACKUPS.recovery_sets) || []).find((x) => x.id === sid);
+  if (!s) {
+    infoBox('Kurtarma noktası yok', '<p>Bu nokta listede artık yok. Sayfayı tazeleyin.</p>');
+    return;
+  }
+  const satir = Object.entries(s.engines || {}).map(([eid, k]) => {
+    const e = (CATALOG.engines || []).find((x) => x.id === eid) || { name: eid };
+    const ne = k.pitr === 'acik'
+      ? 'hedef ana tam oturur'
+      : k.behind_seconds + ' sn geride kalır';
+    return `<div class="plan-line"><span>${esc(e.name)}</span><b>${esc(ne)}</b></div>`;
+  }).join('');
+  const ok = await confirmBox('Bu noktaya dönülsün mü?', `
+    <p><b>Setteki bütün motorların şu anki verileri SİLİNİR</b> ve bu
+       noktadaki hâllerine döner.</p>
+    <div class="plan-line"><span>Nokta</span><b>${esc(s.name || '')}</b></div>
+    <div class="plan-line"><span>Zaman</span><b>${esc(tamTarih(s.finished))}</b></div>
+    <div class="plan-line"><span>Pencere</span><b>${s.window_seconds} sn</b></div>
+    ${satir}
+    <p class="note">Zamanda geri dönmesi açık olan motorlar hedef ana tam
+       oturur; diğerleri kendi yedeklerinin alındığı ana döner ve yukarıda
+       yazan kadar geride kalır.</p>
+    <p class="note">Onaylamak için noktanın adını yazın:
+       <b>${esc(s.name || '')}</b></p>
+    <div class="bk-onay">
+      <input id="onay-inp" class="bk-onay-inp" type="text" autocomplete="off"
+             spellcheck="false" aria-label="Onay için nokta adını yazın">
+    </div>`, 'Bu noktaya dön', s.name || '');
+  if (!ok) return;
+  const r = await api('/recovery-set/restore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ set: sid, onayla: true })
+  });
+  await watchJob(r.job, 'Kurtarma noktasına dönülüyor…',
+    'Her motor sırayla geri yükleniyor; sonunda hangisinin hedefe tam oturduğu yazılacak.');
+  await refreshBackups(true);
+  await refreshStatus();
+}
+
+
 async function restoreEngine(engine, f) {
   const ok = await confirmBox(engine.name + ' geri yüklensin mi?', `
     <p><b>${esc(engine.name)} içindeki şu anki veriler SİLİNİR</b> ve
@@ -1227,6 +1369,10 @@ let lastSchedHtml = '';
 let lastListHtml  = '';
 
 function render() {
+  /* Kurtarma noktaları da her tazelemede yeniden çiziliyor: yeni alınan bir
+     nokta ancak sayfa yenilenince görünseydi, kullanıcı işin bittiğini
+     anlamazdı. */
+  try { renderSets(); } catch (e) { /* setler çizilemezse liste yine çizilsin */ }
   renderSystem();
   if (!CATALOG) return;
 
@@ -1451,6 +1597,8 @@ document.addEventListener('click', (ev) => {
       p = shadowRestore(engine, f);
       break;
     }
+    case 'set-new': p = yeniSet(); break;
+    case 'set-restore': p = setGeriYukle(b.dataset.set); break;
     case 'rollback': {
       const bk = ((BACKUPS && BACKUPS.engines) || {})[engine.id] || {};
       if (!bk.ticket) {
@@ -1511,4 +1659,4 @@ document.addEventListener('change', (ev) => {
 
 /* Dil değişince kartları yeniden çiziyoruz: sözlük DOM'a uygulanıyor ama
    "3 saat önce" gibi birleştirilmiş metinler ancak yeniden çizimle düzelir. */
-document.addEventListener('dbstack:dil', function () { renderSystem(); render(); });
+document.addEventListener('dbstack:dil', function () { renderSystem(); render(); renderSets(); });

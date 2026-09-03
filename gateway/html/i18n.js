@@ -1098,7 +1098,87 @@
     '{1} trigger': '{1} triggers',
     '{1} rutin': '{1} routines',
     '— yedek alınırken şema DEĞİŞTİ, bu bağlantı kesin değil': '— the schema CHANGED while the backup was taken, so this link is not certain',
-    'şema {1}': 'schema {1}'
+    'şema {1}': 'schema {1}',
+
+    /* --- kurtarma noktası setleri --- */
+    'Birden çok veritabanını TEK bir ana döndürmek için. Yedekler motor motor alındığı için bir nokta an değil PENCEREDİR; genişliği aşağıda yazıyor. Zamanda geri dönmesi açık olan motorlar hedef ana tam oturur, diğerleri pencerenin başında kalır.':
+      'For taking several databases back to ONE moment. Because backups are taken engine by engine, a point is not an instant but a WINDOW; its width is written below. Engines with point-in-time recovery enabled land exactly on the target moment; the others stay at the start of the window.',
+    'Bu nokta listede artık yok. Sayfayı tazeleyin.':
+      'This point is no longer in the list. Refresh the page.',
+    'Bu noktaya dön':
+      'Go back to this point',
+    'Bu noktaya dönülsün mü?':
+      'Go back to this point?',
+    'Henüz kurtarma noktası alınmadı.':
+      'No recovery point has been taken yet.',
+    'Her motor sırayla geri yükleniyor; sonunda hangisinin hedefe tam oturduğu yazılacak.':
+      'Each engine is restored in turn; at the end it is written which ones landed exactly on the target.',
+    'Kurtarma noktaları':
+      'Recovery points',
+    'Kurtarma noktası al':
+      'Take recovery point',
+    'Kurtarma noktası alınıyor…':
+      'Taking the recovery point…',
+    'Kurtarma noktası için en az bir motor seçin.':
+      'Pick at least one engine for the recovery point.',
+    'Kurtarma noktası yok':
+      'No such recovery point',
+    'Kurtarma noktasına dönülüyor…':
+      'Going back to the recovery point…',
+    'Motor seçilmedi':
+      'No engine selected',
+    'Nokta':
+      'Point',
+    'Onay için nokta adını yazın':
+      'Type the point name to confirm',
+    'Onaylamak için noktanın adını yazın:':
+      'Type the point\'s name to confirm:',
+    'Pencere':
+      'Window',
+    'Setteki BÜTÜN motorları bu noktaya döndürür':
+      'Takes EVERY engine in the set back to this point',
+    'Setteki bazı dosyalar silinmiş; bu noktaya dönülemez':
+      'Some files in the set have been deleted; this point cannot be restored',
+    'Setteki bütün motorların şu anki verileri SİLİNİR':
+      'The current data of EVERY engine in the set is ERASED',
+    'Setteki en eski ve en yeni dosya arasındaki fark. Sıfır değilse bu bir AN değil bir aralıktır.':
+      'The gap between the oldest and newest file in the set. If it is not zero, this is a range and not an INSTANT.',
+    'Seçilen motorların yedeği':
+      'The selected engines are backed up as a',
+    'Seçilen motorların yedeği sırayla alınıyor; pencere sonunda ölçülüp yazılacak.':
+      'The selected engines are being backed up in turn; the window is measured and written at the end.',
+    'Seçtiğiniz motorların yedeği tek tur olarak alınır.':
+      'The engines you pick are backed up as a single round.',
+    'Tur SIRAYLA koşar; iki ağır yedeği aynı anda çalıştırmak aynı sunucuda belleği iki kez zorlar. Bu yüzden nokta bir AN değil bir PENCEREDİR — genişliği listede yazacak.':
+      'The round runs SEQUENTIALLY; running two heavy backups at once strains the same server\'s memory twice over. That is why a point is not an INSTANT but a WINDOW — its width will be shown in the list.',
+    'Yeni kurtarma noktası':
+      'New recovery point',
+    'Yeni kurtarma noktası al':
+      'Take a new recovery point',
+    'Zaman':
+      'Time',
+    'Zamanda geri dönme açık: bu motor hedef ana tam oturur':
+      'Point-in-time recovery is on: this engine lands exactly on the target',
+    'Zamanda geri dönmesi açık olan motorlar hedef ana tam oturur; diğerleri kendi yedeklerinin alındığı ana döner ve yukarıda yazan kadar geride kalır.':
+      'Engines with point-in-time recovery enabled land exactly on the target moment; the others return to the moment their own backup was taken and stay behind by the amount shown above.',
+    'hedef ana tam oturur':
+      'lands exactly on the target',
+    'olarak alınır ve tek bir kurtarma noktası olarak kaydedilir.':
+      'and recorded as a single recovery point.',
+    'pencere {1} sn':
+      'window {1} s',
+    've bu noktadaki hâllerine döner.':
+      'and returns to its state at this point.',
+    '{1} dosya artık yok':
+      '{1} files no longer exist',
+    '{1} sn geride kalır':
+      'stays {1} s behind',
+    '{1} — dosya yok':
+      '{1} — file missing',
+    '{1} — tam':
+      '{1} — exact',
+    '{1} — {2} sn geride':
+      '{1} — {2} s behind'
   };
 
   function dilOku() {

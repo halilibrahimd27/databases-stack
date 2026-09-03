@@ -5470,6 +5470,9 @@ def backups_overview(now=None):
         # Anahtarın KENDİSİ hiçbir zaman dışarı verilmez; panelin bilmesi
         # gereken tek şey, şifreli bir dosyanın burada açılıp açılamayacağı.
         "encryption_key": sifre_anahtari_var(),
+        # Kurtarma noktası setleri: birden çok motoru tek bir ana döndürmek.
+        # Set bir AN değil bir PENCEREDİR; genişliği burada da taşınıyor.
+        "recovery_sets": recovery_set_ozet(),
         "schedule": {
             "enabled": bool(cfg["enabled"]),
             "time": cfg["time"],
@@ -5915,6 +5918,257 @@ def do_ticket_rollback(jid, eid):
         return job_done(jid, True, None, {"volume": eski})
     finally:
         lock.release()
+
+
+# =============================================================================
+# KURTARMA NOKTASI SETİ — birden çok motoru TEK bir ana döndürmek
+# =============================================================================
+# Bir uygulama çoğu zaman tek veritabanı kullanmaz: siparişler PostgreSQL'de,
+# oturumlar Redis'te, dokümanlar MongoDB'de durur. Yedekler motor motor ve
+# dakikalar arayla alınıyor. "Dün geceye dön" dendiğinde elde ÜÇ AYRI AN
+# oluyor: PostgreSQL'de var olan bir siparişin Redis'teki oturumu dört dakika
+# öncesinden, MongoDB'deki dokümanı iki dakika sonrasından. Ürün bugün bunu
+# ne ölçüyor ne söylüyor.
+#
+# BURADA VAAT EDİLMEYEN ŞEY: heterojen motorlarda, yazmayı durdurmadan,
+# GERÇEK bir anlık görüntü alınamaz. Bunu "tutarlı yedek" diye sunmak yeni
+# bir sessiz yeşil olurdu. O yüzden vaat edilen şey ÖLÇÜM:
+#
+#   • set bir AN değil bir PENCEREDİR; genişliği saniyeyle yazılır
+#   • hedef an, turun BİTTİĞİ andır
+#   • PITR'ı açık motorlar o ana İLERİ SARILARAK tam oturur
+#   • PITR'ı olmayan motorlar hedefin N saniye ÖNCESİNDE kalır ve bu N
+#     motor motor rapor edilir
+#
+# Yani ürün "hepsi aynı ana geldi" demiyor; "üçü tam, ikisi 4 dk 12 sn
+# gerideydi" diyor. Kullanıcının kararı bu sayıyla alınabilir hâle geliyor.
+RECOVERY_SETS_FILE = os.path.join(STATE_DIR, "recovery_sets.json")
+RECOVERY_SET_MAX = int(os.environ.get("RECOVERY_SET_MAX", "50"))
+
+
+def load_recovery_sets():
+    d = _read_json(RECOVERY_SETS_FILE, {"sets": []})
+    if not isinstance(d, dict) or not isinstance(d.get("sets"), list):
+        return {"sets": []}
+    return d
+
+
+def save_recovery_sets(d):
+    # Sınırsız büyümüyor: en yeni N set tutuluyor. Eski setlerin dosyaları
+    # zaten saklama temizliğine tabi; kaydı sonsuza dek tutmak, var olmayan
+    # dosyaları gösteren bir liste demek olurdu.
+    d["sets"] = sorted(d.get("sets", []), key=lambda s: s.get("finished") or 0,
+                       reverse=True)[:RECOVERY_SET_MAX]
+    _write_json(RECOVERY_SETS_FILE, d)
+    paylasilan_izin(RECOVERY_SETS_FILE)
+
+
+def recovery_set_of(sid):
+    for s in load_recovery_sets().get("sets", []):
+        if s.get("id") == sid:
+            return s
+    return None
+
+
+def _pitr_ileri_sarabilir(eid):
+    """Bu motor hedef ana İLERİ SARILABİLİR mi (PITR açık mı)."""
+    return pitr_durumu(eid) == "acik"
+
+
+def recovery_set_ozet(now=None):
+    """Panelin göreceği set listesi — dosyaları hâlâ var mı diye BAKARAK.
+
+    Kaydı olup dosyası silinmiş bir set, "geri dönebilirim" sanılan ama
+    dönülemeyen bir kapıdır; saklama temizliği dosyaları sildikçe bu
+    kaçınılmaz, o yüzden her listelemede ölçülüyor."""
+    kok = backups_dir()
+    mevcut = set()
+    for dirpath, _dirs, files in os.walk(kok):
+        for ad in files:
+            if yedek_dosyasi_mi(ad):
+                mevcut.add(ad)
+    out = []
+    for s in load_recovery_sets().get("sets", []):
+        motorlar = {}
+        eksik = 0
+        for eid, k in (s.get("engines") or {}).items():
+            var = bool(k.get("file")) and k["file"] in mevcut
+            if not var:
+                eksik += 1
+            motorlar[eid] = {
+                "file": k.get("file"), "at": k.get("at"),
+                "present": var,
+                # Hedeften kaç saniye GERİDE kaldı. PITR açıksa ileri
+                # sarılarak sıfırlanabilir.
+                "behind_seconds": max(0, int((s.get("target") or 0) - (k.get("at") or 0))),
+                "pitr": k.get("pitr"),
+            }
+        out.append({
+            "id": s.get("id"), "name": s.get("name"),
+            "started": s.get("started"), "finished": s.get("finished"),
+            "target": s.get("target"),
+            "window_seconds": s.get("window_seconds"),
+            "engines": motorlar,
+            "missing_files": eksik,
+            "source": s.get("source"),
+        })
+    return out
+
+
+def do_recovery_set(jid, ad, eids):
+    """Seçilen motorların yedeğini TEK TUR olarak alır ve pencereyi ölçer.
+
+    Turu SIRAYLA koşuyoruz — paralel almak pencereyi daraltırdı ama aynı
+    host'ta iki ağır dump, aynı cgroup'ta çift bellek baskısı demek; bu
+    ürünün yedekleme tarafı zaten o hatanın üzerine yazılmış. Pencereyi
+    daraltmanın doğru yolu PITR ile ileri sarmak, paralellik değil."""
+    if not eids:
+        return job_done(jid, False, "Sete hiç motor seçilmedi.")
+    bilinmeyen = [e for e in eids if not CATALOG.engine(e)]
+    if bilinmeyen:
+        return job_done(jid, False, "Bilinmeyen motor: %s" % ", ".join(bilinmeyen))
+    yedeklenmez = [e for e in eids
+                   if not ((CATALOG.engine(e).get("backup") or {}).get("supported"))]
+    if yedeklenmez:
+        return job_done(jid, False,
+                        "Bu motorlar yedeklenmiyor: %s" % ", ".join(yedeklenmez))
+
+    if not BACKUP_LOCK.acquire(blocking=False):
+        return job_done(jid, False, BACKUP_BUSY_MSG, {"deferred": True})
+    try:
+        basladi = int(time.time())
+        jl = lambda *m: job_log(jid, *m)
+        jl("Kurtarma noktası seti alınıyor: %s" % ", ".join(eids))
+        record_event("recovery_set_started", None,
+                     "Kurtarma noktası seti başladı: %s" % ", ".join(eids))
+        motorlar = {}
+        hatalar = []
+        for eid in eids:
+            e = CATALOG.engine(eid)
+            oncesi = int(time.time())
+            jl("· %s yedekleniyor…" % e["name"])
+            rc, err, ertelendi = _backup_run([eid], jl)
+            if ertelendi or rc != 0:
+                hatalar.append("%s: %s" % (e["name"], err or "yedek alınamadı"))
+                continue
+            yeni = yeni_yedek_dosyalari(eid, oncesi)
+            if not yeni:
+                hatalar.append("%s: yeni dosya oluşmadı" % e["name"])
+                continue
+            # Aynı turda birden çok dosya oluşabilir (taban + tam); en
+            # yenisini sete koyuyoruz.
+            dosya = sorted(yeni)[-1]
+            motorlar[eid] = {"file": dosya, "at": int(time.time()),
+                             "pitr": pitr_durumu(eid)}
+            sema_yedege_bagla(eid, None, yeni, jl)
+        if not motorlar:
+            return job_done(jid, False,
+                            "Setteki hiçbir motorun yedeği alınamadı: %s"
+                            % "; ".join(hatalar))
+        bitti = int(time.time())
+        # PENCERE = ilk dosyanın anı ile son dosyanın anı arası. Turun
+        # başlangıcı değil: kullanıcıyı ilgilendiren, ELDEKİ dosyaların
+        # birbirine göre ne kadar açık olduğu.
+        anlar = [k["at"] for k in motorlar.values()]
+        pencere = max(anlar) - min(anlar)
+        sid = "rs_%d" % bitti
+        kayit = {"id": sid, "name": (ad or "").strip() or time.strftime(
+                     "%Y-%m-%d %H:%M", time.localtime(bitti)),
+                 "started": basladi, "finished": bitti,
+                 "target": max(anlar),
+                 "window_seconds": int(pencere),
+                 "engines": motorlar,
+                 "source": "panel"}
+        d = load_recovery_sets()
+        d.setdefault("sets", []).append(kayit)
+        save_recovery_sets(d)
+
+        ileri = [e for e in motorlar if motorlar[e].get("pitr") == "acik"]
+        record_event("recovery_set", None,
+                     "Kurtarma noktası seti alındı: %d motor, pencere %d sn. "
+                     "PITR'ı açık %d motor hedef ana ileri sarılabilir; "
+                     "kalanlar hedefin en çok %d sn öncesinde."
+                     % (len(motorlar), pencere, len(ileri), pencere),
+                     level="info")
+        if hatalar:
+            jl("UYARI: sete girmeyen motorlar — %s" % "; ".join(hatalar))
+        return job_done(jid, True, ("; ".join(hatalar) or None),
+                        {"set": sid, "window_seconds": int(pencere),
+                         "engines": sorted(motorlar)})
+    finally:
+        BACKUP_LOCK.release()
+
+
+def do_recovery_set_restore(jid, sid, onayla=False):
+    """Seti geri yükler: PITR'ı açık motorlar hedef ana İLERİ SARILIR.
+
+    Her motor için NE ELDE EDİLDİĞİ ayrı ayrı raporlanır — "hepsi aynı ana
+    geldi" demek, ölçmediğimiz bir şeyi iddia etmek olurdu."""
+    s = recovery_set_of(sid)
+    if not s:
+        return job_done(jid, False, "Böyle bir kurtarma noktası yok: %s" % sid)
+    if not onayla:
+        return job_done(jid, False,
+                        "Bu işlem setteki BÜTÜN motorların verisini değiştirir; "
+                        "onay gerekiyor.")
+    jl = lambda *m: job_log(jid, *m)
+    hedef = int(s.get("target") or 0)
+    sonuc = {}
+    record_event("recovery_set_restore_started", None,
+                 "Kurtarma noktası seti geri yükleniyor: %s (%d motor)"
+                 % (s.get("name"), len(s.get("engines") or {})), level="warning")
+    for eid, k in sorted((s.get("engines") or {}).items()):
+        e = CATALOG.engine(eid)
+        if not e:
+            sonuc[eid] = {"ok": False, "detail": "motor katalogda yok"}
+            continue
+        ad = e["name"]
+        if _pitr_ileri_sarabilir(eid):
+            # İLERİ SARMA: dump'ın anı ile hedef arasındaki fark WAL/binlog
+            # ile kapatılıyor. Setin asıl değeri bu — dosyalar dakikalar
+            # arayla alınmış olsa bile bu motorlar TAM hedefe oturuyor.
+            jl("· %s: PITR ile hedef ana sarılıyor…" % ad)
+            hedef_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(hedef))
+            rc, out, err = run(["bash", PITR_SCRIPT, "don", eid, hedef_str],
+                               cwd=PROJECT_DIR, timeout=PITR_TABAN_TIMEOUT,
+                               env=script_env())
+            for satir in (out + err).strip().splitlines()[-40:]:
+                job_log(jid, satir)
+            sonuc[eid] = {"ok": rc == 0, "mode": "pitr",
+                          "behind_seconds": 0 if rc == 0 else None,
+                          "detail": "hedef ana sarıldı" if rc == 0
+                                    else (err or out).strip()[-200:]}
+        else:
+            # DUMP: hedefin N saniye öncesi. N'i saklamıyoruz.
+            geride = max(0, hedef - int(k.get("at") or 0))
+            jl("· %s: dosyadan geri yükleniyor (hedefin %d sn öncesi)…"
+               % (ad, geride))
+            yol, hata = resolve_backup_file(eid, k.get("file"))
+            if hata:
+                sonuc[eid] = {"ok": False, "mode": "dump", "detail": hata}
+                continue
+            rc, err, ertelendi = _backup_run(
+                ["restore-%s" % eid, yol], jl, {"ASSUME_YES": "yes"})
+            sonuc[eid] = {"ok": rc == 0 and not ertelendi, "mode": "dump",
+                          "behind_seconds": geride,
+                          "detail": ("hedefin %d sn öncesine döndü" % geride)
+                                    if rc == 0 else (err or "geri yüklenemedi")}
+            if rc == 0:
+                pitr_taban_yenile(eid, jl)
+
+    tam = [e for e, r in sonuc.items() if r.get("ok") and r.get("behind_seconds") == 0]
+    geride = [(e, r.get("behind_seconds")) for e, r in sonuc.items()
+              if r.get("ok") and (r.get("behind_seconds") or 0) > 0]
+    dusen = [e for e, r in sonuc.items() if not r.get("ok")]
+    ozet = ("%d motor hedef anda; %d motor hedefin gerisinde (%s); %d başarısız"
+            % (len(tam), len(geride),
+               ", ".join("%s %d sn" % (e, n) for e, n in geride) or "-",
+               len(dusen)))
+    record_event("recovery_set_restore", None,
+                 "Kurtarma noktası seti geri yüklendi: %s" % ozet,
+                 level="critical" if dusen else "warning")
+    return job_done(jid, not dusen, ozet if dusen else None,
+                    {"set": sid, "engines": sonuc, "summary": ozet})
 
 
 def do_restore(jid, eid, filename):
@@ -6745,6 +6999,32 @@ class Handler(http.server.BaseHTTPRequestHandler):
             threading.Thread(target=_dengele, daemon=True).start()
             return self._send(202, {"job": jid})
 
+        if path.rstrip("/") == "/api/recovery-set":
+            # Set almak yıkıcı değildir: yalnız yedek alır. Onay
+            # istemiyoruz; istenen motorlar gövdede.
+            _eids = body.get("engines") or []
+            if not isinstance(_eids, list) or not _eids:
+                return self._send(400, {"error":
+                    "Sete en az bir motor seçin: {\"engines\": [\"postgresql\"]}"})
+            jid = new_job("recovery-set", None)
+            threading.Thread(target=do_recovery_set, daemon=True,
+                             args=(jid, body.get("name"), _eids)).start()
+            return self._send(202, {"job": jid})
+        if path.rstrip("/") == "/api/recovery-set/restore":
+            # BU YIKICIDIR ve TEK MOTORU DEĞİL SETİN TAMAMINI değiştirir.
+            # Onay açıkça isteniyor.
+            if not body.get("onayla"):
+                return self._send(400, {"error":
+                    "Bu işlem setteki BÜTÜN motorların verisini değiştirir. "
+                    "Onay için gövdede {\"onayla\": true} gönderin."})
+            _sid = body.get("set")
+            if not recovery_set_of(_sid or ""):
+                return self._send(400, {"error":
+                    "Böyle bir kurtarma noktası yok: %s" % _sid})
+            jid = new_job("recovery-set-restore", None)
+            threading.Thread(target=do_recovery_set_restore, daemon=True,
+                             args=(jid, _sid, True)).start()
+            return self._send(202, {"job": jid})
         if path.startswith("/api/engines/"):
             eid = self._engine_from(path)
             if not eid:
