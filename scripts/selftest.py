@@ -3361,6 +3361,37 @@ ck("şifreli yedek DOĞRU anahtarla okunuyor",
 # Yanlış anahtarla "okuyabildim" demek, çöp veriyi geri yüklemeye açar.
 ck("YANLIŞ anahtarla okuma BAŞARISIZ dönüyor (sessizce çöp üretmiyor)",
    _rc_kotu != 0, "rc=%s" % _rc_kotu)
+
+# ŞİFRELEME DURUMU .env OKUNDUKTAN SONRA HESAPLANMALI.
+# Ölçülen regresyon: enc_durumu_belirle common.sh source edilirken
+# çağrılıyordu, yani .env henüz okunmamışken. .env'de BACKUP_ENCRYPT_KEY
+# yazılı olduğu hâlde ENC_DURUM "kapali" kalıyor ve yedekler ŞİFRESİZ
+# üretiliyordu — kullanıcı şifreleme açık sanarken. Sessiz yanlışın en
+# pahalı türü: yedek diskte duruyor ama korunmuyor.
+_envdir = _tf.mkdtemp(prefix="dbstack-env-")
+_envf = _os2.path.join(_envdir, ".env")
+
+
+def _enc_durum(satirlar):
+    with io.open(_envf, "w", encoding="utf-8") as _fh:
+        for _l in satirlar:
+            _fh.write(_l + chr(10))
+    r = subprocess.run(
+        ["bash", "-c",
+         'ENV_FILE="$1"; source scripts/lib/common.sh; load_env; '
+         'printf "%s" "$ENC_DURUM"', "_", _envf.replace(chr(92), "/")],
+        capture_output=True, text=True, encoding="utf-8", timeout=120,
+        env={k: v for k, v in _os2.environ.items()
+             if k not in ("BACKUP_ENCRYPT_KEY", "BACKUP_ENCRYPT")})
+    return r.stdout.strip()
+
+
+ck(".env'deki anahtar GÖRÜLÜYOR (durum load_env'den sonra hesaplanıyor)",
+   _enc_durum(["DB_PASSWORD=x", "BACKUP_ENCRYPT_KEY=dotenv-anahtari"]) == "acik",
+   _enc_durum(["DB_PASSWORD=x", "BACKUP_ENCRYPT_KEY=dotenv-anahtari"]))
+ck("anahtarsız .env'de şifreleme kapalı (uydurma 'açık' yok)",
+   _enc_durum(["DB_PASSWORD=x"]) == "kapali")
+_sh.rmtree(_envdir, ignore_errors=True)
 _sh.rmtree(_encdir, ignore_errors=True)
 
 # =============================================================================

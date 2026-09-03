@@ -138,6 +138,16 @@ load_env() {
         printf -v "$key" '%s' "$val"
         export "$key"
     done < "$file"
+    # ŞİFRELEME DURUMU BURADA HESAPLANIR, DOSYANIN SONUNDA DEĞİL.
+    # Sebebi ölçülmüş bir regresyon: enc_durumu_belirle common.sh source
+    # edilirken çağrılıyordu, yani .env HENÜZ OKUNMAMIŞKEN. Sonuç, bu ürünün
+    # en sevmediği türden bir sessiz yanlıştı: .env'de BACKUP_ENCRYPT_KEY
+    # yazılı olduğu hâlde anahtar görünmüyor, ENC_DURUM "kapali" kalıyor ve
+    # yedekler ŞİFRESİZ üretiliyordu — kullanıcı şifreleme açık sanarken.
+    # Ölçüldü: anahtar .env'e yazıldı, backup.sh düz .sql.gz üretti.
+    if declare -F enc_durumu_belirle >/dev/null 2>&1; then
+        enc_durumu_belirle
+    fi
 }
 
 # .env'den tek bir anahtar oku (yan etkisiz)
@@ -318,6 +328,16 @@ enc_durumu_belirle() {
     ENC_SEBEP="$ENC_KAYNAK · $ENC_CIPHER · $ENC_KDF-$ENC_MD · $ENC_ITER iterasyon"
     return 0
 }
+# İKİ KEZ ÇAĞRILIYOR, bilerek:
+#   1) BURADA — anahtarı ORTAM DEĞİŞKENİ olarak veren çağrılar (testler,
+#      cron satırları, `BACKUP_ENCRYPT_KEY=… ./betik`) load_env çağırmadan
+#      da doğru durumu görsün.
+#   2) load_env'in SONUNDA — anahtar .env'de yazılıysa ancak orada görünür.
+# Fonksiyon durumu her seferinde SIFIRDAN hesaplıyor; ikinci çağrı tam
+# bilgiyle birincinin üzerine yazıyor. Yalnız birini bırakmak, iki ayrı
+# sessiz yanlıştan birini üretiyordu: yalnız (1) ise .env'deki anahtar
+# görünmüyor ve yedekler ŞİFRESİZ yazılıyordu (ölçüldü); yalnız (2) ise
+# ortamdan anahtar veren her çağrı şifrelemeyi kapalı görüyordu.
 enc_durumu_belirle
 
 # Dosya ADINA değil İÇİNE bakıyoruz. Sebep somut: aynı dosya `.bozuk` ekiyle
