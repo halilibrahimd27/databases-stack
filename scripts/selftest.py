@@ -4004,6 +4004,44 @@ if app.kusak_taban("databases-stack_mariadb_data__gyedek") != \
 ck("kuşak adı geri ayrıştırılabiliyor", not _ad_hata,
    "; ".join(_ad_hata) or "taban+no korunuyor")
 
+# --- ŞİFRELİ AMA ANAHTARSIZ YEDEK -------------------------------------------
+# Ölçülen durum: sunucuda '.sql.gz.enc' duruyor ama .env'de BACKUP_ENCRYPT_KEY
+# yok. Panel onu diğerlerinden ayırmadan listeliyordu; kullanıcı ancak "İçini
+# gör"e basınca öğreniyordu. Aynı duvara "Bu yedeğe dön" de çarpar — ve orada
+# öğrenmek, felaket anında öğrenmek demek. Kurtarma noktası SAYILAN bir
+# dosyanın kurtarma noktası OLMADIĞI, ona ihtiyaç duyulmadan önce söylenmeli.
+_eski_de = app._dotenv
+try:
+    app._dotenv = lambda: {}
+    ck("anahtar yokken şifreli yedek 'okunamaz' işaretleniyor",
+       app.sifre_anahtari_var() is False and app.sifreli_dosya_mi("x.sql.gz.enc")
+       and not app.sifreli_dosya_mi("x.sql.gz"))
+    app._dotenv = lambda: {"BACKUP_ENCRYPT_KEY": "gizli"}
+    ck("anahtar .env'de varsa şifreli yedek okunabilir sayılıyor",
+       app.sifre_anahtari_var() is True)
+    # Boş değer anahtar DEĞİLDİR: 'BACKUP_ENCRYPT_KEY=' satırı .env'de
+    # duruyor olabilir ve onu 'var' saymak, açılamayacak bir dosyayı
+    # açılabilir göstermek olurdu.
+    app._dotenv = lambda: {"BACKUP_ENCRYPT_KEY": "   "}
+    ck("boş anahtar 'var' sayılmıyor", app.sifre_anahtari_var() is False)
+finally:
+    app._dotenv = _eski_de
+
+# Panel bu bilgiyi GÖSTERMELİ: alan üretilip kullanılmazsa kontrol yeşil
+# yanar ama kullanıcı hiçbir şey görmez.
+_ysrc = io.open("gateway/html/yedekler.js", encoding="utf-8").read()
+ck("panel okunamayan yedeği işaretliyor ve düğmeyi kapatıyor",
+   "f.readable === false" in _ysrc and "b.unreadable" in _ysrc
+   and _ysrc.count("f.readable === false") >= 3)
+
+# hidden NİTELİĞİ GERÇEKTEN GİZLEMELİ. Ölçülen hata: .btn'de
+# display:inline-flex yazdığı için `el.hidden = true` hiçbir şey yapmıyordu
+# ve salt bilgi veren pencerede "Devam" düğmesi duruyordu.
+_css = io.open("gateway/html/style.css", encoding="utf-8").read()
+ck("[hidden] tüm bileşenlerde gerçekten gizliyor",
+   _re2.search(r"^\[hidden\]\s*\{[^}]*display:\s*none\s*!important", _css, _re2.M)
+   is not None)
+
 # Değişken adı iki yerde türüyor: compose'da yazılı, controller'da hesaplanıyor.
 # Ayrışırlarsa işaretçi hiçbir zaman tutmaz ve motor sessizce eski kuşakla açılır.
 _dv_compose = dict(_re2.findall(

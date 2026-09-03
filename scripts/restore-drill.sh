@@ -128,8 +128,20 @@ js() {
     printf '"%s"' "$s"
 }
 
-MOTOR="${1:-}"
-DOSYA="${2:-}"
+# --golge her yerde olabilir: "restore-drill.sh mariadb --golge" da,
+# "restore-drill.sh mariadb dosya.sql.gz --golge" da çalışsın.
+GOLGE=0
+_ARGS=()
+for _a in "$@"; do
+    case "$_a" in
+        --golge|--gölge) GOLGE=1 ;;
+        *) _ARGS+=("$_a") ;;
+    esac
+done
+MOTOR="${_ARGS[0]:-}"
+DOSYA="${_ARGS[1]:-}"
+KUSAK=null
+HACIM_SAKLANDI=false
 OK=false
 SANIYE=0
 R_TABLO=null; R_SATIR=null
@@ -146,10 +158,11 @@ json_bas() {
     JSON_BASILDI=1
     local _satir
     _satir="$(
-        printf '{"engine":%s,"file":%s,"ok":%s,"seconds":%s,"restored_tables":%s,"restored_rows":%s,"prod_tables":%s,"prod_rows":%s,"match":%s,"cleanup":%s,"detail":%s}\n' \
+        printf '{"engine":%s,"file":%s,"ok":%s,"seconds":%s,"restored_tables":%s,"restored_rows":%s,"prod_tables":%s,"prod_rows":%s,"match":%s,"cleanup":%s,"shadow":%s,"volume":%s,"generation":%s,"kept":%s,"detail":%s}\n' \
             "$(js "$MOTOR")" "$(js "$DOSYA")" "$OK" "$SANIYE" \
             "$R_TABLO" "$R_SATIR" "$P_TABLO" "$P_SATIR" "$ESLESME" \
-            "$TEMIZ" "$(js "$DETAY")"
+            "$TEMIZ" "$([ "$GOLGE" -eq 1 ] && echo true || echo false)" \
+            "$(js "$HACIM")" "$KUSAK" "$HACIM_SAKLANDI" "$(js "$DETAY")"
     )"
     printf '%s\n' "$_satir"
     # SONUÇ TEK DEFTERE DE YAZILIR. Bu satır olmadan komut satırından
@@ -174,7 +187,15 @@ temizle() {
         docker rm -f "$PROVA_C" >>"$LOG_FILE" 2>&1
         docker inspect "$PROVA_C" >/dev/null 2>&1 && kalan="container:$PROVA_C"
     fi
-    if [ -n "$HACIM" ] && docker volume inspect "$HACIM" >/dev/null 2>&1; then
+    # GÖLGE KİPİ: doğrulanmış hacim SAKLANIR — zaten bütün mesele o.
+    # Ama yalnız doğrulama GEÇTİYSE: düşen bir gölge, diskte adı üretim
+    # hacmine benzeyen ve içi güvenilmez bir kopya bırakırdı. En tehlikeli
+    # kalıntı türü budur, çünkü bir sonraki koşum onu "var zaten" diye
+    # görüp kuşak numarasını atlar.
+    if [ "$GOLGE" -eq 1 ] && [ "$OK" = "true" ] && [ -n "$HACIM" ]; then
+        HACIM_SAKLANDI=true
+        dlog "gölge hacim SAKLANIYOR: $HACIM"
+    elif [ -n "$HACIM" ] && docker volume inspect "$HACIM" >/dev/null 2>&1; then
         # Container kaydı silinene kadar hacim "in use" görünebiliyor; tek
         # denemede pes etmek her provada bir hacim bırakırdı. Diskteki
         # sızıntı en sinsisidir: kimse `docker volume ls`ye bakmaz.
@@ -893,6 +914,100 @@ kalintilari_topla() {
     done
     [ "$n" -gt 0 ] && warn "Önceki yarım kalmış provalardan $n kalıntı temizlendi."
     return 0
+}
+
+
+# =============================================================================
+# GÖLGE KİPİ — kuşak adı ve disk muhasebesi
+# =============================================================================
+# Gölge geri yükleme, üretimin veri hacmini SİLMEDEN yeni bir hacme yüklüyor;
+# doğrulama geçerse controller işaretçiyi çeviriyor. Buradaki iş, doğru adı
+# bulmak ve diskin yeteceğini ÖNCEDEN sayıyla söylemek.
+
+KUSAK_AYIRAC="__g"
+
+# Motorun üretim veri hacminin TABAN adı (kuşak eki olmadan). Katalogdan
+# okunuyor: adı burada da elle yazmak, iki kaynağın ayrışması demekti.
+uretim_hacmi() {   # uretim_hacmi <motor>
+    local eid="$1" prim
+    prim="$(primary_of "$eid")" || return 1
+    local kisa
+    kisa="$(catalog_query '
+import json,sys
+c=json.load(open(sys.argv[1],encoding="utf-8"))
+hedef=sys.argv[2]
+for e in c["engines"]:
+    for s,vs in (e.get("data_volumes") or {}).items():
+        if s==hedef:
+            for v in vs:
+                if v.endswith("_data") or len(vs)==1:
+                    print(v); raise SystemExit(0)
+' "$prim" | tr -d '\r')" || return 1
+    [ -n "$kisa" ] || return 1
+    printf '%s_%s\n' "${STACK_PROJECT:-databases-stack}" "$kisa"
+}
+
+kusak_no() {   # kusak_no <hacim adı>
+    local ad="${1:-}" kuyruk
+    case "$ad" in
+        *"$KUSAK_AYIRAC"*) kuyruk="${ad##*$KUSAK_AYIRAC}" ;;
+        *) printf '0\n'; return 0 ;;
+    esac
+    if sayi_mi "$kuyruk"; then printf '%s\n' "$kuyruk"; else printf '0\n'; fi
+}
+
+# CANLI kuşak container'dan ÖLÇÜLÜR. volumes.env yalnız NİYETTİR: takas
+# yarıda kalmışsa ikisi ayrışır ve o anda doğru olan, motorun gerçekten
+# bağladığı hacimdir. Container kapalıysa dosyaya düşüyoruz — ama bunu
+# "ölçtük" diye değil, elimizdeki tek bilgi olduğu için.
+canli_hacim() {   # canli_hacim <motor> <taban>
+    local eid="$1" taban="$2" prim ad
+    prim="$(primary_of "$eid")" || return 1
+    if docker inspect "$prim" >/dev/null 2>&1; then
+        for ad in $(docker inspect "$prim" \
+                    --format '{{range .Mounts}}{{.Name}}{{"\n"}}{{end}}' 2>/dev/null); do
+            case "$ad" in
+                "$taban"|"$taban$KUSAK_AYIRAC"*) printf '%s\n' "$ad"; return 0 ;;
+            esac
+        done
+    fi
+    local ni
+    ni="$(grep -E "^$(printf '%s' "${taban#${STACK_PROJECT:-databases-stack}_}" \
+          | tr '[:lower:]-' '[:upper:]_')_VOLUME=" \
+          "$STACK_ROOT/state/volumes.env" 2>/dev/null | tail -1)"
+    [ -n "$ni" ] && { printf '%s\n' "${ni#*=}"; return 0; }
+    printf '%s\n' "$taban"
+}
+
+# Diskte yer var mı — TAHMİNLE değil, ölçümle. Üretim hacminin boyutu
+# docker'ın kendi muhasebesinden okunuyor; okunamazsa dump boyutundan
+# türetiyoruz ve hangi yöntemi kullandığımızı SÖYLÜYORUZ. "Yer yok" demek
+# felaket anında ürünü kilitlemek olurdu; o yüzden sayıyı da yazıyoruz.
+disk_bos_mb() {
+    local kok
+    kok="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null)"
+    [ -n "$kok" ] || kok="/var/lib/docker"
+    df -Pk "$kok" 2>/dev/null | awk 'NR==2 {print int($4/1024)}'
+}
+
+hacim_boyut_mb() {   # hacim_boyut_mb <hacim>
+    docker system df -v --format '{{json .Volumes}}' 2>/dev/null \
+      | python3 -c '
+import json,sys,re
+try:
+    d=json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+hedef=sys.argv[1]
+for v in d:
+    if v.get("Name")==hedef:
+        s=(v.get("Size") or "").strip()
+        m=re.match(r"([0-9.]+)\s*([KMGT]?i?B)", s)
+        if not m: raise SystemExit(1)
+        n=float(m.group(1)); b=m.group(2)[0]
+        print(int(n*{"B":1/1048576.0,"K":1/1024.0,"M":1,"G":1024,"T":1048576}.get(b,1)))
+        raise SystemExit(0)
+raise SystemExit(1)' "$1" 2>/dev/null
 }
 
 # =============================================================================

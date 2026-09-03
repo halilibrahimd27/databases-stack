@@ -64,6 +64,9 @@ function infoBox(title, bodyHtml) {
   $('#modal-title').textContent = title;
   $('#modal-body').innerHTML = bodyHtml;
   $('#modal-ok').hidden = true;
+  /* Bir önceki onayın işleyicisi ÜSTÜNDE kalmasın: düğme yeniden
+     görünür olduğunda eski işi tetiklemeye çalışırdı. */
+  $('#modal-ok').onclick = null;
   $('#modal').hidden = false;
   $('#modal-cancel').textContent = 'Kapat';
   $('#modal-cancel').onclick = () => {

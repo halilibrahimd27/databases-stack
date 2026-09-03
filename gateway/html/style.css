@@ -1100,6 +1100,14 @@ main {
 }
 .modal[hidden] { display: none !important; }
 
+/* ÖLÇÜLEN HATA: `el.hidden = true` hiçbir şey yapmıyordu. Tarayıcının
+   [hidden] kuralı display:none der ama YAZAR biçemi onu ezer — .btn'de
+   display:inline-flex yazdığı için "Devam" düğmesi bilgi penceresinde de
+   görünmeye devam ediyordu: kullanıcıya salt bilgi veren bir kutuda eylem
+   düğmesi, üstelik bir önceki onaydan kalma etiketiyle. Kuralı tek yerde ve
+   GENEL yazıyoruz; aksi hâlde her yeni bileşende aynı tuzak yeniden kurulur. */
+[hidden] { display: none !important; }
+
 .modal-box {
   display: flex;
   flex-direction: column;
@@ -1856,6 +1864,11 @@ main {
 .bk-kind-dis { border-color: var(--warn); color: var(--warn); }
 .bk-file-name { color: var(--muted); overflow-wrap: anywhere; }
 .bk-file-size { color: var(--muted); white-space: nowrap; }
+/* Açılamayan yedek dosya ADININ yanında duruyor, ayrı bir sütunda değil:
+   ızgara beş sütunlu ve altıncı bir hücre bütün satırı kaydırırdı. */
+.bk-acilmaz { margin-left: 8px; font-size: 11px; padding: 1px 6px;
+              border: 1px solid var(--err); border-radius: 999px;
+              color: var(--err); white-space: nowrap; }
 .bk-file-btn { white-space: nowrap; }
 
 @media (max-width: 720px) {

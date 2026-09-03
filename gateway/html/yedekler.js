@@ -18,6 +18,13 @@
 /* i18n.js yüklenmemişse panel yine çalışsın: metni olduğu gibi döndür. */
 const T = (x, b) => (typeof t === 'function' ? t(x, b) : x);
 
+/* Şifreli yedek, anahtarı olmayan bir kurulumda kurtarma noktası DEĞİLDİR.
+   Aynı cümleyi üç yerde kullanıyoruz (rozet, iki düğmenin balonu); tek yerde
+   durması, birinin güncellenip diğerlerinin eskimesini engelliyor. */
+const ACILMAZ = 'Bu yedek şifreli ve bu kurulumda BACKUP_ENCRYPT_KEY tanımlı '
+  + 'değil — içi okunamaz ve geri yüklenemez. Yedeği alan kurulumun '
+  + 'anahtarını .env dosyasına ekleyin.';
+
 const API = '/api';
 const $   = (s) => document.querySelector(s);
 
@@ -154,6 +161,9 @@ function infoBox(title, bodyHtml) {
   $('#modal-title').textContent = title;
   $('#modal-body').innerHTML = bodyHtml;
   $('#modal-ok').hidden = true;
+  /* Bir önceki onayın işleyicisi ÜSTÜNDE kalmasın: düğme yeniden
+     görünür olduğunda eski işi tetiklemeye çalışırdı. */
+  $('#modal-ok').onclick = null;
   $('#modal').hidden = false;
   $('#modal-cancel').textContent = 'Kapat';
   $('#modal-cancel').onclick = () => {
@@ -992,16 +1002,22 @@ function rowHtml(engine, b, st, s) {
                >${esc(bagilZaman(f.epoch))}</span>
              <span class="bk-file-kind bk-kind-${esc(KAYNAK_CLS[f.kind] || 'dis')}"
                >${esc(KAYNAK_AD[f.kind] || f.kind || '?')}</span>
-             <span class="bk-file-name" title="${esc(f.file)}">${esc(f.file)}</span>
+             <span class="bk-file-name" title="${esc(f.file)}">${esc(f.file)}${
+               f.readable === false
+                 ? `<span class="bk-acilmaz" title="${esc(ACILMAZ)}">açılamaz</span>`
+                 : ''}</span>
              <span class="bk-file-size">${esc(bayt(f.bytes))}</span>
              <button class="btn btn-sm bk-file-btn" data-act="inspect"
                data-id="${esc(engine.id)}" data-file="${esc(f.file)}"
+               ${f.readable === false ? 'disabled' : ''}
                aria-label="${esc(f.file)} yedeğinin içindekileri göster"
-               title="Yedeği GERİ YÜKLEMEDEN içindeki tabloları göster"
+               title="${f.readable === false ? esc(ACILMAZ) : 'Yedeği GERİ YÜKLEMEDEN içindeki tabloları göster'}"
                >İçini gör</button>
              <button class="btn btn-sm bk-file-btn" data-act="restore"
                data-id="${esc(engine.id)}" data-file="${esc(f.file)}"
-               ${grKapali ? 'disabled' : ''}${grNot ? ' title="' + esc(grNot) + '"' : ''}
+               ${grKapali || f.readable === false ? 'disabled' : ''}${
+                 f.readable === false ? ' title="' + esc(ACILMAZ) + '"'
+                                      : (grNot ? ' title="' + esc(grNot) + '"' : '')}
                aria-label="${esc(engine.name)} veritabanını ${esc(f.file)} yedeğine döndür"
                >Bu yedeğe dön</button>
            </li>`).join('')}
@@ -1012,6 +1028,15 @@ function rowHtml(engine, b, st, s) {
   /* Elle başlatılan son denemenin sonucu, iş penceresi kapandıktan sonra da
      burada durur. Yoksa ekranda hiçbir iz kalmıyor ve kullanıcı "hata
      vermedi ama yedek de alınmamış" durumunda kalıyordu. */
+  /* KURTARMA NOKTASI SAYISI YANILTMASIN: şifreli ama anahtarsız bir dosya
+     listede duruyor, yer kaplıyor ve "yedeğim var" duygusu veriyor — ama
+     geri yüklenemez. Bunu dosya listesi KAPALIYKEN de söylüyoruz, çünkü
+     kullanıcı listeyi ancak ihtiyaç duyduğunda açar ve o an çok geçtir. */
+  if (b.unreadable > 0) {
+    facts.push(`<span class="bk-none"
+      title="${esc(ACILMAZ)}">${b.unreadable} yedek açılamaz (şifreli, anahtar yok)</span>`);
+  }
+
   const deneme = SON_DENEME[engine.id];
   const denemeNotu = deneme
     ? `<p class="bk-attempt ${deneme.tur === 'ertelendi' ? 'bk-attempt-wait'

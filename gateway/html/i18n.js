@@ -743,7 +743,15 @@
     'Çekirdeğin bellek baskısı ölçümü (/proc/pressure/memory) okunamadı: bu çekirdekte yok ya da erişilemiyor.':
       'The kernel’s memory-pressure measurement (/proc/pressure/memory) could not be read: not present on this kernel, or not reachable.',
     'Üst sınırların toplamı politika sınırını aştı.':
-      'The sum of the ceilings has crossed the policy limit.'
+      'The sum of the ceilings has crossed the policy limit.',
+
+    /* --- şifreli ama anahtarsız yedek --- */
+    'Bu yedek şifreli ve bu kurulumda BACKUP_ENCRYPT_KEY tanımlı değil — içi okunamaz ve geri yüklenemez. Yedeği alan kurulumun anahtarını .env dosyasına ekleyin.':
+      'This backup is encrypted and BACKUP_ENCRYPT_KEY is not set on this install — it cannot be read or restored. Add the key from the install that took it to the .env file.',
+    '{1} yedek açılamaz (şifreli, anahtar yok)':
+      '{1} backups cannot be opened (encrypted, no key)',
+    'açılamaz':
+      'cannot open'
   };
 
   function dilOku() {

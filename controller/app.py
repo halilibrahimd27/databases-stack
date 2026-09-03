@@ -1372,6 +1372,20 @@ def _dotenv():
     return env
 
 
+# Şifreli yedek OKUNABİLİR Mİ? Anahtarın kendisi asla dışarı verilmez; yalnız
+# "var/yok" bilgisi. Anahtar iki yerden gelebilir: .env ya da controller'ın
+# ortamı — betikler de aynı iki yere bakıyor.
+def sifre_anahtari_var():
+    v = (os.environ.get("BACKUP_ENCRYPT_KEY") or "").strip()
+    if v:
+        return True
+    return bool((_dotenv().get("BACKUP_ENCRYPT_KEY") or "").strip())
+
+
+def sifreli_dosya_mi(ad):
+    return bool(ad) and ad.endswith(".enc")
+
+
 def connection_info(eid):
     engine = CATALOG.engine(eid)
     env = _dotenv()
@@ -4088,6 +4102,9 @@ def backup_stats(eid, root=None):
     """
     root = os.path.join(root or backups_dir(), eid)
     idx = load_backup_index()
+    # Bir kez ölçülüyor: her dosya için .env'i yeniden okumak, yüzlerce
+    # dosyalı bir kurulumda listeyi gereksiz yere yavaşlatırdı.
+    _anahtar_var = sifre_anahtari_var()
     count = total = 0
     latest = None
     latest_at = -1.0
@@ -4103,8 +4120,14 @@ def backup_stats(eid, root=None):
                 continue          # tam o anda temizlik silmiş olabilir
             count += 1
             total += stt.st_size
+            _sif = sifreli_dosya_mi(name)
             liste.append({"file": name, "epoch": int(stt.st_mtime),
-                          "bytes": stt.st_size, "kind": idx.get(name, "dış")})
+                          "bytes": stt.st_size, "kind": idx.get(name, "dış"),
+                          # Şifreli bir dosya, anahtar burada yoksa kurtarma
+                          # noktası DEĞİLDİR. Bunu listede söylüyoruz; geri
+                          # yükleme anında öğrenmek çok geç olurdu.
+                          "encrypted": _sif,
+                          "readable": (not _sif) or _anahtar_var})
             if stt.st_mtime > latest_at:
                 latest_at = stt.st_mtime
                 latest = liste[-1]
@@ -4922,8 +4945,16 @@ def backups_overview(now=None):
                             "drill": prova,
                             "count": count, "total_bytes": total,
                             "latest": latest, "files": files,
+                            # Listelenenler arasında ŞİFRELİ ama anahtarsız
+                            # kaç dosya var. Sıfırdan büyükse o motorun
+                            # kurtarma noktası sayısı göründüğünden azdır.
+                            "unreadable": sum(1 for f in files
+                                              if not f.get("readable", True)),
                             "listed": len(files)}
     return {
+        # Anahtarın KENDİSİ hiçbir zaman dışarı verilmez; panelin bilmesi
+        # gereken tek şey, şifreli bir dosyanın burada açılıp açılamayacağı.
+        "encryption_key": sifre_anahtari_var(),
         "schedule": {
             "enabled": bool(cfg["enabled"]),
             "time": cfg["time"],
