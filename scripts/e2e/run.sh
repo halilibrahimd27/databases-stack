@@ -49,7 +49,7 @@ RUN_LOG="$LOG_DIR/e2e_$(date +%Y%m%d_%H%M%S).log"
 # koşmalı (taze bir dump ve arşiv gerekiyor). ha-drill GERÇEK bir devir
 # yapar — failover paketiyle aynı aileden, onun hemen ardında.
 GUVENLI=(security sizing replication failover ha-drill backup drill import
-         encrypt pitr maintenance slowlog monitoring lifecycle)
+         encrypt pitr maintenance slowlog ash monitoring lifecycle)
 ISTEGE_BAGLI=(k8s)
 
 declare -A ACIKLAMA=(
