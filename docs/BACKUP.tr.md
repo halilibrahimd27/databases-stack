@@ -506,7 +506,7 @@ kaybolduysa bunları elle geri yükleyin.
 
 `.env` içinde `REMOTE_SYNC_ENABLED=true` yapıp rclone'u yapılandırın.
 Google Drive, S3, Backblaze, SFTP — rclone'un desteklediği her hedef çalışır.
-Kurulum: [GOOGLE-DRIVE.md](GOOGLE-DRIVE.tr.md)
+Kurulum: [GOOGLE-DRIVE.tr.md](GOOGLE-DRIVE.tr.md)
 
 ```bash
 ./scripts/sync-remote.sh test     # bağlantı testi

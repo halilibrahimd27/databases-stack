@@ -563,7 +563,7 @@ restore them by hand.
 
 Set `REMOTE_SYNC_ENABLED=true` in `.env` and configure rclone. Google Drive,
 S3, Backblaze, SFTP — every target rclone supports works.
-Setup: [GOOGLE-DRIVE.en.md](GOOGLE-DRIVE.md)
+Setup: [GOOGLE-DRIVE.md](GOOGLE-DRIVE.md)
 
 ```bash
 ./scripts/sync-remote.sh test     # bağlantı testi

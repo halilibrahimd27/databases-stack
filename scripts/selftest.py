@@ -3421,6 +3421,339 @@ for _b in ["README.md", "README.tr.md"] + sorted(_glob2.glob("docs/*.md")):
 ck("belgeler arası bağlantıların hepsi var olan dosyaya gidiyor", not _kirik,
    ", ".join(_kirik[:3]) or "kırık yok")
 
+# --- PANEL ARAYÜZÜ İKİ DİLDE Mİ --------------------------------------------
+# Belgeler çevrildi ama ürünün yüzü paneldir. Buradaki sessiz kusur şu:
+# app.js/yedekler.js kartları şablon dizgileriyle üretiyor; yeni bir cümle
+# eklendiğinde sözlüğe yazmayı unutmak HİÇBİR hata vermez — İngilizce panelde
+# o cümle Türkçe kalır ve kimse fark etmez. Ölçtüğümüz şey tam olarak bu:
+# "ekrana çıkan her cümlenin sözlükte bir karşılığı var mı".
+_HTML_DIZIN = "gateway/html"
+_i18n_yol = _os2.path.join(_HTML_DIZIN, "i18n.js")
+_i18n_src = io.open(_i18n_yol, encoding="utf-8").read()
+
+_BS = chr(92)
+_ANAHTAR_DESEN = r"^\s*'((?:[^'" + _BS + _BS + r"]|" + _BS + _BS + r".)+)':"
+_ham_anahtarlar = _re2.findall(_ANAHTAR_DESEN, _i18n_src, _re2.M)
+_ANAHTARLAR = set(a.replace(_BS + "'", "'").replace(_BS + _BS, _BS)
+                  for a in _ham_anahtarlar)
+
+# Aynı anahtarın iki kez yazılması sessizce ikincisini geçerli kılar; iki
+# farklı çeviri arasında hangisinin kazandığı satır sırasına kalır.
+_yinelenen = [a for a in set(_ham_anahtarlar) if _ham_anahtarlar.count(a) > 1]
+ck("sözlükte yinelenen anahtar yok", not _yinelenen,
+   ", ".join(_yinelenen[:3]) or "%d anahtar" % len(_ANAHTARLAR))
+
+# Her sayfa sözlüğü yüklemeli ve dil düğmesini taşımalı: biri unutulursa o
+# sayfa tek dilde kalır ve kullanıcı dili değiştiremediği yere düşer.
+_sayfasiz, _dugmesiz = [], []
+for _s in sorted(_glob2.glob(_os2.path.join(_HTML_DIZIN, "*.html"))):
+    _ic = io.open(_s, encoding="utf-8").read()
+    if "i18n.js" not in _ic:
+        _sayfasiz.append(_os2.path.basename(_s))
+    if "lang-toggle" not in _ic:
+        _dugmesiz.append(_os2.path.basename(_s))
+ck("her sayfa i18n.js yüklüyor", not _sayfasiz,
+   ", ".join(_sayfasiz) or "%d sayfa" % len(_glob2.glob(
+       _os2.path.join(_HTML_DIZIN, "*.html"))))
+ck("her sayfada dil düğmesi var", not _dugmesiz,
+   ", ".join(_dugmesiz) or "hepsinde var")
+
+
+def _i18n_isaretli(yol):
+    """HTML'de data-i18n / data-i18n-html ile işaretlenmiş metinler."""
+    from html.parser import HTMLParser
+
+    class _C(HTMLParser):
+        def __init__(self):
+            HTMLParser.__init__(self, convert_charrefs=False)
+            self.bulunan, self.yigin = [], []
+
+        def handle_starttag(self, etiket, nitelikler):
+            d = dict(nitelikler)
+            tur = ("html" if "data-i18n-html" in d
+                   else ("txt" if "data-i18n" in d else None))
+            if tur:
+                self.yigin.append([etiket, [], 0])
+            elif self.yigin:
+                self.yigin[-1][2] += 1
+                self.yigin[-1][1].append(self.get_starttag_text())
+
+        def handle_startendtag(self, etiket, nitelikler):
+            if self.yigin:
+                self.yigin[-1][1].append(self.get_starttag_text())
+
+        def handle_endtag(self, etiket):
+            if not self.yigin:
+                return
+            u = self.yigin[-1]
+            if u[2] > 0 and etiket != u[0]:
+                u[2] -= 1
+                u[1].append("</%s>" % etiket)
+            elif etiket == u[0]:
+                self.yigin.pop()
+                m = _re2.sub(r"\s+", " ", "".join(u[1])).strip()
+                if m:
+                    self.bulunan.append(m)
+            else:
+                u[1].append("</%s>" % etiket)
+
+        def handle_data(self, veri):
+            if self.yigin:
+                self.yigin[-1][1].append(veri)
+
+        def handle_entityref(self, ad):
+            if self.yigin:
+                self.yigin[-1][1].append("&%s;" % ad)
+
+    c = _C()
+    c.feed(io.open(yol, encoding="utf-8").read())
+    return c.bulunan
+
+
+# Dilden bağımsız olanlar (marka, sekme adı) çevrilmez; onları saymıyoruz.
+_NOTR = {"Windows", "macOS", "Linux (Ubuntu / Debian)", "Android / iOS"}
+_isaretli_eksik = []
+for _s in sorted(_glob2.glob(_os2.path.join(_HTML_DIZIN, "*.html"))):
+    for _m in _i18n_isaretli(_s):
+        if _m not in _ANAHTARLAR and _m not in _NOTR:
+            _isaretli_eksik.append("%s: %s" % (_os2.path.basename(_s), _m[:44]))
+ck("data-i18n ile işaretlenen her metnin karşılığı var", not _isaretli_eksik,
+   "; ".join(_isaretli_eksik[:2]) or "hepsi sözlükte")
+
+# --- JS'in ÜRETTİĞİ metinler ---------------------------------------------
+# Çeviri DOM'a uygulanıyor (i18n.js/agaci): anahtar birimi METİN
+# DÜĞÜMÜDÜR. Şablonları etiketlerinden ayırıp aralarda kalan metinleri
+# çıkarıyoruz — ekranda göreceğimiz düğümler bunlar.
+# Ayıklamanın can alıcı yeri BİRLEŞTİRME: kaynakta
+#   'Açık motorların ayırdığı toplam ' + mb(x) + ', dağıtılabilir ' + ...
+# yazan şey ekranda TEK metin düğümüdür. Parçaları ayrı ayrı ararsak "hepsi
+# sözlükte" deriz ama çalışırken hiçbiri tutmaz — tam da sessiz kusur.
+# Bu yüzden zincirler birleştiriliyor ve değişen kısımların yerine delik
+# konuyor; delikli metin ancak {1}{2}... kalıbı olarak çevrilebilir.
+# Tarayıcı REGEX DEĞİL, elle yürüyor. Sebebi ölçüldü: `...${ `iç şablon` }...`
+# gördüğünde regex ilk iç ters tırnakta duruyor ve ekranda hiç bulunmayan
+# ": ''}Aşağıdaki" gibi hayalet metinler üretiyordu — yani kontrolün kendisi
+# yanlış pozitif veriyordu. Dizgi sınırı ancak yürüyerek doğru bulunur.
+_DELIK = "\x01"
+
+
+def _js_dizgi_sonu(src, i):
+    """src[i] tırnaksa, dizginin bittiği yerin BİR SONRAKİ indisi."""
+    q = src[i]
+    j, n = i + 1, len(src)
+    while j < n:
+        c = src[j]
+        if c == _BS:
+            j += 2
+            continue
+        if c == q:
+            return j + 1
+        if q == "`" and c == "$" and j + 1 < n and src[j + 1] == "{":
+            j = _js_ifade_sonu(src, j + 2)
+            continue
+        if q != "`" and c == "\n":
+            return j                      # kapanmamış tek satırlık dizgi
+        j += 1
+    return n
+
+
+def _js_ifade_sonu(src, j):
+    """${ ... } içindeki ifadenin kapanış '}' işaretinden sonrası."""
+    d, n = 1, len(src)
+    while j < n and d:
+        c = src[j]
+        if c in "'\"`":
+            j = _js_dizgi_sonu(src, j)
+            continue
+        if c == _BS:
+            j += 2
+            continue
+        if c == "{":
+            d += 1
+        elif c == "}":
+            d -= 1
+        j += 1
+    return j
+
+
+def _js_kacis_coz(x):
+    out, i, n = [], 0, len(x)
+    while i < n:
+        if x[i] == _BS and i + 1 < n:
+            c = x[i + 1]
+            out.append({"n": " ", "t": " ", "r": " "}.get(c, c))
+            i += 2
+        else:
+            out.append(x[i])
+            i += 1
+    return "".join(out)
+
+
+def _js_dizgi_metni(src, i):
+    """(bitis, delikli_metin). Şablonda ${...} yerine _DELIK konur."""
+    q = src[i]
+    j, n = i + 1, len(src)
+    out = []
+    while j < n:
+        c = src[j]
+        if c == _BS:
+            out.append(src[j:j + 2])
+            j += 2
+            continue
+        if c == q:
+            return j + 1, _js_kacis_coz("".join(out))
+        if q == "`" and c == "$" and j + 1 < n and src[j + 1] == "{":
+            j = _js_ifade_sonu(src, j + 2)
+            out.append(_DELIK)
+            continue
+        if q != "`" and c == "\n":
+            return j, _js_kacis_coz("".join(out))
+        out.append(c)
+        j += 1
+    return n, _js_kacis_coz("".join(out))
+
+
+def _js_yorumsuz(src):
+    """Yorumları boşluğa çevirir; uzunluk ve satır sayısı korunur."""
+    out, i, n = list(src), 0, len(src)
+    while i < n:
+        c = src[i]
+        if c in "'\"`":
+            i = _js_dizgi_sonu(src, i)
+        elif c == "/" and i + 1 < n and src[i + 1] == "*":
+            j = src.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            for k in range(i, j):
+                if out[k] != "\n":
+                    out[k] = " "
+            i = j
+        elif c == "/" and i + 1 < n and src[i + 1] == "/":
+            j = src.find("\n", i)
+            j = n if j < 0 else j
+            for k in range(i, j):
+                out[k] = " "
+            i = j
+        else:
+            i += 1
+    return "".join(out)
+
+
+def _js_zincirler(src):
+    """Birleştirme zincirlerini tek metin olarak döndürür."""
+    src = _js_yorumsuz(src)
+    out, i, n = [], 0, len(src)
+    while i < n:
+        if src[i] not in "'\"`":
+            i += 1
+            continue
+        parcalar = []
+        j, metin = _js_dizgi_metni(src, i)
+        parcalar.append(metin)
+        while True:
+            k = j
+            while k < n and src[k] in " \t\r\n":
+                k += 1
+            if k >= n or src[k] != "+" or src[k:k + 2] == "++":
+                break
+            k += 1
+            while k < n and src[k] in " \t\r\n":
+                k += 1
+            if k < n and src[k] in "'\"`":
+                j, metin = _js_dizgi_metni(src, k)
+                parcalar.append(metin)
+                continue
+            # İfade: derinlik 0'da bir sonraki '+' ya da zincir sonu
+            d, p = 0, k
+            while p < n:
+                c = src[p]
+                if c in "([{":
+                    d += 1
+                elif c in ")]}":
+                    if d == 0:
+                        break
+                    d -= 1
+                elif c in "'\"`":
+                    p = _js_dizgi_sonu(src, p)
+                    continue
+                elif d == 0 and c in ",;":
+                    break
+                elif d == 0 and c == "+" and src[p - 1] != "+":
+                    break
+                p += 1
+            parcalar.append(_DELIK)
+            j = p
+        out.append("".join(parcalar))
+        i = max(j, i + 1)
+    return out
+
+def _metin_dugumleri(html):
+    """Etiket dışı metinler. Baştaki etiket kalıntısı ('">…') atılır."""
+    ilk_ac, ilk_kap = html.find("<"), html.find(">")
+    if ilk_kap >= 0 and (ilk_ac < 0 or ilk_kap < ilk_ac):
+        html = html[ilk_kap + 1:]
+    parcalar, tampon, i, n = [], [], 0, len(html)
+    while i < n:
+        if html[i] == "<":
+            j = html.find(">", i)
+            if j < 0:
+                break
+            parcalar.append("".join(tampon))
+            tampon = []
+            i = j + 1
+        else:
+            tampon.append(html[i])
+            i += 1
+    parcalar.append("".join(tampon))
+    return parcalar
+
+
+_ATIL = _re2.compile(r"^[\s:;,.·—–|()\[\]{}<>&%*+=0-9-]*$")
+_TR_HARF = "çğıöşüÇĞİÖŞÜ"
+# Bunlar metin düğümü olarak ekrana çıkar ama ÇEVRİLMEZ: birebir komut ya da
+# her iki dilde aynı olan teknik ad.
+_CEVRILMEZ = {"docker update"}
+
+
+def _js_metinleri(yol):
+    """(tam_metinler, kalip_metinler) — kalıpta delikler {1}{2}… olur."""
+    tam, kalip = set(), set()
+    for birlesik in _js_zincirler(io.open(yol, encoding="utf-8").read()):
+        for ham in _metin_dugumleri(birlesik):
+            d = _re2.sub(r"\s+", " ", ham).strip()
+            if not d or _ATIL.match(d):
+                continue
+            if not any(c in _TR_HARF for c in d):
+                continue
+            if _DELIK in d:
+                sayac = [0]
+
+                def _no(_m):
+                    sayac[0] += 1
+                    return "{%d}" % sayac[0]
+
+                kalip.add(_re2.sub(_DELIK, _no, d))
+            else:
+                tam.add(d)
+    return tam, kalip
+
+
+_js_eksik = []
+for _js2 in ("app.js", "yedekler.js"):
+    _tam, _kalip = _js_metinleri(_os2.path.join(_HTML_DIZIN, _js2))
+    for _d in sorted(_tam | _kalip):
+        if _d not in _ANAHTARLAR and _d not in _CEVRILMEZ:
+            _js_eksik.append("%s: %s" % (_js2, _d[:46]))
+ck("panelin JS ile çizdiği her cümle sözlükte", not _js_eksik,
+   "; ".join(_js_eksik[:3]) or "eksik yok")
+
+# Göreli zaman ("3 saat önce") parçalardan kuruluyor; tam metin düğümü hiç
+# oluşmadığı için DOM çevirisi ona yetişemez — kaynakta T() ile sarmalı.
+_bagil = io.open(_os2.path.join(_HTML_DIZIN, "yedekler.js"), encoding="utf-8").read()
+_bagil_govde = _bagil.split("function bagilZaman")[1].split("\n}")[0]
+ck("göreli zaman T() ile çevriliyor (parçalardan kurulduğu için)",
+   "T(" in _bagil_govde and "'az önce'" not in _bagil_govde.replace("T('az önce')", ""),
+   "sarmalı" if "T(" in _bagil_govde else "SARMASIZ")
+
 # --- python3 - <<EOF ile VERİ BORUSU birlikte kullanılamaz -------------------
 # `python3 - <<EOF` yazıldığında program stdin'den okunur; boruyla gelen veri
 # kaybolur ve süzgeç SIFIR BAYT görür — üstelik hata da vermez, sessizce

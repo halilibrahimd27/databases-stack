@@ -164,7 +164,7 @@ replikasyonu açın.
   `.env` içindeki replika servisini uzak bir docker host'una yönlendirin ya da
   Kubernetes dağıtımını node anti-affinity ile kullanın.
 - **Yanlışlıkla silinen veri.** Replikaya da anında yansır. Bunun çaresi
-  yedektir → [BACKUP.md](BACKUP.tr.md)
+  yedektir → [BACKUP.tr.md](BACKUP.tr.md)
 - **Denetleyicinin kendisi.** Controller çökerse devir yapılmaz. Küçük bir
   servistir ve `restart: unless-stopped` ile geri gelir; olayları izleyin.
 

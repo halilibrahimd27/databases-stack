@@ -15,6 +15,9 @@
 */
 'use strict';
 
+/* i18n.js yüklenmemişse panel yine çalışsın: metni olduğu gibi döndür. */
+const T = (x, b) => (typeof t === 'function' ? t(x, b) : x);
+
 const API = '/api';
 const $   = (s) => document.querySelector(s);
 
@@ -85,13 +88,25 @@ function bagilZaman(ep) {
   const gecmis = fark >= 0;
   const s = Math.abs(fark);
   let n, ad;
-  if (s < 90) return gecmis ? 'az önce' : 'birazdan';
+  if (s < 90) return gecmis ? T('az önce') : T('birazdan');
   if (s < 5400)        { n = Math.round(s / 60);    ad = 'dakika'; }
   else if (s < 129600) { n = Math.round(s / 3600);  ad = 'saat'; }
   else                 { n = Math.round(s / 86400); ad = 'gün'; }
-  return n + ' ' + ad + (gecmis ? ' önce' : ' sonra');
+  /* Kalıp olarak çevriliyor: İngilizcede "in 3 minutes" öne geçiyor,
+     Türkçede "3 dakika sonra" sona kalıyor. */
+  return T(gecmis ? '%s önce' : '%s sonra').replace('%s', n + ' ' + birim(n, ad));
 }
-const tamTarih = (ep) => (ep ? new Date(ep * 1000).toLocaleString('tr-TR') : '');
+
+/* Türkçede çoğul eki yok ("3 dakika"), İngilizcede var ("3 minutes").
+   Üç birim de düzenli çoğul aldığı için tek 's' yetiyor. */
+function birim(n, ad) {
+  const c = T(ad, 'zaman');
+  return (n === 1 || c === ad) ? c : c + 's';
+}
+
+const tamTarih = (ep) => (ep
+  ? new Date(ep * 1000).toLocaleString(T('tr-TR'))
+  : '');
 
 /* ------------------------------------------------------------- pencereler */
 
@@ -1325,3 +1340,7 @@ document.addEventListener('change', (ev) => {
   // ağa çıkmıyor.
   setInterval(refreshBackups, ST_ARALIK);
 })();
+
+/* Dil değişince kartları yeniden çiziyoruz: sözlük DOM'a uygulanıyor ama
+   "3 saat önce" gibi birleştirilmiş metinler ancak yeniden çizimle düzelir. */
+document.addEventListener('dbstack:dil', function () { renderSystem(); render(); });

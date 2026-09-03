@@ -173,7 +173,7 @@ MariaDB.
   point the replica service in `.env` at a remote docker host, or use the
   Kubernetes deployment with node anti-affinity.
 - **Data deleted by accident.** It is reflected on the replica instantly too.
-  The remedy for that is a backup → [BACKUP.en.md](BACKUP.md)
+  The remedy for that is a backup → [BACKUP.md](BACKUP.md)
 - **The controller itself.** If the controller crashes, no failover is done.
   It is a small service and comes back with `restart: unless-stopped`; watch
   the events.

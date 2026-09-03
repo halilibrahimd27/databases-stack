@@ -254,7 +254,7 @@ itself, calls rebalancing, reads from the cgroup that the ceiling really
 dropped, and verifies with `.State.StartedAt` that no container was restarted.
 
 Details, formulas and the per-engine reserve table:
-[docs/BELLEK.en.md](docs/BELLEK.md)
+[docs/BELLEK.md](docs/BELLEK.md)
 
 ### Why this matters
 
@@ -486,7 +486,7 @@ it.
 Automatic restore exists on five engines: **MariaDB, PostgreSQL, MongoDB, Redis,
 SQL Server.** The others are backed up, but going back is a manual,
 engine-specific operation; what to do for which is written in
-[docs/BACKUP.en.md](docs/BACKUP.md).
+[docs/BACKUP.md](docs/BACKUP.md).
 
 ### From the command line
 
@@ -523,9 +523,9 @@ together, `backup.sh` prevents the collision with its own lock. The same lock is
 held during a restore too — so that the 02:00 round does not dump a
 half-restored database as a "valid backup" and sync it to the remote.
 
-Details and per-engine methods: [docs/BACKUP.en.md](docs/BACKUP.md).
+Details and per-engine methods: [docs/BACKUP.md](docs/BACKUP.md).
 Remote storage (Google Drive / S3 / SFTP):
-[docs/GOOGLE-DRIVE.en.md](docs/GOOGLE-DRIVE.md).
+[docs/GOOGLE-DRIVE.md](docs/GOOGLE-DRIVE.md).
 
 ---
 
@@ -591,7 +591,7 @@ only A (13 s).)
 PostgreSQL and MariaDB are supported. Why the others are not is written down:
 Redis's AOF has no timestamps ("go back to 14:32" cannot be expressed), MSSQL
 wants a transaction log backup, MongoDB is possible with the oplog but was not
-done in this round. Details: [docs/PITR.en.md](docs/PITR.md).
+done in this round. Details: [docs/PITR.md](docs/PITR.md).
 
 ## Encrypted backups
 
@@ -608,7 +608,7 @@ Backwards compatible: old unencrypted backups keep working, and both listing and
 restore recognise either kind. While encryption is on, no unencrypted file is
 sent to remote storage. `openssl enc` carries no integrity tag (AEAD) — it gives
 confidentiality, not a signature against tampering; this was chosen knowingly
-and is written down in [docs/BACKUP.en.md](docs/BACKUP.md).
+and is written down in [docs/BACKUP.md](docs/BACKUP.md).
 
 ## Failover drill
 
@@ -677,7 +677,7 @@ Suggestions are **not applied, they are shown**: adding an index slows the write
 path down, and that decision belongs to the owner of the database. Privacy:
 query texts can contain data; PostgreSQL already masks the parameters, and
 because the MariaDB slow query log writes the raw query, the tool masks the
-literals and says so. Details: [docs/SLOWLOG.en.md](docs/SLOWLOG.md).
+literals and says so. Details: [docs/SLOWLOG.md](docs/SLOWLOG.md).
 
 ## Monitoring
 
@@ -706,7 +706,7 @@ list updates itself. Because an engine that is off is not in the list, no
 While off, no container runs. While on it wants ~830 MB of RAM; if there is no
 room on the server it, like the other engines, **does not start and says why**.
 
-Details: [docs/MONITORING.en.md](docs/MONITORING.md).
+Details: [docs/MONITORING.md](docs/MONITORING.md).
 
 ---
 
@@ -727,7 +727,7 @@ panel, or:
 | MongoDB | replica set (rs0) | **yes** — the primary restarts |
 | Cassandra / Kafka / Elasticsearch | the engine's own clustering logic | — |
 
-Details: [docs/REPLICATION.en.md](docs/REPLICATION.md)
+Details: [docs/REPLICATION.md](docs/REPLICATION.md)
 
 ---
 
@@ -774,7 +774,7 @@ automatic.
 | MongoDB | the replica set holds its own election (3 votes, with an arbiter) |
 
 Details, how it is tested and the limits:
-[docs/FAILOVER.en.md](docs/FAILOVER.md)
+[docs/FAILOVER.md](docs/FAILOVER.md)
 
 ---
 
@@ -793,7 +793,7 @@ The controller's only authority in K8s is to read StatefulSets and to
 scale/size them — noticeably narrower than the docker socket access in the
 Docker installation (full authority on the host).
 
-Details: [docs/KUBERNETES.en.md](docs/KUBERNETES.md)
+Details: [docs/KUBERNETES.md](docs/KUBERNETES.md)
 
 ---
 
@@ -831,7 +831,7 @@ the two have not diverged; `./stack.sh doctor` calls it automatically.
 > ⚠️ This product was designed for use **on an internal network / behind a
 > VPN**. Do not open the database ports to the internet.
 
-Details and hardening steps: [docs/SECURITY.en.md](docs/SECURITY.md)
+Details and hardening steps: [docs/SECURITY.md](docs/SECURITY.md)
 
 ---
 
@@ -893,7 +893,7 @@ are the most common failures, and the system closes them itself in ~30 seconds.
 
 The same product covers a **host failure** too, once a second machine is added:
 run the replica on a remote Docker host, or with node anti-affinity on
-Kubernetes (see [docs/FAILOVER.en.md](docs/FAILOVER.md)). As long as you run
+Kubernetes (see [docs/FAILOVER.md](docs/FAILOVER.md)). As long as you run
 it on a single machine, if the whole machine goes down both copies go down —
 this is not a shortcoming, it is the definition of being on a single machine.
 
@@ -902,10 +902,10 @@ What you need to know:
 - **Replication is asynchronous.** During a failover, the last transactions the
   primary could not manage to send may be lost (typically milliseconds). How to
   turn on synchronous replication for zero loss:
-  [docs/FAILOVER.en.md](docs/FAILOVER.md)
+  [docs/FAILOVER.md](docs/FAILOVER.md)
 - **Failover is no substitute for a backup.** Data deleted by accident is
   reflected on the replica instantly too. Regular backups are essential →
-  [docs/BACKUP.en.md](docs/BACKUP.md)
+  [docs/BACKUP.md](docs/BACKUP.md)
 - Because the database ports go through the gateway, engines see the gateway's
   IP and not the client's real IP — if you use host-based authorisation
   (`user@'192.168.1.5'`), set it up accordingly.
@@ -952,7 +952,7 @@ REDIS_IMAGE=valkey/valkey:8-alpine    # .env
 ```
 
 The same mechanism is also used for your own registry mirror on a closed
-network. Details: [docs/LICENSING.en.md](docs/LICENSING.md)
+network. Details: [docs/LICENSING.md](docs/LICENSING.md)
 
 ---
 

@@ -31,10 +31,17 @@ try {
   <div class="brand">
     <span class="brand-icon" aria-hidden="true">💾</span>
     <div class="brand-txt">
-      <h1>Yedekler</h1>
-      <p class="sub">Kurtarma noktalarınız — ve gerektiğinde geri dönüş.</p>
+      <h1 data-i18n>Yedekler</h1>
+      <p class="sub" data-i18n>Kurtarma noktalarınız — ve gerektiğinde geri dönüş.</p>
     </div>
   </div>
+
+  <button type="button" class="theme-btn" id="lang-toggle"
+          title="Dil: Türkçe / English" aria-label="Dili değiştir"
+          data-i18n-attr="title,aria-label">
+    <span class="theme-ico" aria-hidden="true">🌐</span>
+    <span class="theme-txt" id="lang-txt">TR</span>
+  </button>
 
   <button type="button" class="theme-btn" id="theme-toggle"
           title="Görünüm: sistem / açık / koyu" aria-label="Görünümü değiştir">
@@ -45,7 +52,7 @@ try {
   <div class="sysbar" id="sysbar" role="group" aria-label="Sunucu durumu">
 
     <div class="sys-item sys-item-mem">
-      <span class="sys-label">Ayrılan bellek</span>
+      <span class="sys-label" data-i18n>Ayrılan bellek</span>
       <b id="sys-mem">—</b>
       <div class="meter" role="img" aria-label="Ayrılan bellek">
         <div class="meter-fill" id="sys-mem-bar"></div>
@@ -77,19 +84,19 @@ try {
 
   <div class="toolbar">
     <span class="legend-tools">
-      <a class="tool-link" href="/" title="Veritabanlarını açıp kapatma ekranı">
+      <a class="tool-link" href="/" title="Veritabanlarını açıp kapatma ekranı" data-i18n>
         ← Yönetim paneli</a>
     </span>
   </div>
 
   <section class="intro">
-    <h2>Yedekleriniz burada</h2>
-    <p>
+    <h2 data-i18n>Yedekleriniz burada</h2>
+    <p data-i18n>
       Her veritabanının diskteki yedek dosyaları, ne zaman alındıkları ve
       kaynakları aşağıda. Gecelik yedeğin saati ve kaç gün saklanacağı da
       buradan ayarlanır.
     </p>
-    <p class="hint">
+    <p class="hint" data-i18n-html>
       <b>Bir yedek yalnız geri yüklenebildiği kadar yedektir.</b> Silinen ya da
       bozulan bir veriyi geri getirmek istediğinizde motorun satırındaki
       <b>Son yedeğe dön</b> düğmesini kullanın; belirli bir güne dönmek için
@@ -105,15 +112,15 @@ try {
 
   <section class="zone bk-zone" id="bk-sched-zone" aria-labelledby="bk-sched-title" hidden>
     <div class="zone-head">
-      <h2 class="zone-title" id="bk-sched-title">Otomatik yedek</h2>
-      <p class="zone-note">Gece kendiliğinden koşan tur.</p>
+      <h2 class="zone-title" id="bk-sched-title" data-i18n>Otomatik yedek</h2>
+      <p class="zone-note" data-i18n>Gece kendiliğinden koşan tur.</p>
     </div>
     <div class="zone-body" id="bk-sched"></div>
   </section>
 
   <section class="zone bk-zone" id="bk-list-zone" aria-labelledby="bk-list-title" hidden>
     <div class="zone-head" id="bk-list-head">
-      <h2 class="zone-title" id="bk-list-title">Motorlar</h2>
+      <h2 class="zone-title" id="bk-list-title" data-i18n>Motorlar</h2>
     </div>
     <div class="zone-body">
       <ul class="bk-list" id="bk-list"></ul>
@@ -121,10 +128,10 @@ try {
   </section>
 
   <section class="footer-note">
-    <h3>Yardımcı bağlantılar</h3>
+    <h3 data-i18n>Yardımcı bağlantılar</h3>
     <ul>
-      <li><a href="/">Yönetim paneli</a> — veritabanlarını açıp kapatma.</li>
-      <li><a href="https://github.com/halilibrahimd27/databases-stack" target="_blank" rel="noopener">Belgeler</a>
+      <li data-i18n-html><a href="/">Yönetim paneli</a> — veritabanlarını açıp kapatma.</li>
+      <li data-i18n-html><a href="https://github.com/halilibrahimd27/databases-stack" target="_blank" rel="noopener">Belgeler</a>
           — yedekleme, geri yükleme ve komut satırı kullanımı.</li>
     </ul>
   </section>
@@ -159,6 +166,7 @@ try {
   </div>
 </div>
 
+<script src="i18n.js"></script>
 <script src="yedekler.js"></script>
 </body>
 </html>

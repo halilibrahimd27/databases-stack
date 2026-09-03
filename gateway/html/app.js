@@ -16,6 +16,9 @@
 */
 'use strict';
 
+/* i18n.js yüklenmemişse panel yine çalışsın: metni olduğu gibi döndür. */
+const T = (x) => (typeof t === 'function' ? t(x) : x);
+
 const API = '/api';
 const $  = (s) => document.querySelector(s);
 
@@ -1335,3 +1338,7 @@ document.addEventListener('click', (ev) => {
   await refresh();
   timer = setInterval(refresh, 5000);
 })();
+
+/* Dil değişince kartları yeniden çiziyoruz: sözlük DOM'a uygulanıyor ama
+   "3 saat önce" gibi birleştirilmiş metinler ancak yeniden çizimle düzelir. */
+document.addEventListener('dbstack:dil', function () { refresh(); });

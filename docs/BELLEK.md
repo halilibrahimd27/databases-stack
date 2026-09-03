@@ -46,7 +46,7 @@ connection is a separate process, so an application that uses no pool chokes
 the engine with process count, not with RAM. That is why there is an optional
 connection pool on 6432; how the pool settings derive from
 `POSTGRES_MAX_CONNECTIONS` and the limits of transaction pooling are in
-`docs/POOLING.en.md`.
+`docs/POOLING.md`.
 
 ---
 

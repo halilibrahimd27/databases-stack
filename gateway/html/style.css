@@ -1598,6 +1598,8 @@ main {
 .theme-btn:hover { border-color: var(--accent); color: var(--accent); }
 .theme-btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .theme-ico { font-size: 13px; }
+/* Başlığı esnek olmayan sayfalarda (kurulum, kapalı motor) düğme sağ üstte sabit durur. */
+.theme-btn.lang-fixed { position: fixed; top: 14px; right: 14px; z-index: 50; margin: 0; }
 
 @media (max-width: 720px) {
   /* Dar ekranda metni gizle; ikon tek başına yer kaplamasın. */

@@ -10,23 +10,30 @@
 </head>
 <body class="setup-page">
 
+  <button type="button" class="theme-btn lang-fixed" id="lang-toggle"
+          title="Dil: Türkçe / English" aria-label="Dili değiştir"
+          data-i18n-attr="title,aria-label">
+    <span class="theme-ico" aria-hidden="true">🌐</span>
+    <span class="theme-txt" id="lang-txt">TR</span>
+  </button>
+
 <main class="setup">
   <header class="setup-head">
     <span class="setup-icon" aria-hidden="true">🔒</span>
     <div>
-      <h1>Tek seferlik güvenlik kurulumu</h1>
-      <p class="lead">Üç adım sürer; sonrasında tarayıcı uyarısı tamamen kalkar.</p>
+      <h1 data-i18n>Tek seferlik güvenlik kurulumu</h1>
+      <p class="lead" data-i18n>Üç adım sürer; sonrasında tarayıcı uyarısı tamamen kalkar.</p>
     </div>
   </header>
 
   <section class="panel panel-info">
-    <h2>Tarayıcı neden “Güvenli değil” diyor?</h2>
-    <p>
+    <h2 data-i18n>Tarayıcı neden “Güvenli değil” diyor?</h2>
+    <p data-i18n-html>
       Bağlantınız <b>şifreli</b> — sorun şifrelemede değil, <b>kimin imzaladığında</b>.
       Bu sunucu iç ağda çalışıyor ve bir alan adı yok; alan adı olmadan
       Let's Encrypt gibi kamuya açık bir sertifika sağlayıcısı sertifika veremez.
     </p>
-    <p>
+    <p data-i18n-html>
       Bu yüzden kurulum sırasında sunucu <b>kendi sertifika otoritesini</b> üretti.
       Tarayıcınız bu otoriteyi henüz tanımıyor, o yüzden uyarıyor. Aşağıdaki
       dosyayı bir kez kurduğunuzda tanıyacak ve uyarı bir daha çıkmayacak.
@@ -35,11 +42,11 @@
 
   <section class="panel">
     <h2><span class="step-num" aria-hidden="true">1</span> Sertifikayı indirin</h2>
-    <p>
+    <p data-i18n-html>
       <a class="btn btn-primary btn-lg" href="/ca.crt" download="databases-stack-ca.crt">
         Sertifikayı indir (ca.crt)</a>
     </p>
-    <p class="muted">
+    <p class="muted" data-i18n-html>
       Bu dosya yalnızca <b>ortak anahtar</b> içerir — gizli bir şey değildir,
       paylaşmak güvenlidir. Özel anahtar sunucuda kalır ve hiçbir zaman gönderilmez.
     </p>
@@ -47,49 +54,49 @@
 
   <section class="panel">
     <h2><span class="step-num" aria-hidden="true">2</span> Bilgisayarınıza kurun</h2>
-    <p class="muted">İşletim sisteminizi seçip adımları uygulayın.</p>
+    <p class="muted" data-i18n>İşletim sisteminizi seçip adımları uygulayın.</p>
 
     <details open>
-      <summary>Windows</summary>
+      <summary data-i18n>Windows</summary>
       <ol>
-        <li>İndirdiğiniz <code>ca.crt</code> dosyasına <b>çift tıklayın</b>.</li>
-        <li><b>Sertifikayı Yükle…</b> → <b>Yerel Bilgisayar</b> → İleri.</li>
-        <li><b>Tüm sertifikaları aşağıdaki depoya yerleştir</b> → <b>Gözat</b> →
+        <li data-i18n-html>İndirdiğiniz <code>ca.crt</code> dosyasına <b>çift tıklayın</b>.</li>
+        <li data-i18n-html><b>Sertifikayı Yükle…</b> → <b>Yerel Bilgisayar</b> → İleri.</li>
+        <li data-i18n-html><b>Tüm sertifikaları aşağıdaki depoya yerleştir</b> → <b>Gözat</b> →
             <b>Güvenilen Kök Sertifika Yetkilileri</b> → Tamam → İleri → Son.</li>
-        <li>Tarayıcıyı <b>tamamen kapatıp</b> yeniden açın.</li>
+        <li data-i18n-html>Tarayıcıyı <b>tamamen kapatıp</b> yeniden açın.</li>
       </ol>
-      <p class="muted">Firefox kendi deposunu kullanır:
+      <p class="muted" data-i18n>Firefox kendi deposunu kullanır:
         Ayarlar → Gizlilik ve Güvenlik → Sertifikalar → Sertifikaları Görüntüle →
         Yetkililer → İçe Aktar.</p>
     </details>
 
     <details>
-      <summary>macOS</summary>
+      <summary data-i18n>macOS</summary>
       <ol>
-        <li><code>ca.crt</code> dosyasına çift tıklayın; <b>Anahtar Zinciri Erişimi</b> açılır.</li>
-        <li>Sertifikayı <b>Sistem</b> anahtar zincirine ekleyin.</li>
-        <li>Sertifikaya çift tıklayın → <b>Güven</b> → “Bu sertifikayı kullanırken”
+        <li data-i18n-html><code>ca.crt</code> dosyasına çift tıklayın; <b>Anahtar Zinciri Erişimi</b> açılır.</li>
+        <li data-i18n-html>Sertifikayı <b>Sistem</b> anahtar zincirine ekleyin.</li>
+        <li data-i18n-html>Sertifikaya çift tıklayın → <b>Güven</b> → “Bu sertifikayı kullanırken”
             → <b>Her Zaman Güven</b>.</li>
-        <li>Tarayıcıyı yeniden başlatın.</li>
+        <li data-i18n>Tarayıcıyı yeniden başlatın.</li>
       </ol>
-      <p class="muted">Terminalden:</p>
+      <p class="muted" data-i18n>Terminalden:</p>
       <pre><code>sudo security add-trusted-cert -d -r trustRoot \
   -k /Library/Keychains/System.keychain ca.crt</code></pre>
     </details>
 
     <details>
-      <summary>Linux (Ubuntu / Debian)</summary>
+      <summary data-i18n>Linux (Ubuntu / Debian)</summary>
       <pre><code>sudo cp ca.crt /usr/local/share/ca-certificates/databases-stack.crt
 sudo update-ca-certificates</code></pre>
-      <p class="muted">Chrome/Chromium ve Firefox kendi depolarını kullanır;
+      <p class="muted" data-i18n>Chrome/Chromium ve Firefox kendi depolarını kullanır;
         tarayıcı ayarlarından “Yetkililer” bölümüne ayrıca eklemeniz gerekebilir.</p>
     </details>
 
     <details>
-      <summary>Android / iOS</summary>
-      <p><b>Android:</b> Ayarlar → Güvenlik → Şifreleme ve kimlik bilgileri →
+      <summary data-i18n>Android / iOS</summary>
+      <p data-i18n-html><b>Android:</b> Ayarlar → Güvenlik → Şifreleme ve kimlik bilgileri →
          Sertifika yükle → CA sertifikası.</p>
-      <p><b>iOS:</b> Dosyayı Safari ile indirin → Ayarlar → Profil İndirildi →
+      <p data-i18n-html><b>iOS:</b> Dosyayı Safari ile indirin → Ayarlar → Profil İndirildi →
          Yükle. Ardından Ayarlar → Genel → Hakkında → <b>Sertifika Güveni Ayarları</b>
          bölümünden bu sertifikayı <b>etkinleştirin</b> (bu ikinci adım şarttır).</p>
     </details>
@@ -97,9 +104,9 @@ sudo update-ca-certificates</code></pre>
 
   <section class="panel panel-ok">
     <h2><span class="step-num" aria-hidden="true">3</span> Panele girin</h2>
-    <p>Sertifikayı kurduktan sonra tarayıcıyı yeniden başlatın ve devam edin:</p>
-    <p><a class="btn btn-primary btn-lg" id="go" href="/">Yönetim paneline git</a></p>
-    <p class="muted">
+    <p data-i18n>Sertifikayı kurduktan sonra tarayıcıyı yeniden başlatın ve devam edin:</p>
+    <p data-i18n-html><a class="btn btn-primary btn-lg" id="go" href="/">Yönetim paneline git</a></p>
+    <p class="muted" data-i18n-html>
       Kurmak istemiyorsanız uyarı ekranında <b>Gelişmiş → Devam et</b> diyerek de
       girebilirsiniz. Bağlantı yine şifrelidir; yalnız tarayıcı her seferinde uyarır.
     </p>
@@ -125,5 +132,6 @@ sudo update-ca-certificates</code></pre>
     }
   })();
 </script>
+<script src="i18n.js"></script>
 </body>
 </html>

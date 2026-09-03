@@ -75,24 +75,41 @@
   @media (prefers-reduced-motion: reduce) {
     * { transition-duration: .001ms !important; animation-duration: .001ms !important; }
   }
+  .theme-btn {
+    position: fixed; top: 14px; right: 14px; z-index: 50;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 12px; border: 1px solid var(--border); border-radius: 999px;
+    background: var(--surface); color: var(--muted);
+    font: 600 12px/1.6 inherit; cursor: pointer;
+  }
+  .theme-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .theme-ico { font-size: 13px; }
+  @media (max-width: 720px) { .theme-txt { display: none; } }
 </style>
 </head>
 <body>
+  <button type="button" class="theme-btn lang-fixed" id="lang-toggle"
+          title="Dil: Türkçe / English" aria-label="Dili değiştir"
+          data-i18n-attr="title,aria-label">
+    <span class="theme-ico" aria-hidden="true">🌐</span>
+    <span class="theme-txt" id="lang-txt">TR</span>
+  </button>
   <div class="box">
     <div class="icon" aria-hidden="true">💤</div>
-    <h1>Bu veritabanı şu an kapalı</h1>
-    <p>
+    <h1 data-i18n>Bu veritabanı şu an kapalı</h1>
+    <p data-i18n-html>
       Paneline ulaşabilmek için önce ilgili veritabanını açmanız gerekiyor.
       Yönetim panelindeki listede o veritabanının satırındaki <b>Aktif Et</b> düğmesi yeterli.
     </p>
-    <p class="muted">
+    <p class="muted" data-i18n>
       Az önce açtıysanız birkaç saniye bekleyip sayfayı yenileyin —
       ilk açılışta imaj indirilmesi birkaç dakika sürebilir.
     </p>
     <!-- Dashboard her zaman 443'tedir; panel portundan oraya dönüş. -->
-    <a class="btn" href="/" onclick="location.href='https://'+location.hostname+'/';return false;">
+    <a class="btn" href="/" onclick="location.href='https://'+location.hostname+'/';return false;" data-i18n>
       Yönetim paneline dön
     </a>
   </div>
+<script src="i18n.js"></script>
 </body>
 </html>

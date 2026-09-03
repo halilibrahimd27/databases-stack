@@ -236,7 +236,7 @@ cgroup'tan okuyor ve `.State.StartedAt` ile hiçbir container'ın yeniden
 başlatılmadığını doğruluyor.
 
 Ayrıntı, formüller ve motor başına rezerve tablosu:
-[docs/BELLEK.md](docs/BELLEK.tr.md)
+[docs/BELLEK.tr.md](docs/BELLEK.tr.md)
 
 ### Bunun neden önemli olduğu
 
@@ -448,7 +448,7 @@ başlanan geri yükleme veriyi geri getirmez, yalnızca yok eder.
 
 Otomatik geri yükleme beş motorda vardır: **MariaDB, PostgreSQL, MongoDB,
 Redis, SQL Server.** Diğerlerinin yedeği alınır ama geri dönüş motora özgü
-elle bir işlemdir; hangisinde ne yapılacağı [docs/BACKUP.md](docs/BACKUP.tr.md)
+elle bir işlemdir; hangisinde ne yapılacağı [docs/BACKUP.tr.md](docs/BACKUP.tr.md)
 içinde yazıyor.
 
 ### Komut satırından
@@ -484,8 +484,8 @@ koşarsa `backup.sh` kendi kilidiyle çakışmayı önler. Aynı kilit geri yük
 de tutulur — 02:00 turu, yarım geri yüklenmiş bir veritabanını "geçerli yedek"
 diye döküp uzağa senkronlamasın diye.
 
-Ayrıntı ve motor başına yöntemler: [docs/BACKUP.md](docs/BACKUP.tr.md).
-Uzak depo (Google Drive / S3 / SFTP): [docs/GOOGLE-DRIVE.md](docs/GOOGLE-DRIVE.tr.md).
+Ayrıntı ve motor başına yöntemler: [docs/BACKUP.tr.md](docs/BACKUP.tr.md).
+Uzak depo (Google Drive / S3 / SFTP): [docs/GOOGLE-DRIVE.tr.md](docs/GOOGLE-DRIVE.tr.md).
 
 ---
 
@@ -540,7 +540,7 @@ T1'de A satırı yazıldı · T2'de B satırı yazıldı · aradaki bir ana dön
 PostgreSQL ve MariaDB destekleniyor. Diğerlerinde neden desteklenmediği
 yazılı: Redis'in AOF'unda zaman damgası yok ("14:32'ye dön" ifade edilemez),
 MSSQL işlem günlüğü yedeği ister, MongoDB oplog ile mümkün ama bu turda
-yapılmadı. Ayrıntı: [docs/PITR.md](docs/PITR.tr.md).
+yapılmadı. Ayrıntı: [docs/PITR.tr.md](docs/PITR.tr.md).
 
 ## Şifreli yedek
 
@@ -556,7 +556,7 @@ Geriye uyumlu: şifresiz eski yedekler çalışmaya devam eder, listeleme ve
 geri yükleme ikisini de tanır. Şifreleme açıkken uzak depoya şifresiz dosya
 gönderilmez. `openssl enc` bütünlük etiketi (AEAD) taşımaz — gizlilik sağlar,
 kurcalanmaya karşı imza sağlamaz; bu bilinerek seçildi ve
-[docs/BACKUP.md](docs/BACKUP.tr.md)'de yazılı.
+[docs/BACKUP.tr.md](docs/BACKUP.tr.md)'de yazılı.
 
 ## Devir provası
 
@@ -617,7 +617,7 @@ hiçbir şey yapmamaktan pahalıdır.
 bu kararı veritabanının sahibi vermeli. Gizlilik: sorgu metinleri veri
 içerebilir; PostgreSQL parametreleri zaten maskeler, MariaDB slow log ham
 sorgu yazdığı için araç sabitleri maskeler ve bunu söyler.
-Ayrıntı: [docs/SLOWLOG.md](docs/SLOWLOG.tr.md).
+Ayrıntı: [docs/SLOWLOG.tr.md](docs/SLOWLOG.tr.md).
 
 ## İzleme
 
@@ -646,7 +646,7 @@ yağmaz — kapalı olmak arıza değildir.
 Kapalıyken hiçbir container çalışmaz. Açıkken ~830 MB RAM ister; sunucuda yer
 yoksa diğer motorlar gibi **açılmaz ve sebebini söyler**.
 
-Ayrıntı: [docs/MONITORING.md](docs/MONITORING.tr.md).
+Ayrıntı: [docs/MONITORING.tr.md](docs/MONITORING.tr.md).
 
 ---
 
@@ -666,7 +666,7 @@ Panelde ilgili kartın altındaki **Replika kur** düğmesi, ya da:
 | MongoDB | replica set (rs0) | **var** — primary yeniden başlar |
 | Cassandra / Kafka / Elasticsearch | motorun kendi kümeleme mantığı | — |
 
-Ayrıntı: [docs/REPLICATION.md](docs/REPLICATION.tr.md)
+Ayrıntı: [docs/REPLICATION.tr.md](docs/REPLICATION.tr.md)
 
 ---
 
@@ -709,7 +709,7 @@ bağlanmaya devam ederdi — yani devir otomatik olmazdı.
 | Redis | `REPLICAOF NO ONE` |
 | MongoDB | replica set kendi seçimini yapar (arbiter ile 3 oy) |
 
-Ayrıntı, test yöntemi ve sınırlar: [docs/FAILOVER.md](docs/FAILOVER.tr.md)
+Ayrıntı, test yöntemi ve sınırlar: [docs/FAILOVER.tr.md](docs/FAILOVER.tr.md)
 
 ---
 
@@ -727,7 +727,7 @@ Kontrol servisinin K8s'teki tek yetkisi StatefulSet'leri okumak ve
 ölçeklemek/boyutlandırmaktır — Docker kurulumundaki docker soketi erişiminden
 (host'ta tam yetki) belirgin şekilde dardır.
 
-Ayrıntı: [docs/KUBERNETES.md](docs/KUBERNETES.tr.md)
+Ayrıntı: [docs/KUBERNETES.tr.md](docs/KUBERNETES.tr.md)
 
 ---
 
@@ -765,7 +765,7 @@ doğrular; `./stack.sh doctor` bunu otomatik çağırır.
 > ⚠️ Bu ürün **iç ağ / VPN arkası** kullanım için tasarlandı. Veritabanı
 > portlarını internete açmayın.
 
-Ayrıntı ve sertleştirme adımları: [docs/SECURITY.md](docs/SECURITY.tr.md)
+Ayrıntı ve sertleştirme adımları: [docs/SECURITY.tr.md](docs/SECURITY.tr.md)
 
 ---
 
@@ -825,7 +825,7 @@ en sık yaşanan arızalardır ve sistem bunları ~30 saniyede kendisi kapatır.
 
 Aynı ürün, ikinci bir makine eklendiğinde **host arızasını** da karşılar:
 yedek kopyayı uzak bir Docker host'unda ya da Kubernetes'te node
-anti-affinity ile çalıştırın (bkz. [docs/FAILOVER.md](docs/FAILOVER.tr.md)).
+anti-affinity ile çalıştırın (bkz. [docs/FAILOVER.tr.md](docs/FAILOVER.tr.md)).
 Tek makinede çalıştırdığınız sürece, makinenin tamamı düşerse iki kopya da
 düşer — bu bir eksiklik değil, tek makine olmanın tanımıdır.
 
@@ -833,9 +833,9 @@ Bilmeniz gerekenler:
 
 - **Replikasyon asenkrondur.** Devirde, ana kopyanın göndermeye yetişemediği
   son işlemler kaybolabilir (tipik olarak milisaniyeler). Sıfır kayıp için
-  senkron replikasyon nasıl açılır: [docs/FAILOVER.md](docs/FAILOVER.tr.md)
+  senkron replikasyon nasıl açılır: [docs/FAILOVER.tr.md](docs/FAILOVER.tr.md)
 - **Devir yedeğin yerini tutmaz.** Yanlışlıkla silinen veri replikaya da
-  anında yansır. Düzenli yedek şart → [docs/BACKUP.md](docs/BACKUP.tr.md)
+  anında yansır. Düzenli yedek şart → [docs/BACKUP.tr.md](docs/BACKUP.tr.md)
 - Veritabanı portları gateway üzerinden geçtiği için motorlar istemcinin
   gerçek IP'sini değil gateway'in IP'sini görür — host tabanlı yetkilendirme
   (`user@'192.168.1.5'`) kullanıyorsanız buna göre ayarlayın.
@@ -881,7 +881,7 @@ REDIS_IMAGE=valkey/valkey:8-alpine    # .env
 ```
 
 Aynı mekanizma kapalı ağda kendi registry aynanız için de kullanılır.
-Ayrıntı: [docs/LICENSING.md](docs/LICENSING.tr.md)
+Ayrıntı: [docs/LICENSING.tr.md](docs/LICENSING.tr.md)
 
 ---
 

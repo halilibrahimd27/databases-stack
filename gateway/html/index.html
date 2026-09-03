@@ -48,10 +48,17 @@ try {
   <div class="brand">
     <span class="brand-icon" aria-hidden="true">🗄️</span>
     <div class="brand-txt">
-      <h1>Veritabanı Yönetim Paneli</h1>
-      <p class="sub">İhtiyacınız olanı açın, kullanmadığınızı kapatın.</p>
+      <h1 data-i18n>Veritabanı Yönetim Paneli</h1>
+      <p class="sub" data-i18n>İhtiyacınız olanı açın, kullanmadığınızı kapatın.</p>
     </div>
   </div>
+
+  <button type="button" class="theme-btn" id="lang-toggle"
+          title="Dil: Türkçe / English" aria-label="Dili değiştir"
+          data-i18n-attr="title,aria-label">
+    <span class="theme-ico" aria-hidden="true">🌐</span>
+    <span class="theme-txt" id="lang-txt">TR</span>
+  </button>
 
   <button type="button" class="theme-btn" id="theme-toggle"
           title="Görünüm: sistem / açık / koyu" aria-label="Görünümü değiştir">
@@ -62,7 +69,7 @@ try {
   <div class="sysbar" id="sysbar" role="group" aria-label="Sunucu durumu">
 
     <div class="sys-item sys-item-mem">
-      <span class="sys-label">Bellek kullanımı</span>
+      <span class="sys-label" data-i18n>Bellek kullanımı</span>
       <b id="sys-mem">—</b>
       <div class="meter" role="img" aria-label="Bellek kullanımı">
         <div class="meter-fill" id="sys-mem-bar"></div>
@@ -93,15 +100,15 @@ try {
 <main>
 
   <section class="intro">
-    <h2>Hangi veritabanına ihtiyacınız var?</h2>
-    <p>
+    <h2 data-i18n>Hangi veritabanına ihtiyacınız var?</h2>
+    <p data-i18n-html>
       Aşağıdaki listede her veritabanının <b>ne işe yaradığı</b> sade dille
       yazıyor. <b>Aktif Et</b> dediğinizde sistem sunucunun boş belleğini ölçer,
       veritabanına ne kadar ayıracağını ve ayarlarını kendisi hesaplar —
       teknik bir değer girmeniz gerekmez. Sunucu yetmiyorsa açmaz, sebebini
       söyler.
     </p>
-    <p class="hint">
+    <p class="hint" data-i18n-html>
       <b>Nereden başlamalı?</b> İlk kurulumda çoğu proje için doğru başlangıç:
       <b>PostgreSQL</b> (verileriniz için) ve <b>Redis</b> (hız için).
     </p>
@@ -116,11 +123,11 @@ try {
     <details class="legend">
       <summary class="sum"><span class="chev" aria-hidden="true"></span>Durum işaretleri</summary>
       <div class="legend-body">
-        <span class="badge on">Çalışıyor</span>
-        <span class="badge busy">Başlatılıyor</span>
-        <span class="badge err">Sorunlu</span>
-        <span class="badge off">Kapalı</span>
-        <p class="legend-note">
+        <span class="badge on" data-i18n>Çalışıyor</span>
+        <span class="badge busy" data-i18n>Başlatılıyor</span>
+        <span class="badge err" data-i18n>Sorunlu</span>
+        <span class="badge off" data-i18n>Kapalı</span>
+        <p class="legend-note" data-i18n>
           Kapalı motorlar aşağıdaki listede rozet taşımaz — hepsi kapalıdır.
           Rozetler yalnızca “Şu an açık” bölümünde görünür.
         </p>
@@ -130,40 +137,40 @@ try {
   </div>
 
   <div id="grid" class="grid" aria-live="polite">
-    <p class="loading">Yükleniyor…</p>
+    <p class="loading" data-i18n>Yükleniyor…</p>
   </div>
 
   <!-- Son bir saatte veritabanının İÇİNDE ne oluyordu. Olay günlüğü
        yığının kendi işlerini yazar; bu bölüm veritabanının içini yazar:
        kim bekledi, kim bekletti, o sırada bizim işimiz var mıydı. -->
   <section class="events-section" id="ash-section" hidden>
-    <h3>Son bir saat — veritabanının içinde</h3>
-    <p class="card-detail">
+    <h3 data-i18n>Son bir saat — veritabanının içinde</h3>
+    <p class="card-detail" data-i18n-html>
       Oturumlar saniyede bir örnekleniyor. “Dün gece dondu, sabah baktım
       normal” sorusunun cevabı burada: o an kim neyi bekliyordu ve
       bekletenin kim olduğu. Örneklenemeyen saniyeler <b>ayrıca</b> yazılır —
       ölçüm yokluğu “sistem boştu” demek değildir.
     </p>
-    <div id="ash"><p class="card-detail">Yükleniyor…</p></div>
+    <div id="ash"><p class="card-detail" data-i18n>Yükleniyor…</p></div>
   </section>
 
   <section class="events-section">
-    <h3>Son olaylar</h3>
-    <p class="card-detail">
+    <h3 data-i18n>Son olaylar</h3>
+    <p class="card-detail" data-i18n>
       Açma, kapama, otomatik devir ve uyarılar. Otomatik devir gerçekleştiğinde
       burada — tanımlıysa webhook bildiriminde de — görünür.
     </p>
-    <div id="events"><p class="card-detail">Yükleniyor…</p></div>
+    <div id="events"><p class="card-detail" data-i18n>Yükleniyor…</p></div>
   </section>
 
   <section class="footer-note">
-    <h3>Yardımcı bağlantılar</h3>
+    <h3 data-i18n>Yardımcı bağlantılar</h3>
     <ul>
-      <li><a href="/setup">Güvenlik kurulumu</a> — tarayıcıdaki
+      <li data-i18n-html><a href="/setup">Güvenlik kurulumu</a> — tarayıcıdaki
           “güvenli değil” uyarısını kaldırmak için adım adım anlatım.</li>
-      <li><a href="/ca.crt" download="databases-stack-ca.crt">Güvenlik sertifikasını indir</a>
+      <li data-i18n-html><a href="/ca.crt" download="databases-stack-ca.crt">Güvenlik sertifikasını indir</a>
           — sertifikayı zaten biliyorsanız doğrudan indirin.</li>
-      <li><a href="https://github.com/halilibrahimd27/databases-stack" target="_blank" rel="noopener">Belgeler</a>
+      <li data-i18n-html><a href="https://github.com/halilibrahimd27/databases-stack" target="_blank" rel="noopener">Belgeler</a>
           — kurulum, yedekleme ve komut satırı kullanımı.</li>
     </ul>
   </section>
@@ -196,6 +203,7 @@ try {
   </div>
 </div>
 
+<script src="i18n.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
