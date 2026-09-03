@@ -3985,6 +3985,87 @@ ck("volumes.env zincirin en sonunda (üsttekiler ezemesin)",
                       ["$TUNING_ENV", "$ROLES_ENV", "$VOLUMES_ENV"])
    == ["$TUNING_ENV", "$ROLES_ENV", "$VOLUMES_ENV"])
 
+# --- KUŞAK ADLARI VE 'ÖLÇEREK DOĞRULAMA' -------------------------------------
+# Kuşak adı taban ile geri ayrıştırılabilir olmalı: ayrıştırma yanlışsa ürün
+# canlı hacmi tanıyamaz ve "ölçemedim" der — en kötüsü de yanlış tabanı
+# tanıyıp BAŞKA bir motorun hacmini canlı sanmasıdır.
+_ad_hata = []
+for _taban, _no in (("databases-stack_mariadb_data", 0),
+                    ("databases-stack_mariadb_data", 1),
+                    ("databases-stack_postgresql_data", 12)):
+    _ad = app.kusak_adi(_taban, _no)
+    if app.kusak_taban(_ad) != _taban or app.kusak_no(_ad) != _no:
+        _ad_hata.append("%s/%d -> %s" % (_taban, _no, _ad))
+# Tabanın kendisinde '__g' geçmiyor; ama sondaki parça sayı değilse kuşak
+# sayılmamalı (bir kullanıcı hacmini elle 'x__gyedek' diye adlandırmış olabilir).
+if app.kusak_taban("databases-stack_mariadb_data__gyedek") != \
+        "databases-stack_mariadb_data__gyedek":
+    _ad_hata.append("sayı olmayan kuyruk kuşak sanıldı")
+ck("kuşak adı geri ayrıştırılabiliyor", not _ad_hata,
+   "; ".join(_ad_hata) or "taban+no korunuyor")
+
+# Değişken adı iki yerde türüyor: compose'da yazılı, controller'da hesaplanıyor.
+# Ayrışırlarsa işaretçi hiçbir zaman tutmaz ve motor sessizce eski kuşakla açılır.
+_dv_compose = dict(_re2.findall(
+    r"^  ([a-z0-9_]+):\n(?:\s*#[^\n]*\n)*\s*name:\s*\$\{([A-Z0-9_]+):-", _vsrc, _re2.M))
+_dv_hata = []
+for _anahtar, _degisken in sorted(_dv_compose.items()):
+    _servis = _anahtar[:-len("_data")] if _anahtar.endswith("_data") else _anahtar
+    _t = app.hacim_degiskeni(_servis)
+    if _t != _degisken:
+        _dv_hata.append("%s: compose=%s controller=%s" % (_servis, _degisken, _t))
+ck("kuşak değişkeninin adı compose ile controller'da aynı", not _dv_hata,
+   "; ".join(_dv_hata) or "%d motor" % len(_dv_compose))
+
+# volumes.env BÜTÜN olarak ve atomik yazılmalı: yarım dosya, iki kuşağın
+# karışımı demek ve compose onu sessizce kabul eder.
+_vsrc_app = _capp.split("def volumes_env_yaz(")[1][:1400]
+ck("volumes.env atomik yazılıyor (os.replace)", "os.replace(" in _vsrc_app)
+
+# Yazıp geri okuma: değişken adı, sıralama ve ayrıştırma birlikte çalışmalı.
+_eski_ve = app.VOLUMES_ENV
+import tempfile as _vtf                            # noqa: E402
+_vtmp = _vtf.mkdtemp(prefix="dbstack-vol-")
+try:
+    app.VOLUMES_ENV = _os2.path.join(_vtmp, "volumes.env")
+    app.volumes_env_yaz({"mariadb": "databases-stack_mariadb_data__g2",
+                         "redis": "databases-stack_redis_data"})
+    _okunan = app.volumes_env_oku()
+    ck("volumes.env yazılıp geri okunabiliyor",
+       _okunan.get("MARIADB_DATA_VOLUME") == "databases-stack_mariadb_data__g2"
+       and _okunan.get("REDIS_DATA_VOLUME") == "databases-stack_redis_data",
+       str(sorted(_okunan.items()))[:90])
+    ck("niyet hacmi volumes.env'den okunuyor",
+       app.niyet_hacmi("mariadb") == "databases-stack_mariadb_data__g2",
+       app.niyet_hacmi("mariadb") or "-")
+    # Dosyada YAZMAYAN motor için niyet = 0. kuşak. 'Bilgi yok' durumunda
+    # uydurmak yerine bugünkü adı vermek doğru: compose de öyle yapıyor.
+    ck("dosyada yazmayan motorun niyeti 0. kuşak",
+       app.niyet_hacmi("mongodb") == "databases-stack_mongodb_data",
+       app.niyet_hacmi("mongodb") or "-")
+finally:
+    app.VOLUMES_ENV = _eski_ve
+    _sh.rmtree(_vtmp, ignore_errors=True)
+
+# ÖLÇÜM 'BİLMİYORUM' DİYEBİLMELİ. canli_hacim None dönerse bu "kuşak yok"
+# değil "ölçemedim" demektir; kusak_durumu bunu ayrı bir değerle (None)
+# taşımalı, False ile karıştırmamalı — bu üründe 'bilmiyorum' ile 'iyi' aynı
+# şey değil ve ayrışma sessiz veri kaybının tek erken uyarısı.
+_eski_run = app.run
+try:
+    app.run = lambda *a, **k: (1, "", "yok")
+    _c, _n, _ayri = app.kusak_durumu("mariadb")
+    ck("canlı hacim ölçülemezse ayrışma 'bilinmiyor' kalıyor",
+       _c is None and _ayri is None, "canli=%r ayrisik=%r" % (_c, _ayri))
+    app.run = lambda *a, **k: (0, "databases-stack_mariadb_data__g2\n", "")
+    _c2, _n2, _ayri2 = app.kusak_durumu("mariadb")
+    ck("canlı hacim container'dan ÖLÇÜLÜYOR (dosyaya değil)",
+       _c2 == "databases-stack_mariadb_data__g2" and _ayri2 is True,
+       "canli=%s niyet=%s" % (_c2, _n2))
+finally:
+    app.run = _eski_run
+
+
 # =============================================================================
 print()
 if FAILS:

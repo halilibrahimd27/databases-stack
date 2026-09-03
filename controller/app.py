@@ -2094,6 +2094,144 @@ def volume_of(service):
     return None
 
 
+# =============================================================================
+# HACİM KUŞAKLARI — işaretçiyi ÖLÇEREK doğrulamak
+# =============================================================================
+# Gölge geri yükleme, doğrulanmış kopyaya geçerken hacmin adını çevirir. Bu,
+# ürünün tek "iki kapılı" işlemi olacak; ama tam ortasında controller ölürse
+# ortada iki gerçek kalır: DOSYA (state/volumes.env) ne yazıyorsa o, ve
+# CONTAINER gerçekte neyi bağlamışsa o. Bunlar ayrışabilir.
+#
+# Bu ürünün hâkim deyimi burada da geçerli: DOSYAYA İNANMA, ÖLÇ. Canlı hacim
+# container'ın Mounts'ından okunur; volumes.env yalnız bir sonraki açılış için
+# NİYETTİR. İkisi ayrıştığında ölçüm kazanır — çünkü motorun şu an hangi veriyi
+# servis ettiğini yalnız o söyler.
+
+# Kuşak adı: <taban>__g<N>. Ayırıcı çift alt çizgi, çünkü hacim adlarının
+# kendisinde tek alt çizgi var (mariadb_data) ve tabanı geri ayırmak
+# gerekiyor.
+KUSAK_AYIRAC = "__g"
+
+
+def kusak_taban(ad):
+    """'x_data__g3' -> 'x_data'. Kuşaksız ad kendisidir."""
+    if not ad:
+        return ad
+    i = ad.rfind(KUSAK_AYIRAC)
+    if i < 0:
+        return ad
+    return ad[:i] if ad[i + len(KUSAK_AYIRAC):].isdigit() else ad
+
+
+def kusak_no(ad):
+    """'x_data__g3' -> 3. Kuşaksız ad 0. kuşaktır."""
+    if not ad:
+        return 0
+    i = ad.rfind(KUSAK_AYIRAC)
+    if i < 0:
+        return 0
+    kuyruk = ad[i + len(KUSAK_AYIRAC):]
+    return int(kuyruk) if kuyruk.isdigit() else 0
+
+
+def kusak_adi(taban, no):
+    return taban if no <= 0 else "%s%s%d" % (taban, KUSAK_AYIRAC, no)
+
+
+def volumes_env_oku():
+    """state/volumes.env -> {DEGISKEN: deger}. Yoksa boş."""
+    out = {}
+    try:
+        with open(VOLUMES_ENV, encoding="utf-8") as f:
+            for satir in f:
+                satir = satir.strip()
+                if not satir or satir.startswith("#") or "=" not in satir:
+                    continue
+                k, v = satir.split("=", 1)
+                out[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return out
+
+
+def hacim_degiskeni(service):
+    """Servisin kuşak değişkeni adı ('mariadb' -> 'MARIADB_DATA_VOLUME').
+
+    Değişken adı compose'da yazılı; buradaki türetme onunla aynı kalıbı
+    kullanıyor ve selftest ikisinin ayrışmadığını denetliyor."""
+    taban = volume_of(service)
+    if not taban:
+        return None
+    kisa = taban[len(PROJECT) + 1:] if taban.startswith(PROJECT + "_") else taban
+    return kisa.upper().replace("-", "_") + "_VOLUME"
+
+
+def niyet_hacmi(service):
+    """volumes.env'in söylediği hacim — yani BİR SONRAKİ açılışta bağlanacak."""
+    d = hacim_degiskeni(service)
+    if not d:
+        return None
+    return volumes_env_oku().get(d) or volume_of(service)
+
+
+def canli_hacim(service):
+    """Container'ın GERÇEKTEN bağladığı veri hacmi. Ölçülemezse None.
+
+    None, 'kuşak yok' demek DEĞİLDİR: 'ölçemedim' demektir. Çağıran yer bu
+    ikisini karıştırmamalı — bu üründe 'bilmiyorum' ile 'iyi' aynı şey değil.
+    """
+    taban = volume_of(service)
+    if not taban:
+        return None
+    rc, out, _ = run(["docker", "inspect", service,
+                      "--format", "{{range .Mounts}}{{.Name}}\n{{end}}"], timeout=20)
+    if rc != 0:
+        return None
+    for ad in out.splitlines():
+        ad = ad.strip()
+        if ad and kusak_taban(ad) == taban:
+            return ad
+    return None
+
+
+def kusak_durumu(service):
+    """(canli, niyet, ayrisik_mi) — panel ve tanı için tek cevap.
+
+    ayrisik_mi=None: ölçülemedi (container kapalı olabilir). Bu durumda
+    'ayrışma yok' DEMİYORUZ; söyleyecek bir şeyimiz yok."""
+    niyet = niyet_hacmi(service)
+    canli = canli_hacim(service)
+    if canli is None:
+        return canli, niyet, None
+    return canli, niyet, (canli != niyet)
+
+
+def volumes_env_yaz(atamalar):
+    """volumes.env'i BÜTÜN olarak yazar. atamalar: {servis: hacim_adi}.
+
+    Bütün olarak yazmak bilinçli: satır satır düzenlemek, yarıda kalan bir
+    yazımda dosyayı iki kuşağın karışımı hâlinde bırakabilirdi. Önce geçici
+    dosyaya yazıp os.replace ile yerine koyuyoruz — aynı dosya sisteminde bu
+    atomiktir, yani okuyan hiçbir zaman yarım dosya görmez."""
+    satirlar = [
+        "# BU DOSYA ÜRETİLİR — elle düzenlemeyin.",
+        "# Hangi hacim kuşağının bağlanacağını söyler. Canlı hacim ise",
+        "# container'ın Mounts'ından ÖLÇÜLÜR; ikisi ayrışırsa ölçüm kazanır.",
+        "",
+    ]
+    for servis in sorted(atamalar):
+        d = hacim_degiskeni(servis)
+        if d:
+            satirlar.append("%s=%s" % (d, atamalar[servis]))
+    os.makedirs(os.path.dirname(VOLUMES_ENV), exist_ok=True)
+    gecici = VOLUMES_ENV + ".tmp"
+    with open(gecici, "w", encoding="utf-8") as f:
+        f.write("\n".join(satirlar) + "\n")
+    os.replace(gecici, VOLUMES_ENV)
+    paylasilan_izin(VOLUMES_ENV)
+    return VOLUMES_ENV
+
+
 # Yeni kurulan yedeğin gerçekten yedek olduğunu doğrulamak için beklenecek
 # süre. İlk klonlama (pg_basebackup / dump) büyük veritabanlarında dakikalar
 # sürebilir; bu yüzden cömert.
