@@ -1925,3 +1925,15 @@ main {
 .bk-inspect th, .bk-inspect td { padding: .28rem .5rem; border-bottom: 1px solid var(--line); text-align: left; }
 .bk-inspect .num { text-align: right; font-variant-numeric: tabular-nums; }
 .bk-inspect tbody tr:last-child td { border-bottom: 0; }
+
+/* Son bir saat — veritabanının içi. Üç sütun: bekleyenler, bekletenler ve
+   yığının kendi işleri. Üçüncüsü olmadan "gürültülü komşu kim" sorusu
+   cevapsız kalıyor. */
+.ash-eng { padding: .7rem 0; border-bottom: 1px solid var(--line); }
+.ash-eng:last-child { border-bottom: 0; }
+.ash-eng > b { margin-right: .5rem; }
+.ash-cov { font-size: .85em; opacity: .8; margin-right: .5rem; }
+.ash-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .8rem; margin-top: .5rem; }
+.ash-cols h4 { margin: 0 0 .25rem; font-size: .9em; opacity: .85; font-weight: 600; }
+.ash-cols ul { margin: 0; padding-left: 1.1rem; font-size: .92em; }
+.ash-cols li { margin: .12rem 0; }

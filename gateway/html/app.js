@@ -1175,8 +1175,66 @@ async function refreshBakim() {
     bilgisi olmadan da panel çalışır, hata basmak paniğe değmez */ }
 }
 
+/* SON BİR SAAT — veritabanının İÇİ.
+   Olay günlüğü yığının kendi işlerini yazar; bu bölüm veritabanının içini
+   yazar. "Dün gece dondu, sabah baktım normal" sorusunun cevabı burada.
+
+   KAPSAMA ÖNCE GELİYOR, bilerek: %10 kapsamalı bir aralıktan çıkarılan
+   "en çok bekleten sorgu" hiçbir şey kanıtlamaz ve kanıtladığını sanmak
+   daha kötüdür. Ölçülemeyen saniyeleri ayrıca yazıyoruz — ölçüm yokluğunu
+   "sistem boştu" diye göstermek bu panelin engellemeye çalıştığı hata. */
+async function refreshAsh() {
+  const bolum = document.getElementById('ash-section');
+  const kutu = document.getElementById('ash');
+  if (!bolum || !kutu) return;
+  let d;
+  try { d = await api('/ash'); } catch (e) { bolum.hidden = true; return; }
+  const motorlar = Object.entries(d.engines || {}).filter(([, v]) => v.aktif);
+  if (!motorlar.length) { bolum.hidden = true; return; }
+  bolum.hidden = false;
+
+  kutu.innerHTML = motorlar.map(([eid, v]) => {
+    const k = v.son_saat || {};
+    const o = v.ozet || {};
+    const ad = (CATALOG && (CATALOG.engines.find((e) => e.id === eid) || {}).name) || eid;
+    if (!v.ornekleniyor) {
+      return `<div class="ash-eng"><b>${esc(ad)}</b>
+        <span class="fact-err">örnekleme durdu</span>
+        ${v.hata ? '<span class="card-detail">' + esc(v.hata) + '</span>' : ''}</div>`;
+    }
+    const oran = Math.round((k.oran || 0) * 100);
+    const eksik = (k.aralik_sn || 0) - (k.olculen_sn || 0);
+    const kaps = `<span class="ash-cov" title="son bir saatin ${oran}%'i örneklendi"
+        >kapsama %${oran}${eksik > 0 ? ' · ' + eksik + ' sn ölçülemedi' : ''}</span>`;
+    const bek = (o.beklemeler || []).map((b) =>
+      `<li>${esc(b.ad)} <span class="card-detail">${b.ornek} örnekte</span></li>`).join('');
+    const eng = (o.bekletenler || []).map((b) =>
+      `<li>pid ${b.pid} <span class="card-detail">${b.ornek} örnekte bekletti</span></li>`).join('');
+    /* Yığının kendi işleri: bir donmanın en olası sebebi ÜRÜNÜN KENDİSİDİR.
+       Bunu söyleyebilen tek yer burası — hem motorları hem işleri aynı
+       ürün yönetiyor. */
+    const isler = (o.yigin_isleri || []).map((i) =>
+      `<li>${esc(i.kind)}${i.engine ? ' (' + esc(i.engine) + ')' : ''}
+         <span class="card-detail">${i.suruyor ? 'sürüyor' : i.sure_sn + ' sn'}</span></li>`).join('');
+    const en = (o.en_cok_oturum || {}).n || 0;
+    return `<div class="ash-eng">
+      <b>${esc(ad)}</b> ${kaps}
+      <span class="card-detail">en çok ${en} eşzamanlı oturum</span>
+      <div class="ash-cols">
+        <div><h4>Beklemeler</h4>${bek ? '<ul>' + bek + '</ul>'
+          : '<p class="card-detail">bekleme görülmedi</p>'}</div>
+        <div><h4>Bekletenler</h4>${eng ? '<ul>' + eng + '</ul>'
+          : '<p class="card-detail">kimse kimseyi bekletmedi</p>'}</div>
+        <div><h4>Bu saatte yığının işleri</h4>${isler ? '<ul>' + isler + '</ul>'
+          : '<p class="card-detail">yığın kendi işini çalıştırmadı</p>'}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
 async function refresh() {
   refreshBakim();
+  refreshAsh();
   try {
     const [st, plans, ev] = await Promise.all([
       api('/status'), api('/plans'), api('/events').catch(() => ({ events: [] }))]);

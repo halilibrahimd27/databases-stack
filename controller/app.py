@@ -4427,6 +4427,7 @@ def ash_ozet():
             continue
         with _ASH_KILIT:
             d = dict(_ASH.get(eid) or {})
+        _pencere = ash_pencere(eid, simdi - 3600, simdi)
         p = d.get("proc")
         canli = bool(p is not None and p.poll() is None)
         son = d.get("son")
@@ -4438,7 +4439,18 @@ def ash_ozet():
             "hata": d.get("hata"),
             # Son bir saatin kapsaması: "ölçüm var" demek yetmez, NE KADARINI
             # ölçtüğümüz de yazılmalı.
-            "son_saat": ash_pencere(eid, simdi - 3600, simdi)["kapsama"],
+            "son_saat": _pencere["kapsama"],
+            # Panelin "son bir saatte ne oluyordu" bölümü bunu gösteriyor.
+            # Pencere zaten hesaplandı; özeti ayrıca vermek bedava.
+            "ozet": {
+                "en_cok_oturum": _pencere["en_cok_oturum"],
+                "beklemeler": _pencere["beklemeler"][:3],
+                "bekletenler": _pencere["bekletenler"][:3],
+                "sorgular": _pencere["sorgular"][:3],
+                # Yığının KENDİ işleri: bir donmanın en olası sebebi ürünün
+                # kendisidir ve bunu söyleyebilen tek yer burası.
+                "yigin_isleri": _pencere["yigin_isleri"][:5],
+            },
         }
     return out
 

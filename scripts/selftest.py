@@ -3177,6 +3177,21 @@ ck("MariaDB'de bekleme zincirinin YOKLUĞU açıkça yazılı",
    "data_lock_waits" in _ash_src and "SESSİZCE BOŞ" in _ash_src)
 ck("controller ASH ucunu sunuyor",
    '"/api/ash"' in _ctrl_py and "ash_gozetmen" in _ctrl_py)
+
+# Panel ASH'i gösteriyor mu — ve KAPSAMAYI önce mi yazıyor? %10 kapsamalı
+# bir aralıktan çıkarılan "en çok bekleten sorgu" hiçbir şey kanıtlamaz.
+_pnl2 = io.open("gateway/html/app.js", encoding="utf-8").read()
+ck("panelde 'son bir saat' bölümü var",
+   "refreshAsh" in _pnl2 and "ash-section" in
+   io.open("gateway/html/index.html", encoding="utf-8").read())
+ck("panel kapsamayı ve ölçülemeyen saniyeleri gösteriyor",
+   "kapsama %" in _pnl2 and "sn ölçülemedi" in _pnl2)
+ck("panel yığının kendi işlerini de gösteriyor (gürültülü komşu biz miyiz)",
+   "yigin_isleri" in _pnl2)
+# Örnekleme durmuşsa bunu SÖYLEMELİ: sessizce boş bir bölüm göstermek,
+# ölçüm yokluğunu 'her şey sakin' diye sunmak olurdu.
+ck("örnekleme durduğunda panel bunu söylüyor",
+   "örnekleme durdu" in _pnl2)
 ck("ASH defteri sınırsız büyümüyor (devir var)",
    "_ash_devret" in _ctrl_py and "ASH_MAX_BYTES" in _ctrl_py)
 
