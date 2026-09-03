@@ -319,7 +319,7 @@ async function inspectBackup(engine, dosya) {
    istiyor. */
 async function inspectRaw(engine, dosya, kb) {
   const n = kb || 50;
-  infoBox(dosya, '<p class="card-detail">Dökümün ilk ' + n + ' KB'ı okunuyor…</p>');
+  infoBox(dosya, `<p class="card-detail">Dökümün ilk ${n} KB'ı okunuyor…</p>`);
   let metin;
   try {
     metin = await apiText('/backups/' + engine.id + '/inspect?ham=1&kb=' + n

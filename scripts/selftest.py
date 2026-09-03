@@ -3302,6 +3302,25 @@ ck("ham içeriğin üst sınırı var (tarayıcı kilitlenmesin)",
 ck("panelde ham görünüm ve veri uyarısı var",
    "inspect-raw" in _bkjs and "gerçek veri içerebilir" in _bkjs)
 
+# --- PANEL JS SÖZDİZİMİ ------------------------------------------------------
+# Bu kontrolün eksikliği pahalıya patladı: tek bir kaçırılmamış kesme işareti
+# ('KB'ı' → tırnak kapanmadı) yedekler.js'in TAMAMINI öldürdü. Sayfa sonsuza
+# kadar "Yükleniyor…" yazdı, bellek başlığı boş kaldı ve sunucu tarafında
+# HİÇBİR hata görünmedi — bütün API'ler 200 dönüyordu. Yani panelin çökmesi,
+# ürünün hiçbir ölçümüne yansımıyordu. Tarayıcıda çalışan kodu da denetlemek
+# zorundayız.
+_nodejs = _shutil.which("node")
+for _js in ("gateway/html/app.js", "gateway/html/yedekler.js"):
+    if not _nodejs:
+        # "Ölçemedim" ile "iyi" aynı şey değil: node yoksa bunu SÖYLÜYORUZ.
+        ck("%s sözdizimi geçerli" % _os2.path.basename(_js), False,
+           "node bulunamadı — panel JS'i DENETLENEMEDİ (kurun: nodejs)")
+        continue
+    _r = subprocess.run([_nodejs, "--check", _js], capture_output=True,
+                        text=True, encoding="utf-8", timeout=120)
+    ck("%s sözdizimi geçerli" % _os2.path.basename(_js), _r.returncode == 0,
+       (_r.stderr or "").strip().splitlines()[0][:110] if _r.returncode else "")
+
 # --- python3 - <<EOF ile VERİ BORUSU birlikte kullanılamaz -------------------
 # `python3 - <<EOF` yazıldığında program stdin'den okunur; boruyla gelen veri
 # kaybolur ve süzgeç SIFIR BAYT görür — üstelik hata da vermez, sessizce
