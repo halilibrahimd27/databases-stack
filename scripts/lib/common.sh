@@ -462,7 +462,13 @@ compose() {
 
 # Katalogdan JSON alanı oku (python3 her modern dağıtımda var)
 catalog_query() {
-    python3 -c "$1" "$CATALOG" 2>/dev/null
+    # Fazladan argümanlar python'a İLETİLİR ($2'den itibaren sys.argv[2]…).
+    # Eskiden yutuluyorlardı: parametreli bir sorgu IndexError ile ölüyor,
+    # stderr bastırıldığı için çıktı BOŞ dönüyor ve çağıran yer bunu
+    # "katalogda yok" diye okuyordu — yani sorgunun kendisi bozukken
+    # katalog suçlanıyordu.
+    local prog="$1"; shift
+    python3 -c "$prog" "$CATALOG" "$@" 2>/dev/null
 }
 
 # Bir container çalışıyor mu?

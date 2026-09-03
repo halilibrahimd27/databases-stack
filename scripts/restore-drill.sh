@@ -71,6 +71,14 @@ paylasilan_dosya "$LOG_FILE"
 # yeniden başladı) container'ı ADIYLA aranamaz — adında o koşumun PID'i var.
 # Etiket ise sabittir, sonraki koşum kalıntıyı ondan bulur.
 ETIKET="dbstack-prova"
+# GÖLGE HACMİ AYRI ETİKET TAŞIR. Prova kalıntı süpürücüsü "label=dbstack-prova"
+# olan HER hacmi siliyor; gölgenin saklanan hacmi o etiketi taşısaydı bir
+# sonraki prova koşumu, üretimin geri dönüş biletini sessizce silerdi.
+ETIKET_GOLGE="dbstack-golge"
+# Gölge için diskte istenen emniyet payı. Kapı "yer yok" derse ürün felaket
+# anında kilitlenmemeli: klasik (tek yönlü) geri yükleme hâlâ mümkün ve
+# mesajda sayılarla söyleniyor.
+GOLGE_EMNIYET_MB="${GOLGE_EMNIYET_MB:-2048}"
 
 KILIT="$STACK_ROOT/state/backup.lock"
 
@@ -171,8 +179,16 @@ json_bas() {
     # kayboluyordu. Kaynağı da yazıyoruz (elle / zamanlı) — yedek
     # listesindeki kaynak etiketinin aynısı.
     case "${CIKIS_KODU:-0}" in 2) return 0 ;; esac
-    sonuc_defterine_yaz "$STACK_ROOT/state/drill.json" "$MOTOR" "$_satir" \
-        "${DEFTER_KAYNAK:-elle}" 2>/dev/null || true
+    # GÖLGE PROVA DEĞİLDİR: haftalık prova defterine yazarsa panel "prova
+    # geçti" der, oysa yapılan şey üretimin yeni kuşağını hazırlamaktı.
+    # İki iş ayrı defterlerde durur.
+    if [ "$GOLGE" -eq 1 ]; then
+        sonuc_defterine_yaz "$STACK_ROOT/state/shadow.json" "$MOTOR" "$_satir" \
+            "${DEFTER_KAYNAK:-elle}" 2>/dev/null || true
+    else
+        sonuc_defterine_yaz "$STACK_ROOT/state/drill.json" "$MOTOR" "$_satir" \
+            "${DEFTER_KAYNAK:-elle}" 2>/dev/null || true
+    fi
 }
 
 # ----------------------------------------------------------------- temizlik -
@@ -242,6 +258,15 @@ bitir() {   # bitir <çıkış kodu>
     exit "$kod"
 }
 
+golge_reddedildi() {   # ÖNKOŞUL sağlanmadı — ölçüm yokluğu DEĞİL
+    # Ayrı bir çıkış kodu şart: "ölçemedim" (3) ile "ölçtüm, olmaz" (5) aynı
+    # şey değil. Controller bu ikisini farklı cümlelerle sunacak; 3'te
+    # "bilmiyoruz" der, 5'te kullanıcıya SAYIYI ve seçeneği verir.
+    DETAY="$*"
+    derr "$DETAY"
+    bitir 5
+}
+
 olcum_yok() {   # prova YAPILAMADI (ürün hatası değil, ölçüm yokluğu)
     derr "$*"
     DETAY="ölçülemedi: $*"
@@ -277,8 +302,14 @@ Geri yükleme provası — databases-stack
     PROVA_CPU_SHARES=$PROVA_CPU_SHARES      CPU ağırlığı (yalnız çekişmede)
     PROVA_YUKLEME_SURESI=$SURE_YUKLEME  geri yükleme zaman aşımı (sn)
 
+  --golge   Hacmi SİLMEZ: doğrulama geçerse onu üretimin bir sonraki
+            kuşağı olarak saklar ve adını JSON'da verir. İşaretçiyi
+            ÇEVİRMEZ — takası controller yapar. Üretim bu sırada
+            çalışmaya devam eder; kesinti yalnız takas anındadır.
+
   Çıkış kodları: 0 geçti · 1 düştü · 2 kapsam dışı · 3 ölçülemedi
                  4 prova bitti ama temizlik yapılamadı
+                 5 gölge önkoşulu sağlanmadı (disk yetmiyor, kuşak çakışıyor)
 
 EOF
 }
@@ -384,17 +415,46 @@ motor_parolasi() {
 # .bozuk dosyalar aday DEĞİLDİR: onları finalize_backup kenara aldı, yani
 # ürün "bu kurtarma noktası değil" dedi. En yeni .bozuk'u seçip provayı
 # düşürmek, hatayı yanlış yere yazmak olurdu.
+EN_YENI_NOT=""
+
 en_yeni_yedek() {
     local d="$BACKUP_DIR/$1"
     [ -d "$d" ] || return 1
-    local y
+    EN_YENI_NOT=""
+    local hepsi y satir atlanan=0
     # ŞİFRELİ YEDEKLER DE ADAY. Yalnız '*.gz' aranınca '.gz.enc' uzantılı
     # şifreli yedekler SESSİZCE atlanıyordu: şifrelemeyi açan kullanıcının
     # provası "yedek yok" deyip geçiyor — yani en çok güvence isteyen kurulum
     # en az güvence alıyordu. (e2e/encrypt.sh yakaladı.)
-    y="$(find "$d" -type f \( -name '*.gz' -o -name '*.gz.enc' \) \
+    hepsi="$(find "$d" -type f \( -name '*.gz' -o -name '*.gz.enc' \) \
          ! -name '*.bozuk' -printf '%T@\t%p\n' \
-         2>/dev/null | sort -rn | head -1 | cut -f2-)"
+         2>/dev/null | sort -rn | cut -f2-)"
+    [ -n "$hepsi" ] || return 1
+
+    if [ -n "${ENC_KEY:-}" ]; then
+        printf '%s' "$(printf '%s\n' "$hepsi" | head -1)"
+        return 0
+    fi
+
+    # ANAHTAR YOKSA ŞİFRELİ DOSYA KURTARMA NOKTASI DEĞİLDİR. Ölçülen durum:
+    # sunucudaki en yeni mariadb yedeği '.sql.gz.enc' idi ve .env'de anahtar
+    # yoktu; prova onu seçip DÜŞÜYORDU. Bu, sapasağlam yedeklere "geri
+    # yüklenemedi" damgası vurmak demek — ürünün en pahalı yanlış alarmı.
+    # Atlamayı SESSİZ yapmıyoruz: kaç dosyanın neden atlandığını söylüyoruz,
+    # yoksa "şifreli yedekler sessizce atlanıyordu" hatasını geri getirirdik.
+    y=""
+    while IFS= read -r satir; do
+        [ -z "$satir" ] && continue
+        case "$satir" in
+            *".$ENC_EXT") atlanan=$((atlanan + 1)); continue ;;
+        esac
+        y="$satir"
+        break
+    done <<< "$hepsi"
+
+    if [ "$atlanan" -gt 0 ]; then
+        EN_YENI_NOT="$atlanan şifreli yedek atlandı (BACKUP_ENCRYPT_KEY tanımlı değil — açılamazlar)"
+    fi
     [ -n "$y" ] || return 1
     printf '%s' "$y"
 }
@@ -1041,8 +1101,12 @@ kilit_al
 kalintilari_topla
 
 if [ -z "$DOSYA" ]; then
-    DOSYA="$(en_yeni_yedek "$MOTOR")" \
-        || olcum_yok "$MOTOR için yedek dosyası yok: $BACKUP_DIR/$MOTOR — önce ./scripts/backup.sh $MOTOR"
+    if ! DOSYA="$(en_yeni_yedek "$MOTOR")"; then
+        # Atlama notu MESAJIN İÇİNE giriyor: "yedek yok" ile "yedek var ama
+        # açamıyorum" bambaşka iki durum ve ikincisinde yapılacak şey belli.
+        olcum_yok "$MOTOR için açılabilir yedek yok: $BACKUP_DIR/$MOTOR${EN_YENI_NOT:+ — $EN_YENI_NOT}"
+    fi
+    [ -n "$EN_YENI_NOT" ] && warn "$EN_YENI_NOT"
 fi
 [ -f "$DOSYA" ] || olcum_yok "Yedek dosyası yok: $DOSYA"
 [ -s "$DOSYA" ] || prova_dustu "Yedek dosyası BOŞ: $DOSYA — geri yüklenecek bir şey yok."
@@ -1057,10 +1121,60 @@ _min="$(katalog_min_mb "$MOTOR")"
 AD="dbstack-prova-$MOTOR-$$-$(date +%Y%m%d%H%M%S)"
 PROVA_C="$AD"
 HACIM="$AD-veri"
+HACIM_ETIKET="$ETIKET"
+
+# ------------------------------------------------------------------- gölge ---
+# Gölge kipinde hacim GEÇİCİ DEĞİL: doğrulama geçerse bu hacim üretimin yeni
+# kuşağı olacak. Adı bu yüzden rastgele değil, kuşak dizisinin sıradaki üyesi.
+if [ "$GOLGE" -eq 1 ]; then
+    TABAN="$(uretim_hacmi "$MOTOR")" || golge_reddedildi \
+        "Bu motorun veri hacmi katalogda bildirilmemiş — gölge geri yükleme yapılamaz."
+    CANLI="$(canli_hacim "$MOTOR" "$TABAN")"
+    KUSAK=$(( $(kusak_no "$CANLI") + 1 ))
+    HACIM="${TABAN}${KUSAK_AYIRAC}${KUSAK}"
+    HACIM_ETIKET="$ETIKET_GOLGE"
+    dlog "gölge: canlı kuşak $CANLI → hazırlanacak $HACIM"
+
+    # Hedef zaten varsa DURUYORUZ. İçini bilmediğimiz bir hacmin üstüne
+    # yazmak, geri dönüş biletini yok etmek olabilirdi.
+    docker volume inspect "$HACIM" >/dev/null 2>&1 && golge_reddedildi \
+        "Bir sonraki kuşak hacmi zaten var: $HACIM — önceki bir gölge yarım kalmış olabilir. İçini kontrol edip silin: docker volume rm $HACIM"
+
+    # DİSK MUHASEBESİ ÖNCEDEN VE SAYIYLA. Gölge, üretim hacminin bir kopyası
+    # kadar yer ister; felaket anında "yer kalmadı" demek, geri yüklemeyi
+    # tamamen kilitlemek olurdu. O yüzden ölçüp söylüyoruz ve hangi yöntemle
+    # ölçtüğümüzü de yazıyoruz — tahmini kesin sayı gibi sunmuyoruz.
+    GEREK_MB=""; GEREK_KAYNAK=""
+    _b="$(hacim_boyut_mb "$CANLI" 2>/dev/null || true)"
+    if sayi_mi "${_b:-}" && [ "${_b:-0}" -gt 0 ]; then
+        GEREK_MB="$_b"; GEREK_KAYNAK="üretim hacminin ölçülen boyutu"
+    else
+        _d="$(du -m "$DOSYA" 2>/dev/null | cut -f1)"
+        sayi_mi "${_d:-}" || _d=0
+        # Sıkıştırılmış döküm açıldığında büyür; 3× kaba ama kasıtlı olarak
+        # cömert bir üst sınır. Tahmin olduğunu mesajda söylüyoruz.
+        GEREK_MB=$(( _d * 3 )); GEREK_KAYNAK="dökümün 3 katı (üretim hacmi ölçülemedi — TAHMİN)"
+    fi
+    BOS_MB="$(disk_bos_mb)"
+    if sayi_mi "${BOS_MB:-}"; then
+        dlog "disk: gereken ~${GEREK_MB} MB ($GEREK_KAYNAK) + ${GOLGE_EMNIYET_MB} MB emniyet, boşta ${BOS_MB} MB"
+        if [ "$BOS_MB" -lt $(( GEREK_MB + GOLGE_EMNIYET_MB )) ]; then
+            golge_reddedildi "Gölge geri yükleme için disk yetmiyor: ~${GEREK_MB} MB gerekiyor ($GEREK_KAYNAK) + ${GOLGE_EMNIYET_MB} MB emniyet payı, boşta ${BOS_MB} MB var. Yer açın ya da klasik geri yüklemeyi kullanın (üretim hacmine yazar, geri dönüş bileti olmaz)."
+        fi
+    else
+        # 'Ölçemedim' ile 'yeter' aynı şey değil: reddetmiyoruz ama
+        # bilmediğimizi de saklamıyoruz.
+        warn "Diskteki boş alan ÖLÇÜLEMEDİ — gölge denenecek, yer biterse geri yükleme yarıda kalır."
+        dlog "disk boşluğu ölçülemedi (gereken ~${GEREK_MB} MB, $GEREK_KAYNAK)"
+    fi
+fi
+
 docker inspect "$PROVA_C" >/dev/null 2>&1 \
     && olcum_yok "Geçici container adı zaten kullanımda: $PROVA_C"
-docker volume inspect "$HACIM" >/dev/null 2>&1 \
-    && olcum_yok "Geçici hacim adı zaten kullanımda: $HACIM"
+if [ "$GOLGE" -eq 0 ]; then
+    docker volume inspect "$HACIM" >/dev/null 2>&1 \
+        && olcum_yok "Geçici hacim adı zaten kullanımda: $HACIM"
+fi
 
 GECICI="$(mktemp -d "${TMPDIR:-/tmp}/dbstack-prova-XXXXXX")" \
     || olcum_yok "Geçici dizin açılamadı."
@@ -1080,8 +1194,9 @@ ORTAK=(-d --name "$PROVA_C" --network none --restart no
        --cpu-shares "$PROVA_CPU_SHARES" --label "$ETIKET=1")
 # Hacmi ELLE yaratıyoruz: `docker run -v ad:/yol` da yaratır ama ETİKETSİZ —
 # yarıda ölen bir koşumun hacmini sonra kimse bulamazdı.
-docker volume create --label "$ETIKET=1" "$HACIM" >>"$LOG_FILE" 2>&1 \
-    || olcum_yok "Geçici hacim yaratılamadı: $HACIM"
+docker volume create --label "$HACIM_ETIKET=1" --label "dbstack-motor=$MOTOR" \
+    "$HACIM" >>"$LOG_FILE" 2>&1 \
+    || olcum_yok "Hacim yaratılamadı: $HACIM"
 
 # --------------------------------------------------------------- ölçüm başlar
 # ÖLÇÜLEN RTO: geçici kopyayı ayağa kaldırmak + yedeği yüklemek. İmaj indirme
