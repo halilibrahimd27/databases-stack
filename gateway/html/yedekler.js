@@ -46,6 +46,13 @@ async function api(path, opts) {
   if (!r.ok) throw new Error((await r.text()) || ('HTTP ' + r.status));
   return r.json();
 }
+/* Ham içerik JSON DEĞİL, düz metin gelir: 50 KB'lık SQL'i JSON dizgesine
+   gömmek hem boyutu şişirir hem okunmaz hâle getirir. */
+async function apiText(path) {
+  const r = await fetch(API + path);
+  if (!r.ok) throw new Error((await r.text()) || ('HTTP ' + r.status));
+  return r.text();
+}
 const mb = (v) => (v == null ? '—'
   : v >= 1024 ? (v / 1024).toFixed(v >= 10240 ? 0 : 1) + ' GB' : Math.round(v) + ' MB');
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g,
@@ -293,8 +300,48 @@ async function inspectBackup(engine, dosya) {
              birebir sayılmıştır.</p>`
         : '<p>Tablo bulunamadı.</p>')
     + gor
-    + '<p class="card-detail">Satır içeriği bilerek gösterilmiyor — bu ekran '
-    + 'yalnız adları ve sayıları verir.</p>');
+    + `<p class="card-detail">Bu liste yalnız ad ve sayı verir.
+         Dosyanın kendisini görmek için:
+         <button class="btn btn-sm" data-act="inspect-raw"
+           data-id="${esc(engine.id)}" data-file="${esc(dosya)}"
+           >SQL'i göster</button></p>`);
+}
+
+/* DÖKÜMÜN KENDİSİ — ilk N KB, olduğu gibi.
+   Yapı özeti "hangi tablolar var" der; bu "dosyanın içinde ne yazıyor" der.
+   İkisi ayrı sorular: dökümün başında motor sürümü, karakter seti, dump
+   seçenekleri ve şema tanımı yazar; bir geri yüklemenin neden tutmayacağı
+   çoğu zaman orada görünür.
+
+   ⚠ GERÇEK VERİ İÇEREBİLİR. Yapı özetinin aksine burada satırlar da
+   görünebilir (dökümün ileri kısımlarında INSERT'ler var). Bu yüzden AYRI
+   bir düğme ve ekranda AÇIK bir uyarı: kullanıcı ne istediğini bilerek
+   istiyor. */
+async function inspectRaw(engine, dosya, kb) {
+  const n = kb || 50;
+  infoBox(dosya, '<p class="card-detail">Dökümün ilk ' + n + ' KB'ı okunuyor…</p>');
+  let metin;
+  try {
+    metin = await apiText('/backups/' + engine.id + '/inspect?ham=1&kb=' + n
+                          + '&file=' + encodeURIComponent(dosya));
+  } catch (e) {
+    infoBox(dosya, '<p class="bk-warn">Okunamadı: ' + esc(e.message) + '</p>');
+    return;
+  }
+  const bayt = new TextEncoder().encode(metin).length;
+  const kirpik = bayt >= n * 1024;
+  infoBox(dosya,
+    `<p class="card-detail">Dökümün ilk ${n} KB'ı${kirpik ? ' (kırpıldı)' : ''}
+       — geri yükleme YAPILMADI.</p>`
+    + '<p class="bk-warn">Bu görünüm gerçek veri içerebilir; yedeğin '
+    + 'kendisini gösteriyor.</p>'
+    + '<pre class="bk-raw">' + esc(metin) + '</pre>'
+    + (kirpik
+       ? `<p class="card-detail">Daha fazlası:
+            <button class="btn btn-sm" data-act="inspect-raw"
+              data-id="${esc(engine.id)}" data-file="${esc(dosya)}"
+              data-kb="${n * 4}">${n * 4} KB göster</button></p>`
+       : ''));
 }
 
 async function takeBackup(engine) {
@@ -1199,6 +1246,9 @@ document.addEventListener('click', (ev) => {
   switch (b.dataset.act) {
     case 'backup': p = takeBackup(engine); break;
     case 'inspect': p = inspectBackup(engine, b.dataset.file); break;
+    case 'inspect-raw':
+      p = inspectRaw(engine, b.dataset.file, parseInt(b.dataset.kb, 10) || 50);
+      break;
     case 'drill':  p = runDrill(engine); break;
     case 'bk-on':  p = toggleSchedule(true); break;
     // Motora bağlı değil: dataset.id yok, engine null kalır.

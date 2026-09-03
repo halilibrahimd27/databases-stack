@@ -89,15 +89,37 @@ akit() {   # akit <dosya>
     esac
 }
 
+# --ham: dökümün İLK N KB'INI olduğu gibi bas.
+# Yapı özeti "hangi tablolar var" sorusunu cevaplıyor; bu ise "dosyanın
+# içinde gerçekten ne yazıyor" sorusunu. İkisi ayrı sorular ve ikincisinin
+# cevabı bazen tek başına belirleyici: dökümün başında motor sürümü, karakter
+# seti, şema tanımı ve dump seçenekleri yazar — bir geri yüklemenin neden
+# tutmayacağı çoğu zaman orada görünür.
+#
+# ⚠ BU ÇIKTI GERÇEK VERİ İÇEREBİLİR. Yapı özeti bilerek yalnız ad ve sayı
+# döndürüyor; --ham ise dosyanın kendisini gösterir ve dökümün ilerleyen
+# kısımlarında INSERT satırları (yani müşteri verisi) bulunur. Bu yüzden
+# AYRI bir komut ve panelde AYRI bir düğme: kullanıcı ne istediğini bilerek
+# istiyor. Varsayılan 50 KB — dökümün başlığı ve şeması buna rahat sığar,
+# veri bölümü genelde daha ileridedir.
+HAM=0
+if [ "${1:-}" = "--ham" ]; then HAM=1; shift; fi
 MOTOR="${1:-}"
 DOSYA="${2:-}"
+HAM_KB="${3:-${INSPECT_HAM_KB:-50}}"
+case "$HAM_KB" in ''|*[!0-9]*) HAM_KB=50 ;; esac
+[ "$HAM_KB" -gt 0 ] 2>/dev/null || HAM_KB=50
+# Üst sınır: panelin tarayıcıda boğulmaması için. Aşılırsa kırpılır ve
+# kırpıldığı SÖYLENİR.
+[ "$HAM_KB" -gt "${INSPECT_HAM_MAX_KB:-2048}" ] && HAM_KB="${INSPECT_HAM_MAX_KB:-2048}"
 
 if [ -z "$MOTOR" ] || [ -z "$DOSYA" ]; then
     cat <<EOF
 
 Yedeğin içine bakma — databases-stack
 
-  ./scripts/backup-inspect.sh <motor> <dosya>
+  ./scripts/backup-inspect.sh <motor> <dosya>          yapı özeti
+  ./scripts/backup-inspect.sh --ham <motor> <dosya> [KB]   HAM İÇERİK
 
   Yedeği GERİ YÜKLEMEDEN içindeki YAPIYI çıkarır: hangi tablolar var, kaç
   satır, hangi görünüm/rutin/indeks tanımlı. Dosyayı yalnız akıtarak okur;
@@ -145,6 +167,19 @@ esac
 BOYUT="$(stat -c %s "$GERCEK" 2>/dev/null || echo 0)"
 SIFRELI=false
 case "$GERCEK" in *.enc) SIFRELI=true ;; esac
+
+if [ "$HAM" = "1" ]; then
+    # Ham çıktı JSON DEĞİL: metnin kendisi. Sözleşme burada bilerek farklı —
+    # 50 KB'lık SQL'i JSON dizgesine gömmek hem boyutu şişirir hem okunmaz
+    # hâle getirir. Controller bunu metin olarak taşıyor.
+    if [ "$SIFRELI" = true ] && [ -z "${BACKUP_ENCRYPT_KEY:-}" ]; then
+        err ".env'de BACKUP_ENCRYPT_KEY yok — şifreli yedeğin içi okunamaz"
+        exit "$KOD_OLCUM_YOK"
+    fi
+    # head kapatınca akıt() SIGPIPE alır; bu bir hata değil, istenen şey.
+    akit "$GERCEK" 2>/dev/null | head -c "$((HAM_KB * 1024))"
+    exit 0
+fi
 
 if [ "$SIFRELI" = true ] && [ -z "${BACKUP_ENCRYPT_KEY:-}" ]; then
     printf '{"engine":%s,"file":%s,"ok":false,"encrypted":true,"detail":%s}\n' \

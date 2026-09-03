@@ -3570,6 +3570,9 @@ INSPECT_SCRIPT = os.path.join(PROJECT_DIR, "scripts", "backup-inspect.sh")
 # için üst sınır var. Betik kendi içinde de bayt sınırı uygular ve sınıra
 # gelince "kesildi" der — sessizce eksik cevap yok.
 INSPECT_TIMEOUT = int(os.environ.get("INSPECT_TIMEOUT", "300"))
+# Ham içerikte üst sınır: tarayıcıda 50 MB'lık bir metin göstermek paneli
+# kilitler. Aşılırsa kırpılır ve kırpıldığı SÖYLENİR.
+INSPECT_HAM_MAX_KB = int(os.environ.get("INSPECT_HAM_MAX_KB", "2048"))
 BACKUP_CFG_FILE = os.path.join(STATE_DIR, "backup.json")
 BACKUP_DEFAULTS = {"enabled": False, "time": "02:00", "retention_days": 7}
 BACKUP_RETENTION_MIN = 1
@@ -5671,6 +5674,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
             yol, hata = resolve_backup_file(eid, ad)
             if hata:
                 return self._send(400, {"error": hata})
+            # ?ham=1 → dökümün ilk N KB'ı, OLDUĞU GİBİ (JSON değil, düz
+            # metin). Yapı özeti "hangi tablolar var" der; ham içerik
+            # "dosyanın içinde ne yazıyor" der. İkisi ayrı sorular ve
+            # ikincisi bazen tek başına belirleyici (dump seçenekleri,
+            # karakter seti, şema tanımı dökümün başındadır).
+            #
+            # ⚠ Bu çıktı GERÇEK VERİ içerebilir; ayrı bir uç ve panelde ayrı
+            # bir düğme olmasının sebebi bu — kullanıcı ne istediğini bilerek
+            # istiyor.
+            if (q.get("ham") or [""])[0] in ("1", "true", "evet"):
+                try:
+                    kb = int((q.get("kb") or ["50"])[0])
+                except ValueError:
+                    kb = 50
+                kb = max(1, min(kb, INSPECT_HAM_MAX_KB))
+                rc, out, err = run(["bash", INSPECT_SCRIPT, "--ham", eid, yol,
+                                    str(kb)],
+                                   cwd=PROJECT_DIR, timeout=INSPECT_TIMEOUT,
+                                   env=script_env())
+                if rc != 0:
+                    return self._send(400, {"error": (err or out).strip()[-200:]
+                                            or "ham içerik okunamadı"})
+                govde = out.encode("utf-8", "replace")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Content-Length", str(len(govde)))
+                self.end_headers()
+                return self.wfile.write(govde)
             rc, out, err = run(["bash", INSPECT_SCRIPT, eid, yol],
                                cwd=PROJECT_DIR, timeout=INSPECT_TIMEOUT,
                                env=script_env())

@@ -3289,6 +3289,19 @@ _sh.rmtree(_bidir, ignore_errors=True)
 ck("controller inceleme ucunu sunuyor (yol doğrulaması geri yüklemeyle aynı)",
    'endswith("/inspect")' in _ctrl_py and "resolve_backup_file(eid, ad)" in _ctrl_py)
 
+# HAM İÇERİK ayrı bir yol: yapı özeti "hangi tablolar var" der, ham içerik
+# "dosyanın içinde ne yazıyor" der. İkincisi GERÇEK VERİ içerebildiği için
+# ayrı uç, ayrı düğme ve ekranda açık uyarı — kullanıcı ne istediğini
+# bilerek istiyor.
+ck("ham içerik ayrı bir seçenek (yapı özetinin yerine geçmiyor)",
+   '"--ham"' in _ins and 'ham=1' in _ctrl_py)
+ck("ham içerik düz metin dönüyor (JSON'a gömülmüyor)",
+   'text/plain; charset=utf-8' in _ctrl_py)
+ck("ham içeriğin üst sınırı var (tarayıcı kilitlenmesin)",
+   "INSPECT_HAM_MAX_KB" in _ctrl_py and "INSPECT_HAM_MAX_KB" in _ins)
+ck("panelde ham görünüm ve veri uyarısı var",
+   "inspect-raw" in _bkjs and "gerçek veri içerebilir" in _bkjs)
+
 # --- python3 - <<EOF ile VERİ BORUSU birlikte kullanılamaz -------------------
 # `python3 - <<EOF` yazıldığında program stdin'den okunur; boruyla gelen veri
 # kaybolur ve süzgeç SIFIR BAYT görür — üstelik hata da vermez, sessizce

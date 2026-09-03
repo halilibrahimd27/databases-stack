@@ -1937,3 +1937,9 @@ main {
 .ash-cols h4 { margin: 0 0 .25rem; font-size: .9em; opacity: .85; font-weight: 600; }
 .ash-cols ul { margin: 0; padding-left: 1.1rem; font-size: .92em; }
 .ash-cols li { margin: .12rem 0; }
+
+/* Dökümün ham içeriği. Kaydırmalı ve sabit yükseklikli: 50 KB metin sayfayı
+   sonsuza kadar uzatmamalı. */
+.bk-raw { max-height: 55vh; overflow: auto; background: var(--code-bg, rgba(127,127,127,.12));
+          padding: .6rem .7rem; border-radius: 6px; font-size: .82em; line-height: 1.45;
+          white-space: pre; tab-size: 2; }
