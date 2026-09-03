@@ -4149,6 +4149,171 @@ def backup_stats(eid, root=None):
 # saklıyoruz ki panel "bu yedek 2 gün önce gerçekten geri yüklendi, 42 saniye
 # sürdü" diyebilsin. Bir yedekleme sisteminin verebileceği en değerli cümle bu.
 DRILL_SCRIPT = os.path.join(PROJECT_DIR, "scripts", "restore-drill.sh")
+# =============================================================================
+# KUŞAK TAKASI VE GERİ DÖNÜŞ BİLETİ
+# =============================================================================
+# Bugüne kadar geri yükleme TEK YÖNLÜ bir kapıydı; do_restore'un kendi
+# açıklaması itiraf ediyor: "yarıda kalırsa elde ne eskisi ne yenisi kalır".
+# Gölge yolu bunu iki yönlü yapıyor:
+#
+#   1) yedek YENİ bir hacme geri yüklenir (üretim çalışmaya devam eder),
+#   2) açıldığı ve satır sayısı doğrulanır,
+#   3) işaretçi çevrilir — kesinti CONTAINER YENİDEN YARATMA kadardır,
+#      geri yükleme süresi kadar değil,
+#   4) eski hacim BİLET olarak durur: karar yanlışsa geri dönülür.
+#
+# Takasın kendisi de yarıda kalabilir. O yüzden takastan sonra hangi hacmin
+# bağlı olduğunu DOSYADAN değil container'dan ölçüyoruz; ölçüm beklediğimizi
+# göstermiyorsa işaretçiyi geri alıp eski hâle dönüyoruz. "Yazdım, olmuştur"
+# demek burada sessiz veri kaybı sınıfıdır.
+TICKETS_FILE = os.path.join(STATE_DIR, "tickets.json")
+# Biletin ömrü: bu süre dolunca eski hacim SESSİZCE değil, olayla silinir.
+BILET_SAAT = int(os.environ.get("BILET_SAAT", "24"))
+SHADOW_TIMEOUT = int(os.environ.get("SHADOW_TIMEOUT", str(6 * 3600)))
+
+
+def load_tickets():
+    d = _read_json(TICKETS_FILE, {})
+    return d if isinstance(d, dict) else {}
+
+
+def save_tickets(d):
+    _write_json(TICKETS_FILE, d)
+    paylasilan_izin(TICKETS_FILE)
+
+
+def bilet_of(eid):
+    b = load_tickets().get(eid)
+    return b if isinstance(b, dict) else None
+
+
+def bilet_kalan_sn(bilet, now=None):
+    """Biletin ömründen kalan saniye. Süresi geçmişse 0."""
+    if not bilet:
+        return 0
+    son = int(bilet.get("expires") or 0)
+    return max(0, son - int(now if now is not None else time.time()))
+
+
+def _servis_hacmi_bekle(service, beklenen, saniye=90):
+    """Container GERÇEKTEN beklenen hacmi bağladı mı — ölçerek.
+
+    Dönüş: (oldu_mu, olculen). olculen None ise ÖLÇEMEDİK; bu 'olmadı' ile
+    aynı şey değil ve çağıran yerin ikisini ayırması gerekiyor."""
+    son = None
+    for _ in range(max(1, saniye // 3)):
+        son = canli_hacim(service)
+        if son == beklenen:
+            return True, son
+        time.sleep(3)
+    return False, son
+
+
+def _servisi_yeniden_yarat(engine, timeout=600):
+    """Servisi yeni işaretçiyle yeniden yaratır. Kesinti BU adım kadardır."""
+    return run(compose_base() + ["--profile", engine["profile"], "up", "-d",
+                                 "--force-recreate", "--no-deps",
+                                 engine["primary_service"]],
+               timeout=timeout)
+
+
+def kusak_takas(eid, yeni_hacim, jl=None):
+    """İşaretçiyi çevirir ve SONUCU ÖLÇER. (ok, mesaj, eski_hacim).
+
+    Yarıda kalırsa işaretçiyi geri alır: yanlış işaretçiyle bırakmak,
+    motorun bir sonraki açılışta beklenmedik veriyle gelmesi demek."""
+    engine = CATALOG.engine(eid)
+    servis = engine["primary_service"]
+    log_et = jl or (lambda *a: None)
+
+    eski = canli_hacim(servis)
+    if eski is None:
+        # Container kapalıysa canlı hacmi ölçemeyiz. Takas yine yapılabilir
+        # ama GERİ DÖNÜŞ BİLETİ kesilemez: neye döneceğimizi bilmiyoruz.
+        eski = niyet_hacmi(servis)
+        log_et("   canlı hacim ölçülemedi; bilet niyet kaydına göre kesiliyor:", eski)
+
+    onceki = volumes_env_oku()
+    atamalar = {}
+    for e in CATALOG.engines:
+        s = e.get("primary_service")
+        d = hacim_degiskeni(s) if s else None
+        if d and d in onceki:
+            atamalar[s] = onceki[d]
+    atamalar[servis] = yeni_hacim
+    volumes_env_yaz(atamalar)
+    log_et("   işaretçi çevrildi:", eski, "→", yeni_hacim)
+
+    rc, out, err = _servisi_yeniden_yarat(engine)
+    if rc != 0:
+        _takasi_geri_al(servis, atamalar, eski, engine, log_et)
+        return False, ("Container yeni hacimle yeniden yaratılamadı: %s"
+                       % (err or out).strip()[-200:]), eski
+
+    oldu, olculen = _servis_hacmi_bekle(servis, yeni_hacim)
+    if not oldu:
+        _takasi_geri_al(servis, atamalar, eski, engine, log_et)
+        return False, ("Takas doğrulanamadı: container %s bağlamalıydı, "
+                       "ölçülen %s. Eski hacme geri dönüldü."
+                       % (yeni_hacim, olculen or "ölçülemedi")), eski
+    return True, None, eski
+
+
+def _takasi_geri_al(servis, atamalar, eski, engine, log_et):
+    atamalar[servis] = eski
+    volumes_env_yaz(atamalar)
+    log_et("   işaretçi geri alındı:", eski)
+    _servisi_yeniden_yarat(engine)
+
+
+def bilet_kes(eid, eski, yeni, dosya, sonuc):
+    d = load_tickets()
+    d[eid] = {"old_volume": eski, "new_volume": yeni,
+              "file": os.path.basename(dosya or "") or None,
+              "at": int(time.time()),
+              "expires": int(time.time()) + BILET_SAAT * 3600,
+              "restored_tables": sonuc.get("restored_tables"),
+              "restored_rows": sonuc.get("restored_rows"),
+              "seconds": sonuc.get("seconds")}
+    save_tickets(d)
+    return d[eid]
+
+
+def bilet_sil(eid):
+    d = load_tickets()
+    b = d.pop(eid, None)
+    save_tickets(d)
+    return b
+
+
+def biletleri_temizle(now=None):
+    """Süresi dolmuş biletlerin ESKİ hacmini siler — sessizce değil, olayla.
+
+    Sessiz silmek, kullanıcının 'geri dönebilirim' sandığı bir kapıyı haber
+    vermeden kapatmak olurdu. Silinemezse bilet DURUR: hacmi bırakıp kaydı
+    silmek, kimsenin bakmadığı bir disk sızıntısı demek."""
+    d = load_tickets()
+    simdi = int(now if now is not None else time.time())
+    degisti = False
+    for eid, b in list(d.items()):
+        if not isinstance(b, dict) or bilet_kalan_sn(b, simdi) > 0:
+            continue
+        eski = b.get("old_volume")
+        if eski:
+            rc, _, err = run(["docker", "volume", "rm", eski], timeout=60)
+            if rc != 0:
+                log("bilet hacmi silinemedi (%s): %s" % (eski, err.strip()[-160:]))
+                continue
+        record_event("ticket_expired", eid,
+                     "Geri dönüş bileti doldu (%d saat): önceki hacim %s "
+                     "silindi. Bu motorda artık takas öncesine dönülemez."
+                     % (BILET_SAAT, eski or "?"))
+        d.pop(eid, None)
+        degisti = True
+    if degisti:
+        save_tickets(d)
+    return d
+
 DRILL_FILE = os.path.join(STATE_DIR, "drill.json")
 # İş kimliği → kaynak etiketi. Haftalık zamanlayıcı "zamanlı", panelden
 # tetiklenen "panel", komut satırından koşan (betiğin kendi varsayılanı)
@@ -4880,6 +5045,22 @@ def do_maintenance(jid, eid, agresif=False):
         lock.release()
 
 
+def bilet_gozetmeni():
+    """Süresi dolan geri dönüş biletlerini kapatır.
+
+    Neden ayrı bir gözetmen: bilet, DİSKTE bir hacim tutuyor. Süresi dolduğu
+    hâlde kimse panele bakmazsa o hacim orada kalır ve kimsenin izlemediği
+    bir sızıntı olur — bu depoda kalıntı hacim disiplini tam da bu yüzden
+    var. Silme SESSİZ değil: olayla yazılıyor, çünkü kullanıcının 'geri
+    dönebilirim' sandığı kapı kapanıyor."""
+    while True:
+        try:
+            biletleri_temizle()
+        except Exception as e:
+            log("bilet temizliği hatası: %r" % e)
+        time.sleep(600)
+
+
 def maintenance_refresher():
     """Şişkinliği seyrek ölç, önbelleğe yaz. prometheus_target_refresher deseni."""
     while True:
@@ -4916,6 +5097,31 @@ def suren_isler_motor_bazli():
     return out
 
 
+def shadow_supported(eid):
+    """Bu motorda gölge geri yükleme yapılabilir mi.
+
+    İki koşul birden: ürün o motora geri yükleme VAAT ediyor mu, ve veri
+    hacmini ADIYLA biliyor muyuz. İkincisi olmadan kuşak kurulamaz."""
+    e = CATALOG.engine(eid)
+    if not e:
+        return False
+    return bool(backup_script_can_restore(eid)
+                and volume_of(e.get("primary_service") or ""))
+
+
+def bilet_ozeti(eid, now=None):
+    """Panelin göreceği bilet özeti — süresi dolmuşsa None."""
+    b = bilet_of(eid)
+    if not b:
+        return None
+    kalan = bilet_kalan_sn(b, now)
+    if kalan <= 0:
+        return None
+    return {"old_volume": b.get("old_volume"), "new_volume": b.get("new_volume"),
+            "file": b.get("file"), "at": b.get("at"),
+            "expires": b.get("expires"), "remaining_seconds": kalan}
+
+
 def backups_overview(now=None):
     """GET /api/backups gövdesi: zamanlama + motor başına yedek özeti.
 
@@ -4950,6 +5156,12 @@ def backups_overview(now=None):
                             # kurtarma noktası sayısı göründüğünden azdır.
                             "unreadable": sum(1 for f in files
                                               if not f.get("readable", True)),
+                            # Gölge geri yükleme yalnız restore_*() yazılmış
+                            # ve veri hacmi katalogda bildirilmiş motorlarda
+                            # anlamlı. Panelin düğmeyi göstermeden önce
+                            # bilmesi gereken tek şey bu.
+                            "shadow_supported": shadow_supported(e["id"]),
+                            "ticket": bilet_ozeti(e["id"]),
                             "listed": len(files)}
     return {
         # Anahtarın KENDİSİ hiçbir zaman dışarı verilmez; panelin bilmesi
@@ -5197,6 +5409,186 @@ def resolve_backup_file(eid, name):
     if not os.path.isfile(yol):
         return None, "Yedek dosyası bulunamadı: %s" % ad
     return yol, None
+
+
+def _son_json_satiri(metin):
+    """Betiğin SON satırı tek satır JSON'dur — sözleşme betikte de yazılı."""
+    for satir in reversed(metin.splitlines()):
+        satir = satir.strip()
+        if satir.startswith("{") and satir.endswith("}"):
+            try:
+                return json.loads(satir)
+            except ValueError:
+                return None
+    return None
+
+
+def do_shadow_restore(jid, eid, filename=None):
+    """GÖLGE geri yükleme: üretim çalışırken yeni kuşağa yükle, sonra takas et.
+
+    Klasik geri yüklemeden farkı, kesintinin nerede olduğudur. Eski yol
+    üretimin verisini siler ve geri yükleme SÜRESİ boyunca motor kullanılamaz.
+    Bu yol boyunca üretim çalışmaya devam eder — kesinti yalnız container'ın
+    yeniden yaratıldığı andır. Bedeli: takas anına kadar üretim ESKİ (belki
+    bozuk) veriyi servis etmeye devam eder, ve diskte bir kopyalık fazladan
+    yer ister. İkisi de kullanıcıya sayıyla söyleniyor."""
+    engine = CATALOG.engine(eid)
+    if not engine:
+        return job_done(jid, False, "Bilinmeyen motor: %s" % eid)
+    if not backup_script_can_restore(eid):
+        return job_done(jid, False, BACKUP_NO_RESTORE_MSG % (engine["name"], eid))
+    if not volume_of(engine["primary_service"]):
+        return job_done(jid, False,
+                        "%s için veri hacmi katalogda bildirilmemiş; gölge "
+                        "geri yükleme yapılamaz." % engine["name"])
+    if not shutil.which("bash"):
+        return job_done(jid, False, "Bu container'da bash yok.")
+
+    # AÇIK BİLET VARKEN İKİNCİ TAKAS YOK. Yoksa kimsenin izleyemeyeceği bir
+    # kuşak ağacı oluşur: kullanıcı "geri dön" dediğinde hangi geçmişe
+    # döneceği belirsizleşir ve eski hacimler diskte birikir.
+    acik = bilet_of(eid)
+    if acik and bilet_kalan_sn(acik) > 0:
+        return job_done(jid, False,
+                        "%s için açık bir geri dönüş bileti var (%s, %d saat "
+                        "kaldı). Önce bileti kullanın ya da kapatın; iki takası "
+                        "üst üste yapmak geri dönülecek noktayı belirsizleştirir."
+                        % (engine["name"], acik.get("old_volume"),
+                           (bilet_kalan_sn(acik) + 1799) // 3600))
+
+    yol = None
+    if filename:
+        yol, hata = resolve_backup_file(eid, filename)
+        if hata:
+            return job_done(jid, False, hata)
+
+    lock = engine_lock(eid)
+    if not lock.acquire(blocking=False):
+        return job_done(jid, False, BUSY_MSG % engine["name"])
+    try:
+        if not BACKUP_LOCK.acquire(blocking=False):
+            return job_done(jid, False, BACKUP_BUSY_MSG, {"deferred": True})
+        try:
+            jl = lambda *m: job_log(jid, *m)
+            record_event("shadow_started", eid,
+                         "%s için gölge geri yükleme başlatıldı%s — ÜRETİME "
+                         "DOKUNULMUYOR, yeni bir kopya hazırlanıyor."
+                         % (engine["name"],
+                            (": " + os.path.basename(yol)) if yol else ""))
+            jl("%s gölge geri yükleme başlıyor — üretim çalışmaya devam ediyor."
+               % engine["name"])
+            env = script_env()
+            env["DEFTER_KAYNAK"] = "panel"
+            cmd = ["bash", DRILL_SCRIPT, eid]
+            if yol:
+                cmd.append(yol)
+            cmd.append("--golge")
+            rc, out, err = run(cmd, cwd=PROJECT_DIR, timeout=SHADOW_TIMEOUT,
+                               env=env)
+            metin = (out + err).strip()
+            for satir in metin.splitlines()[-160:]:
+                job_log(jid, satir)
+            sonuc = _son_json_satiri(metin)
+            if sonuc is None:
+                return job_done(jid, False,
+                                "Gölge çıktısı okunamadı (çıkış %d) — takas "
+                                "YAPILMADI, üretim olduğu gibi duruyor." % rc)
+            if rc == 5:
+                # ÖNKOŞUL: ölçtük ve olmuyor. Kullanıcıya sayıyı veren mesaj
+                # betikten geliyor; kendi cümlemizle örtmüyoruz.
+                return job_done(jid, False, sonuc.get("detail") or
+                                "Gölge geri yükleme önkoşulu sağlanmadı.")
+            if not sonuc.get("ok"):
+                record_event("shadow_failed", eid,
+                             "%s gölge geri yükleme DÜŞTÜ: %s — üretim "
+                             "etkilenmedi." % (engine["name"],
+                                               sonuc.get("detail") or ""),
+                             level="warning")
+                return job_done(jid, False,
+                                "Yedek yeni kopyaya geri YÜKLENEMEDİ: %s. "
+                                "Üretim olduğu gibi duruyor; takas yapılmadı."
+                                % (sonuc.get("detail") or "sebep bilinmiyor"))
+
+            yeni = sonuc.get("volume")
+            if not yeni:
+                return job_done(jid, False,
+                                "Gölge hazırlandı ama hacim adı bildirilmedi; "
+                                "takas YAPILMADI.")
+            jl("Kopya doğrulandı (%s tablo / %s satır). Şimdi takas — kesinti "
+               "yalnız container yeniden yaratılırken."
+               % (sonuc.get("restored_tables"), sonuc.get("restored_rows")))
+
+            t0 = time.time()
+            ok, mesaj, eski = kusak_takas(eid, yeni, jl)
+            kesinti = int(time.time() - t0)
+            if not ok:
+                record_event("shadow_swap_failed", eid,
+                             "%s takası yapılamadı: %s" % (engine["name"], mesaj),
+                             level="critical")
+                return job_done(jid, False, mesaj)
+
+            bilet = bilet_kes(eid, eski, yeni, yol or sonuc.get("file"), sonuc)
+            record_event("shadow_swapped", eid,
+                         "%s yeni kopyaya geçti (%s). Kesinti %d sn — geri "
+                         "yükleme %s sn sürmüştü. Önceki hacim %s, %d saat "
+                         "geri dönüş bileti olarak duruyor."
+                         % (engine["name"], yeni, kesinti,
+                            sonuc.get("seconds"), eski, BILET_SAAT),
+                         level="warning")
+            return job_done(jid, True, None,
+                            {"volume": yeni, "outage_seconds": kesinti,
+                             "restore_seconds": sonuc.get("seconds"),
+                             "ticket": bilet})
+        finally:
+            BACKUP_LOCK.release()
+    finally:
+        lock.release()
+
+
+def do_ticket_rollback(jid, eid):
+    """Bileti kullan: takas öncesindeki hacme geri dön.
+
+    Bu, gölge yolunun ASIL vaadi. Klasik geri yüklemede bu düğme yoktur:
+    eski veri silinmiştir."""
+    engine = CATALOG.engine(eid)
+    if not engine:
+        return job_done(jid, False, "Bilinmeyen motor: %s" % eid)
+    bilet = bilet_of(eid)
+    if not bilet:
+        return job_done(jid, False,
+                        "%s için geri dönüş bileti yok." % engine["name"])
+    if bilet_kalan_sn(bilet) <= 0:
+        return job_done(jid, False,
+                        "%s biletinin süresi dolmuş; önceki hacim silinmiş "
+                        "olabilir." % engine["name"])
+    eski = bilet.get("old_volume")
+    rc, _, _ = run(["docker", "volume", "inspect", eski], timeout=30)
+    if rc != 0:
+        # Bilet duruyor ama hacim yok: kayıt ile dünya ayrışmış. Uydurmuyoruz.
+        return job_done(jid, False,
+                        "Bilette yazan hacim bulunamadı: %s — geri dönülemez."
+                        % eski)
+
+    lock = engine_lock(eid)
+    if not lock.acquire(blocking=False):
+        return job_done(jid, False, BUSY_MSG % engine["name"])
+    try:
+        jl = lambda *m: job_log(jid, *m)
+        jl("%s takas öncesine dönüyor: %s" % (engine["name"], eski))
+        t0 = time.time()
+        ok, mesaj, geri_birakilan = kusak_takas(eid, eski, jl)
+        if not ok:
+            return job_done(jid, False, mesaj)
+        bilet_sil(eid)
+        record_event("ticket_used", eid,
+                     "%s takas öncesine döndü (%s). Kesinti %d sn. Gölge "
+                     "hacmi %s duruyor; artık kullanılmıyorsa elle silinebilir."
+                     % (engine["name"], eski, int(time.time() - t0),
+                        geri_birakilan),
+                     level="warning")
+        return job_done(jid, True, None, {"volume": eski})
+    finally:
+        lock.release()
 
 
 def do_restore(jid, eid, filename):
@@ -6084,6 +6476,43 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 threading.Thread(target=do_restore, daemon=True,
                                  args=(jid, eid, body.get("file"))).start()
                 return self._send(202, {"job": jid})
+            if action == "shadow-restore":
+                # GÖLGE geri yükleme üretimin verisini SİLMEZ: yeni bir
+                # hacme yükler, doğrular, sonra işaretçiyi çevirir. Yine de
+                # sonunda üretimin hangi veriyi servis ettiğini DEĞİŞTİRİR,
+                # o yüzden onay açıkça isteniyor — panel bu onayı, kesinti
+                # ve disk sayılarını gösterdikten sonra alıyor.
+                if not body.get("onayla"):
+                    return self._send(400, {"error":
+                        "Gölge geri yükleme sonunda üretim yeni kopyaya geçer "
+                        "(kısa bir kesintiyle). Onay için gövdede "
+                        "{\"onayla\": true} gönderin."})
+                engine = CATALOG.engine(eid)
+                if not backup_script_can_restore(eid):
+                    return self._send(400, {
+                        "error": BACKUP_NO_RESTORE_MSG % (engine["name"], eid)})
+                if not volume_of(engine["primary_service"]):
+                    return self._send(400, {"error":
+                        "%s için veri hacmi katalogda bildirilmemiş; gölge "
+                        "geri yükleme yapılamaz." % engine["name"]})
+                if body.get("file"):
+                    _yol, hata = resolve_backup_file(eid, body.get("file"))
+                    if hata:
+                        return self._send(400, {"error": hata})
+                jid = new_job("shadow-restore", eid)
+                threading.Thread(target=do_shadow_restore, daemon=True,
+                                 args=(jid, eid, body.get("file"))).start()
+                return self._send(202, {"job": jid})
+            if action == "rollback":
+                # Bilete dönüş de bir takastır: aynı kısa kesinti.
+                bilet = bilet_of(eid)
+                if not bilet or bilet_kalan_sn(bilet) <= 0:
+                    return self._send(400, {"error":
+                        "Bu motorda kullanılabilir bir geri dönüş bileti yok."})
+                jid = new_job("rollback", eid)
+                threading.Thread(target=do_ticket_rollback, daemon=True,
+                                 args=(jid, eid)).start()
+                return self._send(202, {"job": jid})
             if action in ("replication-enable", "replication-disable"):
                 jid = new_job(action, eid)
                 threading.Thread(target=do_replication, daemon=True,
@@ -6220,6 +6649,7 @@ def main():
         threading.Thread(target=backup_scheduler, daemon=True).start()
         threading.Thread(target=maintenance_refresher, daemon=True).start()
         threading.Thread(target=pitr_refresher, daemon=True).start()
+        threading.Thread(target=bilet_gozetmeni, daemon=True).start()
         threading.Thread(target=replication_refresher, daemon=True).start()
         # ASH gözetmeni: açık motorlarda saniyelik oturum örneklemesi.
         threading.Thread(target=ash_gozetmen, daemon=True).start()

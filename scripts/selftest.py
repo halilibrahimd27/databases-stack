@@ -70,6 +70,17 @@ app.docker_containers = lambda force=False: [
 app.disk_free_mb = lambda path=None: 80000
 app.preflight = lambda: None
 app.PROJECT_DIR = ROOT
+# BETİK YOLLARI İÇE AKTARMA ANINDA HESAPLANIYOR (BACKUP_SCRIPT = join(
+# PROJECT_DIR, ...)), yani yukarıdaki atama onları DEĞİŞTİRMEZ. Bu sessiz bir
+# ölçüm boşluğuydu: backup_script_can_restore, betiği okuyamayınca bilerek
+# True dönüyor ("karar vermek uydurmak olurdu") — dolayısıyla ona dayanan her
+# kontrol, dosyayı hiç açmadan yeşil yanıyordu. Yolları burada da düzeltiyoruz.
+for _ad in ("BACKUP_SCRIPT", "INSPECT_SCRIPT", "DRILL_SCRIPT", "ASH_SCRIPT",
+            "PITR_SCRIPT", "HADRILL_SCRIPT", "MAINT_SCRIPT"):
+    _eski_yol = getattr(app, _ad, None)
+    if _eski_yol:
+        setattr(app, _ad, os.path.join(ROOT, "scripts",
+                                       os.path.basename(_eski_yol.replace("\\", "/"))))
 
 # =============================================================================
 # 1. BOYUTLANDIRMA
@@ -4103,6 +4114,142 @@ try:
 finally:
     app.run = _eski_run
 
+
+
+# =============================================================================
+head("14. Gölge geri yükleme — takas yarıda kalırsa işaretçi geri alınmalı")
+# =============================================================================
+# Geri yükleme bu üründeki en yıkıcı düğmeydi ve TEK YÖNLÜYDÜ: do_restore'un
+# kendi açıklaması "yarıda kalırsa elde ne eskisi ne yenisi kalır" diyor.
+# Gölge yolu bunu iki yönlü yapıyor. Ama yeni bir sessiz felaket sınıfı
+# açıyor: İŞARETÇİ ile GERÇEK ayrışabilir. volumes.env "yeni kuşak" derken
+# container eskisini bağlamış olabilir; kimse hata görmez, motor "çalışıyor"
+# görünür ve kullanıcı geri yüklediğini sandığı veriyi servis etmez.
+# Buradaki kontroller tam olarak o ayrışmayı kovalıyor.
+import tempfile as _ttf                                  # noqa: E402
+
+_t_state = _ttf.mkdtemp(prefix="dbstack-bilet-")
+_eski_tickets = app.TICKETS_FILE
+_eski_volenv = app.VOLUMES_ENV
+_eski_run2 = app.run
+_eski_canli = app.canli_hacim
+_eski_olay = app.record_event
+try:
+    app.TICKETS_FILE = _os2.path.join(_t_state, "tickets.json")
+    app.VOLUMES_ENV = _os2.path.join(_t_state, "volumes.env")
+    app.record_event = lambda *a, **k: None
+
+    # --- bilet aritmetiği ---------------------------------------------------
+    # 'Süresi doldu' kararı duvar saatine bağlı olmamalı: gece yarısı
+    # sınırında kırılan bir test, testin kendi hatasıdır (12. bölümde aynı
+    # ders ödendi).
+    _simdi = 1_700_000_000
+    _b = {"expires": _simdi + 3600}
+    ck("bilet kalan süresi sabit bir 'şimdi' ile hesaplanabiliyor",
+       app.bilet_kalan_sn(_b, _simdi) == 3600
+       and app.bilet_kalan_sn({"expires": _simdi - 1}, _simdi) == 0
+       and app.bilet_kalan_sn(None, _simdi) == 0)
+
+    # --- TAKAS DOĞRULANAMAZSA GERİ ALINIR -----------------------------------
+    # En tehlikeli senaryo: compose "başardım" der ama container eski hacimle
+    # gelir. İşaretçiyi öyle bırakmak, bir sonraki açılışta motorun sessizce
+    # başka veriyle gelmesi demek.
+    _cagrilar = []
+    app.run = lambda *a, **k: (_cagrilar.append(a[0]), (0, "", ""))[1]
+    app.canli_hacim = lambda s: "databases-stack_mariadb_data"   # hiç değişmiyor
+    _ok, _mesaj, _eski = app.kusak_takas("mariadb",
+                                         "databases-stack_mariadb_data__g1")
+    _yazilan = app.volumes_env_oku().get("MARIADB_DATA_VOLUME")
+    ck("takas doğrulanamazsa BAŞARISIZ sayılıyor", _ok is False,
+       (_mesaj or "")[:70])
+    ck("takas doğrulanamazsa işaretçi GERİ ALINIYOR",
+       _yazilan == "databases-stack_mariadb_data", _yazilan or "-")
+
+    # --- TAKAS GERÇEKTEN OLDUYSA İŞARETÇİ KALIR -----------------------------
+    _durum = {"v": "databases-stack_mariadb_data"}
+    app.canli_hacim = lambda s: _durum["v"]
+
+    def _run_takas(cmd, *a, **k):
+        # compose çağrısı geldiğinde dünyayı da değiştiriyoruz: gerçek
+        # hayatta container yeni hacimle yeniden yaratılır.
+        if "up" in cmd:
+            _durum["v"] = "databases-stack_mariadb_data__g1"
+        return (0, "", "")
+
+    app.run = _run_takas
+    _ok2, _mesaj2, _eski2 = app.kusak_takas("mariadb",
+                                            "databases-stack_mariadb_data__g1")
+    ck("takas ölçümle doğrulanınca başarılı sayılıyor", _ok2 is True,
+       (_mesaj2 or "")[:70])
+    ck("başarılı takasta işaretçi yeni kuşakta kalıyor",
+       app.volumes_env_oku().get("MARIADB_DATA_VOLUME")
+       == "databases-stack_mariadb_data__g1")
+    ck("bilet takas ÖNCESİNDEKİ hacmi gösteriyor",
+       _eski2 == "databases-stack_mariadb_data", _eski2 or "-")
+
+    # --- BİLET ÖMRÜ ---------------------------------------------------------
+    _bilet = app.bilet_kes("mariadb", "databases-stack_mariadb_data",
+                           "databases-stack_mariadb_data__g1",
+                           "yedek.sql.gz", {"seconds": 12})
+    ck("bilet kesiliyor ve panel özeti veriyor",
+       (app.bilet_ozeti("mariadb") or {}).get("old_volume")
+       == "databases-stack_mariadb_data")
+
+    # Süresi DOLMAMIŞ bilet silinmemeli: erken silmek, kullanıcının geri
+    # dönüş kapısını haber vermeden kapatmak olurdu.
+    _silinen = []
+    app.run = lambda cmd, *a, **k: (_silinen.append(cmd), (0, "", ""))[1]
+    app.biletleri_temizle(now=_bilet["expires"] - 60)
+    ck("süresi dolmamış bilet silinmiyor",
+       app.bilet_of("mariadb") is not None and not _silinen)
+
+    # Süresi dolunca ESKİ hacim silinir ve bilet kapanır.
+    app.biletleri_temizle(now=_bilet["expires"] + 1)
+    ck("süresi dolan bilet kapanıyor ve eski hacim siliniyor",
+       app.bilet_of("mariadb") is None
+       and any("volume" in c and "rm" in c for c in _silinen),
+       str(_silinen[-1]) if _silinen else "hiç silme çağrısı yok")
+
+    # HACİM SİLİNEMEZSE BİLET DURUR. Kaydı silip hacmi bırakmak, kimsenin
+    # bakmadığı bir disk sızıntısı demek — bu depoda kalıntı disiplini var.
+    app.bilet_kes("mariadb", "databases-stack_mariadb_data",
+                  "databases-stack_mariadb_data__g1", "y.gz", {})
+    _b2 = app.bilet_of("mariadb")
+    app.run = lambda *a, **k: (1, "", "volume is in use")
+    app.biletleri_temizle(now=_b2["expires"] + 1)
+    ck("hacim silinemezse bilet KAYDI da durmaya devam ediyor",
+       app.bilet_of("mariadb") is not None)
+finally:
+    app.TICKETS_FILE = _eski_tickets
+    app.VOLUMES_ENV = _eski_volenv
+    app.run = _eski_run2
+    app.canli_hacim = _eski_canli
+    app.record_event = _eski_olay
+    _sh.rmtree(_t_state, ignore_errors=True)
+
+# --- KAPSAM: gölge her motorda anlamlı değil ---------------------------------
+# Katalogda backup.supported olan her motorun restore_*() fonksiyonu YOK.
+# Panel düğmeyi göstermeden önce bunu bilmeli; yoksa kullanıcı basar ve
+# "bu motorda yapılamıyor" cevabını iş başladıktan sonra alır.
+_golge_kapsam = sorted(e["id"] for e in app.CATALOG.engines
+                       if app.shadow_supported(e["id"]))
+ck("gölge kapsamı restore_*() yazılmış motorlarla sınırlı",
+   _golge_kapsam == ["mariadb", "mongodb", "mssql", "postgresql", "redis"],
+   ", ".join(_golge_kapsam))
+
+# --- UÇ ONAY İSTEMELİ --------------------------------------------------------
+# Takas sonunda üretimin servis ettiği veri DEĞİŞİR. Onaysız 202 dönmek,
+# yanlışlıkla tıklanan bir düğmenin üretimi değiştirmesi demek.
+_appsrc = io.open("controller/app.py", encoding="utf-8").read()
+_golge_uc = _appsrc.split('if action == "shadow-restore":')[1][:900]
+ck("gölge ucu açık onay istiyor",
+   'body.get("onayla")' in _golge_uc and "400" in _golge_uc)
+ck("gölge işi açık bilet varken ikinci takası reddediyor",
+   "bilet_kalan_sn(acik) > 0" in _appsrc)
+# Betik ile controller aynı çıkış kodunu konuşmalı: 5 = önkoşul sağlanmadı.
+_dsrc = io.open("scripts/restore-drill.sh", encoding="utf-8").read()
+ck("önkoşul reddi (çıkış 5) betikte ve controller'da aynı anlamda",
+   "bitir 5" in _dsrc and "if rc == 5:" in _appsrc)
 
 # =============================================================================
 print()
