@@ -4462,6 +4462,85 @@ try:
 finally:
     app.load_state = _eski_state
 
+
+# =============================================================================
+head("15. Şema parmak izi — 'bu dosya hangi şemayı geri getirir'")
+# =============================================================================
+# Yedekleme ailesi "kaç tablo, kaç satır" diyebiliyordu ama dosyanın hangi
+# ŞEMAYI geri getirdiğini söyleyemiyordu. Parmak izi bunu ölçülebilir
+# kılıyor; asıl risk de burada: aynı şema her koşumda aynı sayıyı vermezse
+# ürün kalıcı yalancı-kırmızı üretir ve kullanıcı uyarıyı yok saymayı
+# öğrenir — sessiz yeşilin aynadaki hâli.
+_ssrc_ham = io.open("scripts/schema.sh", encoding="utf-8").read()
+# YORUMLAR AYIKLANIYOR. İlk sürüm bütün dosyaya bakıyordu ve kendi
+# açıklamalarını yakalıyordu: "AUTO_INCREMENT taşır" diye YAZAN yorum,
+# "AUTO_INCREMENT kullanıyor" diye okunuyordu. Kontrol, kodu ölçmeli;
+# kodun neden öyle yazıldığını anlatan metni değil.
+_ssrc = chr(10).join(
+    _re2.sub(r"\s--\s.*$", "", _l)
+    for _l in _ssrc_ham.split(chr(10))
+    if not _l.lstrip().startswith("#"))
+
+# OYNAK ALANLAR PARMAK İZİNE GİRMEMELİ. MariaDB'de SHOW CREATE TABLE
+# AUTO_INCREMENT sayacını taşır: tek satır eklemek parmak izini değiştirirdi.
+ck("MariaDB parmak izi SHOW CREATE TABLE kullanmıyor (AUTO_INCREMENT taşır)",
+   "SHOW CREATE TABLE" not in _ssrc)
+_oynak = [_x for _x in ("TABLE_ROWS", "DATA_LENGTH", "AUTO_INCREMENT",
+                        "CREATE_TIME", "UPDATE_TIME", "CHECKSUM", "CARDINALITY")
+          if _x in _ssrc]
+ck("oynak katalog sütunları parmak izine girmiyor", not _oynak,
+   ", ".join(_oynak) or "temiz")
+# Sequence'ın ANLIK DEĞERİ girmemeli: her INSERT'te artar.
+ck("sequence'ın anlık değeri parmak izine girmiyor",
+   "last_value" not in _ssrc and "currval" not in _ssrc)
+# Sıralama sabitlenmeli: aynı şema iki koşumda iki farklı metin vermemeli.
+ck("çıktı sıralaması sabitleniyor (aynı şema aynı metin)",
+   "ORDER BY satir" in _ssrc and "LC_ALL=C sort" in _ssrc)
+# Biçim sürümlenmeli: v1 ile v2 karşılaştırmak dev bir sahte fark üretirdi.
+ck("parmak izi biçimi sürümlü", "SEMA_SURUM=" in _ssrc)
+
+# 'ŞEMA YOK' İLE 'ÖLÇEMEDİK' AYRI. Redis/Kafka/MinIO'da çevrilecek şema
+# yoktur; bunu "ölçemedik" diye göstermek panelde yanlış alarm olurdu.
+ck("kapsam dışı (şema yok) ayrı çıkış koduyla bildiriliyor",
+   "kapsam_disi()" in _ssrc and "bitir 2" in _ssrc and "bitir 3" in _ssrc)
+# Boş çıktıyı 'şema boş' saymak, okunamamış bir şemayı boş göstermekti.
+ck("boş çıktı 'şema boş' sayılmıyor",
+   "okunamadı sayılıyor" in _ssrc)
+
+# --- ZİNCİR: yedek → defter → prova -----------------------------------------
+# Fikrin tek gerçek yeniliği fark tespiti değil, parmak izini bir YEDEK
+# DOSYASINA bağlamak. Zincirin üç halkası da yerinde olmalı.
+ck("yedek alınırken parmak izi kaydediliyor",
+   "sema_yedege_bagla(" in _capp and "SCHEMA_INDEX_FILE" in _capp)
+ck("zamanlı tur da parmak izi kaydediyor",
+   _capp.count("sema_yedege_bagla(") >= 2)
+ck("prova, kopyanın parmak izini yedeğinkiyle karşılaştırıyor",
+   "sema_yedekten_oku" in _dsrc and '"fingerprint_match":' in _dsrc)
+
+# KAYIT YOKLUĞU 'UYUŞMADI' DEĞİLDİR: bu özellik eklenmeden önce alınmış
+# yedeklerin kaydı yok ve onları bozuk göstermek yeni bir yalancı-kırmızı olurdu.
+_pgovde = _dsrc.split("SEMA_SURUM_BEKLENEN=1")[1][:2000]
+ck("kaydı olmayan yedek 'uyuşmadı' sayılmıyor",
+   "yedeğin şema kaydı yok" in _pgovde)
+# Sürüm farkı da karşılaştırılamaz.
+ck("parmak izi sürümü farklıysa karşılaştırma yapılmıyor",
+   "SEMA_SURUM_BEKLENEN" in _dsrc and "version" in _dsrc)
+
+# Yedeğin ORTASINDA DDL çalışırsa bağlantı kesin değildir; bunu saklamak
+# yerine işaretliyoruz.
+ck("yedek sırasında şema değişirse 'kararsız' işaretleniyor",
+   "schema_unstable" in _capp and '"stable"' in _capp)
+
+# motor_parolasi TEK YERDE olmalı: üç kopyadan biri güncellenmeyince o betik
+# sessizce "parola okunamadı" derdi.
+_kopya = [_f for _f in ("scripts/restore-drill.sh", "scripts/pitr.sh",
+                        "scripts/schema.sh")
+          if "motor_parolasi() {" in io.open(_f, encoding="utf-8").read()]
+ck("motor_parolasi yalnız common.sh'ta tanımlı", not _kopya,
+   ", ".join(_kopya) or "tek kaynak")
+ck("common.sh motor_parolasi'nı sağlıyor",
+   "motor_parolasi() {" in io.open("scripts/lib/common.sh", encoding="utf-8").read())
+
 # =============================================================================
 print()
 if FAILS:

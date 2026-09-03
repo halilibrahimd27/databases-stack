@@ -50,7 +50,7 @@ RUN_LOG="$LOG_DIR/e2e_$(date +%Y%m%d_%H%M%S).log"
 # yapar — failover paketiyle aynı aileden, onun hemen ardında.
 # shadow GERÇEK bir takas yapar (ha-drill'in gerçek bir devir yapması gibi)
 # ve girdisi taze bir yedektir: backup ve drill'in hemen ardında duruyor.
-GUVENLI=(security sizing replication failover ha-drill backup drill shadow import
+GUVENLI=(security sizing replication failover ha-drill backup drill shadow schema import
          encrypt pitr maintenance slowlog ash monitoring lifecycle)
 ISTEGE_BAGLI=(k8s)
 
@@ -62,6 +62,7 @@ declare -A ACIKLAMA=(
   [failover]="Otomatik devir: ölüm → devir → AYNI ADRESTEN yazma → veri kaybı yok"
   [backup]="Yedek al → veriyi sil → geri yükle → veri geri geldi"
   [shadow]="Gölge geri yükleme: kesinti gateway portundan, geri dönüş bileti, ayrışma"
+  [schema]="Şema parmak izi: aynı şema aynı hash, veri değişimi etkilemez, DDL fark edilir"
   [ha-drill]="Devir provası: GERÇEK bir devir yapar, kesintiyi gateway'den ölçer"
   [drill]="Kurtarma provası: yedek tek kullanımlık bir kopyada gerçekten açılıyor mu"
   [import]="Dışarıdan veri alma: dump içeri aktarılıyor, sayılar tutuyor mu"

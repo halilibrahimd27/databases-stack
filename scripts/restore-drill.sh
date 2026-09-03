@@ -177,11 +177,13 @@ json_bas() {
     JSON_BASILDI=1
     local _satir
     _satir="$(
-        printf '{"engine":%s,"file":%s,"ok":%s,"seconds":%s,"restored_tables":%s,"restored_rows":%s,"prod_tables":%s,"prod_rows":%s,"match":%s,"restored_schema":%s,"prod_schema":%s,"schema_match":%s,"cleanup":%s,"shadow":%s,"volume":%s,"generation":%s,"kept":%s,"detail":%s}\n' \
+        printf '{"engine":%s,"file":%s,"ok":%s,"seconds":%s,"restored_tables":%s,"restored_rows":%s,"prod_tables":%s,"prod_rows":%s,"match":%s,"restored_schema":%s,"prod_schema":%s,"schema_match":%s,"restored_fingerprint":%s,"backup_fingerprint":%s,"fingerprint_match":%s,"cleanup":%s,"shadow":%s,"volume":%s,"generation":%s,"kept":%s,"detail":%s}\n' \
             "$(js "$MOTOR")" "$(js "$DOSYA")" "$OK" "$SANIYE" \
             "$R_TABLO" "$R_SATIR" "$P_TABLO" "$P_SATIR" "$ESLESME" \
             "$(sema_json "${R_SEMA:-}")" "$(sema_json "${P_SEMA:-}")" \
             "${SEMA_ESLESME:-null}" \
+            "$(js "${R_PARMAK:-}")" "$(js "${Y_PARMAK:-}")" \
+            "${PARMAK_ESLESME:-null}" \
             "$TEMIZ" "$([ "$GOLGE" -eq 1 ] && echo true || echo false)" \
             "$(js "$HACIM")" "$KUSAK" "$HACIM_SAKLANDI" "$(js "$DETAY")"
     )"
@@ -411,16 +413,6 @@ motor_imaji() {
     esac
 }
 
-motor_parolasi() {
-    case "$1" in
-        mariadb)    printf '%s' "${MARIADB_PASSWORD:-${DB_PASSWORD:-}}" ;;
-        postgresql) printf '%s' "${POSTGRES_PASSWORD:-${DB_PASSWORD:-}}" ;;
-        mongodb)    printf '%s' "${MONGO_PASSWORD:-${DB_PASSWORD:-}}" ;;
-        redis)      printf '%s' "${REDIS_PASSWORD:-${DB_PASSWORD:-}}" ;;
-        mssql)      printf '%s' "${MSSQL_PASSWORD:-${DB_PASSWORD:-}}" ;;
-        *)          return 1 ;;
-    esac
-}
 
 # Alt dizin ('full') SABİT YAZILMIYOR: dosya yerleşimini out_path <motor>
 # <tip> üretiyor ve tip ileride 'single' olabilir. 'full' yazsaydık, tek
@@ -891,6 +883,51 @@ say_mssql() {
 # =============================================================================
 # Container ölmüşse SEBEBİNİ söylüyoruz. "Hazır olmadı" tek başına yedeği
 # suçlar; oysa en sık sebep bellek tavanıdır ve çaresi tek satırdır.
+# =============================================================================
+# ŞEMA PARMAK İZİ — "bu dosya hangi şemayı geri getirir"
+# =============================================================================
+# Nesne SAYMAK bir kaybı görür ama bir DEĞİŞİMİ göremez: aynı sayıda ama
+# başka sütunlu bir tablo, sayımdan geçer. Parmak izi tam olarak bunu
+# kapatıyor — ve asıl değeri, yedek alınırken kaydedilmiş olması: geri
+# yüklenen kopyanın şeması, DOSYANIN vaat ettiği şemayla karşılaştırılıyor.
+#
+# Karşılaştırma yapılamadığında SESSİZ KALMIYORUZ ama BAŞARISIZ da saymıyoruz:
+# eski yedeklerin kaydı yok ve "kayıt yok" ile "uyuşmadı" bambaşka iki cevap.
+SEMA_INDEX="$STACK_ROOT/state/schema_index.json"
+SEMA_BETIK="$STACK_ROOT/scripts/schema.sh"
+
+# Bir JSON satırından tek alan — python3 yoksa parmak izi karşılaştırması
+# yapılmaz, o zaman da "ölçülemedi" denir.
+sema_alan() {   # sema_alan <json> <alan>
+    printf '%s' "$1" | python3 -c '
+import json,sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+v = d.get(sys.argv[1])
+print("" if v is None else v)' "$2" 2>/dev/null
+}
+
+# Yedek alınırken kaydedilmiş parmak izi (varsa).
+sema_yedekten_oku() {   # sema_yedekten_oku <dosya adı>
+    [ -f "$SEMA_INDEX" ] || return 1
+    python3 -c '
+import json,sys
+try:
+    d = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+k = d.get(sys.argv[2])
+if not isinstance(k, dict):
+    raise SystemExit(1)
+# Sürüm farkı KARŞILAŞTIRILAMAZ: v1 ile v2 parmak izini kıyaslamak dev bir
+# sahte fark üretirdi.
+if int(k.get("version", 0)) != int(sys.argv[3]):
+    raise SystemExit(2)
+print(k.get("fingerprint") or "")' "$SEMA_INDEX" "$1" "$SEMA_SURUM_BEKLENEN" 2>/dev/null
+}
+
 # =============================================================================
 # ŞEMA NESNESİ SAYIMI — "prova geçti" rozetinin göremediği kayıp
 # =============================================================================
@@ -1375,6 +1412,39 @@ else
     warn "Geri yüklenen kopya sayılamadı — sağlamlık kontrolü ÖLÇÜLEMEDİ."
 fi
 
+# ------------------------------------------------------- şema parmak izi ---
+# Geri yüklenen kopyanın parmak izi ile YEDEK ALINIRKEN kaydedilen parmak izi.
+# Bu iki sayı, "elimdeki dosya hangi şemayı geri getirir" sorusunun ölçülmüş
+# cevabı — ürünün bugüne kadar hiç veremediği cevap.
+SEMA_SURUM_BEKLENEN=1
+R_PARMAK=""; Y_PARMAK=""; PARMAK_ESLESME=null; PARMAK_NOT=""
+if [ -x "$SEMA_BETIK" ] || [ -f "$SEMA_BETIK" ]; then
+    _sj="$(bash "$SEMA_BETIK" "$MOTOR" "$PROVA_C" 2>/dev/null | tail -1)"
+    if [ -n "$_sj" ] && [ "$(sema_alan "$_sj" ok)" = "True" ]; then
+        R_PARMAK="$(sema_alan "$_sj" fingerprint)"
+    elif [ -n "$_sj" ]; then
+        PARMAK_NOT="kopyanın şema parmak izi alınamadı: $(sema_alan "$_sj" detail)"
+    fi
+fi
+if [ -n "$R_PARMAK" ]; then
+    if Y_PARMAK="$(sema_yedekten_oku "$(basename "$DOSYA")")" && [ -n "$Y_PARMAK" ]; then
+        if [ "$R_PARMAK" = "$Y_PARMAK" ]; then
+            PARMAK_ESLESME=true
+            PARMAK_NOT="şema parmak izi yedekle BİREBİR"
+            dok "Şema parmak izi yedekteki ile aynı — dosya vaat ettiği şemayı geri getirdi."
+        else
+            # BU CİDDİ: dosya, kaydedildiği andaki şemadan başka bir şey
+            # üretti. Sayım kaçırabilir, parmak izi kaçırmaz.
+            PARMAK_ESLESME=false
+            PARMAK_NOT="ŞEMA PARMAK İZİ UYUŞMUYOR: kopya $R_PARMAK, yedek kaydı $Y_PARMAK — bu dosya kaydedildiği andaki şemayı geri getirmiyor"
+            derr "$PARMAK_NOT"
+        fi
+    else
+        # Kayıt yok (eski yedek) ya da sürüm farklı. 'Uyuşmadı' DEMİYORUZ.
+        PARMAK_NOT="yedeğin şema kaydı yok (bu dosya parmak izi eklenmeden önce alınmış olabilir)"
+    fi
+fi
+
 # --------------------------------------------------- şema nesnesi sayımı ---
 # Tablo/satır eşleşmesi ŞEMA KAYBINI GÖRMEZ. Bu sayım, "prova geçti"
 # rozetinin bugüne kadar iddia ettiği ama ölçmediği şeyi ölçüyor.
@@ -1458,6 +1528,6 @@ if [ "$R_TABLO" -eq 0 ] && [ "$R_SATIR" -eq 0 ]; then
 fi
 
 OK=true
-DETAY="geri yüklendi: $R_TABLO tablo / $R_SATIR satır ($(birim_notu "$MOTOR")), ölçülen RTO ${SANIYE} sn; $URETIM_NOT${SEMA_NOT:+; $SEMA_NOT}"
+DETAY="geri yüklendi: $R_TABLO tablo / $R_SATIR satır ($(birim_notu "$MOTOR")), ölçülen RTO ${SANIYE} sn; $URETIM_NOT${SEMA_NOT:+; $SEMA_NOT}${PARMAK_NOT:+; $PARMAK_NOT}"
 dok "PROVA GEÇTİ — $MOTOR yedeği gerçekten geri yüklendi (${SANIYE} sn)."
 bitir 0

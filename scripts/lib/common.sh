@@ -461,6 +461,21 @@ compose() {
 }
 
 # Katalogdan JSON alanı oku (python3 her modern dağıtımda var)
+# Motorun yönetici parolası — .env'den, motor başına özel değişken varsa o,
+# yoksa ortak DB_PASSWORD. ÜÇ betikte birebir aynı gövdeyle duruyordu
+# (restore-drill.sh, pitr.sh ve yeni schema.sh); üç kopya, birinde değişikliği
+# unutmanın ve o betiğin sessizce "parola okunamadı" demesinin kapısıydı.
+motor_parolasi() {
+    case "$1" in
+        mariadb)    printf '%s' "${MARIADB_PASSWORD:-${DB_PASSWORD:-}}" ;;
+        postgresql) printf '%s' "${POSTGRES_PASSWORD:-${DB_PASSWORD:-}}" ;;
+        mongodb)    printf '%s' "${MONGO_PASSWORD:-${DB_PASSWORD:-}}" ;;
+        redis)      printf '%s' "${REDIS_PASSWORD:-${DB_PASSWORD:-}}" ;;
+        mssql)      printf '%s' "${MSSQL_PASSWORD:-${DB_PASSWORD:-}}" ;;
+        *)          return 1 ;;
+    esac
+}
+
 catalog_query() {
     # Fazladan argümanlar python'a İLETİLİR ($2'den itibaren sys.argv[2]…).
     # Eskiden yutuluyorlardı: parametreli bir sorgu IndexError ile ölüyor,

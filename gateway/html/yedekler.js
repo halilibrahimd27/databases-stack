@@ -21,6 +21,24 @@ const T = (x, b) => (typeof t === 'function' ? t(x, b) : x);
 /* Şifreli yedek, anahtarı olmayan bir kurulumda kurtarma noktası DEĞİLDİR.
    Aynı cümleyi üç yerde kullanıyoruz (rozet, iki düğmenin balonu); tek yerde
    durması, birinin güncellenip diğerlerinin eskimesini engelliyor. */
+
+/* "Bu dosya hangi şemayı geri getirir" — yedek alınırken kaydedilen parmak
+   izi. Kısa biçim GÖSTERİM için; karşılaştırmayı prova tam parmak iziyle
+   yapıyor. '?' işareti, yedek alınırken şemanın değiştiğini söyler: o
+   dosyanın hangi şemayı taşıdığı kesin değildir. */
+function SEMA_BALON(s) {
+  const o = s.objects || {};
+  const p = [];
+  if (o.table != null) p.push(o.table + ' tablo');
+  if (o.index != null) p.push(o.index + ' indeks');
+  if (o.constraint != null) p.push(o.constraint + ' kısıt');
+  if (o.view) p.push(o.view + ' view');
+  if (o.trigger) p.push(o.trigger + ' trigger');
+  if (o.routine) p.push(o.routine + ' rutin');
+  const kuyruk = s.stable === false
+    ? ' — yedek alınırken şema DEĞİŞTİ, bu bağlantı kesin değil' : '';
+  return 'Yedek alınırken kaydedilen şema: ' + p.join(' · ') + kuyruk;
+}
 const ACILMAZ = 'Bu yedek şifreli ve bu kurulumda BACKUP_ENCRYPT_KEY tanımlı '
   + 'değil — içi okunamaz ve geri yüklenemez. Yedeği alan kurulumun '
   + 'anahtarını .env dosyasına ekleyin.';
@@ -1076,7 +1094,9 @@ function rowHtml(engine, b, st, s) {
                f.readable === false
                  ? `<span class="bk-acilmaz" title="${esc(ACILMAZ)}">açılamaz</span>`
                  : ''}</span>
-             <span class="bk-file-size">${esc(bayt(f.bytes))}</span>
+             <span class="bk-file-size">${esc(bayt(f.bytes))}${
+               f.schema ? `<span class="bk-sema" title="${esc(SEMA_BALON(f.schema))}"
+                 >şema ${esc(f.schema.short)}${f.schema.stable === false ? ' ?' : ''}</span>` : ''}</span>
              <button class="btn btn-sm bk-file-btn" data-act="inspect"
                data-id="${esc(engine.id)}" data-file="${esc(f.file)}"
                ${f.readable === false ? 'disabled' : ''}

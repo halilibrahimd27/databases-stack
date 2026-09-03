@@ -1869,6 +1869,11 @@ main {
 .bk-file-size { color: var(--muted); white-space: nowrap; }
 /* Açılamayan yedek dosya ADININ yanında duruyor, ayrı bir sütunda değil:
    ızgara beş sütunlu ve altıncı bir hücre bütün satırı kaydırırdı. */
+/* Şema parmak izi: dosya boyutunun yanında, sessiz. Bir uyarı değil,
+   dosyanın kimliği. */
+.bk-sema { margin-left: 8px; font-size: 11px; color: var(--muted);
+           font-variant-numeric: tabular-nums; white-space: nowrap; }
+
 .bk-acilmaz { margin-left: 8px; font-size: 11px; padding: 1px 6px;
               border: 1px solid var(--err); border-radius: 999px;
               color: var(--err); white-space: nowrap; }

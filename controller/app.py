@@ -3844,6 +3844,121 @@ def yedek_dosyasi_mi(ad):
     return any(ad.endswith(x) for x in BACKUP_EXTS)
 
 
+# =============================================================================
+# ŞEMA PARMAK İZİ DEFTERİ — "bu dosya hangi şemayı geri getirir"
+# =============================================================================
+# Yedek defteri (backup_index.json) dosyanın KAYNAĞINI tutuyor; bu defter
+# ŞEKLİNİ tutuyor. Ayrı dosya, çünkü sözleşmeleri farklı: biri "elle mi
+# zamanlı mı" diye tek kelime, diğeri parmak izi + sayılar. Var olan
+# sözleşmeyi bozmadan eklemek, onu okuyan her yeri değiştirmemek demek.
+#
+# ZAMANLAMA DÜRÜSTLÜĞÜ: parmak izi ile dökümün AYNI ana ait olması gerekir.
+# Dökümün kendi anlık görüntüsünden okuyamadığımız için ikisini ölçüyoruz —
+# yedekten ÖNCE ve SONRA. İkisi aynıysa o aralıkta şema değişmemiştir ve
+# bağlama güvenilir. Farklıysa "kararsız" diye işaretliyoruz: yanlış bir
+# parmak izi yazmaktansa, yazamadığımızı söylemek doğru.
+SCHEMA_INDEX_FILE = os.path.join(STATE_DIR, "schema_index.json")
+SCHEMA_SCRIPT = os.path.join(PROJECT_DIR, "scripts", "schema.sh")
+SCHEMA_TIMEOUT = int(os.environ.get("SCHEMA_TIMEOUT", "300"))
+
+
+def load_schema_index():
+    d = _read_json(SCHEMA_INDEX_FILE, {})
+    return d if isinstance(d, dict) else {}
+
+
+def sema_olc(eid, container=None):
+    """schema.sh'ı çalıştırır. (kayit, hata) döner; kayit None ise ölçemedik.
+
+    Kapsam dışı (çıkış 2) bir HATA DEĞİLDİR: Redis'te çevrilecek şema yok."""
+    if not shutil.which("bash") or not os.path.exists(SCHEMA_SCRIPT):
+        return None, "schema.sh yok"
+    cmd = ["bash", SCHEMA_SCRIPT, eid] + ([container] if container else [])
+    rc, out, err = run(cmd, cwd=PROJECT_DIR, timeout=SCHEMA_TIMEOUT,
+                       env=script_env())
+    d = _son_satir_json(out + err)
+    if not d:
+        return None, "schema.sh çıktısı okunamadı (çıkış %d)" % rc
+    if rc == 2:
+        return None, None            # kapsam dışı — sessizce geç
+    if not d.get("ok"):
+        return None, d.get("detail") or "ölçülemedi"
+    return d, None
+
+
+def sema_defterine_yaz(eid, dosyalar, kayit, kararli=True):
+    """Yeni yedek dosyalarını parmak iziyle eşler.
+
+    Defter sınırsız büyümez: artık var olmayan dosyaların kaydı atılır —
+    saklama temizliği dosyaları sildikçe defterin şişmesi, events.jsonl'de
+    bir kez yaşanmış bir hatadır."""
+    idx = load_schema_index()
+    for ad in dosyalar:
+        idx[ad] = {"engine": eid,
+                   "fingerprint": kayit.get("fingerprint"),
+                   "version": kayit.get("version"),
+                   "objects": kayit.get("objects"),
+                   "at": int(time.time()),
+                   # Yedek sırasında şema değiştiyse bağlama güvenilmez;
+                   # bunu SAKLAMIYORUZ, işaretliyoruz.
+                   "stable": bool(kararli)}
+    kok = backups_dir()
+    mevcut = set()
+    for dirpath, _dirs, files in os.walk(kok):
+        for ad in files:
+            if yedek_dosyasi_mi(ad):
+                mevcut.add(ad)
+    for ad in list(idx):
+        if ad not in mevcut:
+            idx.pop(ad, None)
+    _write_json(SCHEMA_INDEX_FILE, idx)
+    paylasilan_izin(SCHEMA_INDEX_FILE)
+    return idx
+
+
+def sema_yedege_bagla(eid, once, dosyalar, jl=None):
+    """Yedek bittikten sonra parmak izini dosyalara bağlar.
+
+    `once` yedekten ÖNCE ölçülen kayıt (ya da None)."""
+    log_et = jl or (lambda *a: None)
+    if not dosyalar:
+        return None
+    sonra, hata = sema_olc(eid)
+    if sonra is None:
+        if hata:
+            log_et("   şema parmak izi alınamadı: %s" % hata)
+        return None
+    kararli = bool(once) and once.get("fingerprint") == sonra.get("fingerprint")
+    if once and not kararli:
+        # Yedeğin ORTASINDA DDL çalışmış. Dökümün hangi şemayı taşıdığı
+        # belirsiz; bunu yazmamak değil, İŞARETLEMEK doğru.
+        record_event("schema_unstable", eid,
+                     "%s yedeği alınırken şema değişti (DDL). Parmak izi "
+                     "kaydedildi ama 'kararsız' işaretlendi: dosyanın hangi "
+                     "şemayı taşıdığı kesin değil."
+                     % (CATALOG.engine(eid) or {}).get("name", eid),
+                     level="warning")
+    sema_defterine_yaz(eid, dosyalar, sonra, kararli)
+    log_et("   şema parmak izi kaydedildi: %s" % (sonra.get("fingerprint") or "?"))
+    return sonra
+
+
+def yeni_yedek_dosyalari(eid, since):
+    """`since`dan sonra oluşmuş yedek dosyalarının ADLARI."""
+    out = []
+    kok = os.path.join(backups_dir(), eid)
+    for dirpath, _dirs, files in os.walk(kok):
+        for ad in files:
+            if not yedek_dosyasi_mi(ad):
+                continue
+            try:
+                if os.stat(os.path.join(dirpath, ad)).st_mtime >= since - 1:
+                    out.append(ad)
+            except OSError:
+                continue
+    return out
+
+
 def tag_new_backups(kind, since, eids=None):
     """`since`dan sonra oluşan yedek dosyalarını `kind` ile işaretler.
 
@@ -4085,6 +4200,20 @@ def backup_next_run(cfg=None, now=None):
     return None
 
 
+def _sema_ozet(kayit):
+    """Panelin göreceği şema özeti. Parmak izinin TAMAMI gönderilmiyor:
+    ekranda 12 karakter yetiyor ve kısa biçim karşılaştırma için değil
+    GÖSTERİM için — karşılaştırmayı prova tam parmak iziyle yapıyor."""
+    if not isinstance(kayit, dict) or not kayit.get("fingerprint"):
+        return None
+    p = str(kayit["fingerprint"])
+    kisa = p.split(":", 1)[1][:12] if ":" in p else p[:12]
+    return {"short": kisa, "objects": kayit.get("objects"),
+            "at": kayit.get("at"),
+            # Yedek sırasında DDL çalıştıysa bağlama güvenilmez.
+            "stable": kayit.get("stable", True)}
+
+
 def backup_stats(eid, root=None):
     """backups/<motor>/ altındaki yedekler: (adet, toplam bayt, en yeni).
 
@@ -4105,6 +4234,9 @@ def backup_stats(eid, root=None):
     # Bir kez ölçülüyor: her dosya için .env'i yeniden okumak, yüzlerce
     # dosyalı bir kurulumda listeyi gereksiz yere yavaşlatırdı.
     _anahtar_var = sifre_anahtari_var()
+    # Şema defteri bir kez okunuyor: dosya başına dosya açmak, yüzlerce
+    # yedekli bir kurulumda listeyi gereksiz yavaşlatırdı.
+    _sema_idx = load_schema_index()
     count = total = 0
     latest = None
     latest_at = -1.0
@@ -4127,7 +4259,11 @@ def backup_stats(eid, root=None):
                           # noktası DEĞİLDİR. Bunu listede söylüyoruz; geri
                           # yükleme anında öğrenmek çok geç olurdu.
                           "encrypted": _sif,
-                          "readable": (not _sif) or _anahtar_var})
+                          "readable": (not _sif) or _anahtar_var,
+                          # "Bu dosya hangi şemayı geri getirir": yedek
+                          # alınırken kaydedilen parmak izi. Yoksa None —
+                          # eski yedeklerde kayıt olmaması bir arıza değil.
+                          "schema": _sema_ozet(_sema_idx.get(name))})
             if stt.st_mtime > latest_at:
                 latest_at = stt.st_mtime
                 latest = liste[-1]
@@ -5451,6 +5587,9 @@ def do_backup(jid, eid):
             before_at = before_latest["epoch"] if before_latest else 0
             basladi = time.time()
             job_log(jid, "%s yedekleniyor…" % engine["name"])
+            # Yedekten ÖNCEKİ şema: sonrakiyle aynıysa dökümün hangi
+            # şemayı taşıdığı kesindir.
+            _sema_once, _ = sema_olc(eid)
             rc, err, ertelendi = _backup_run([eid],
                                              lambda *m: job_log(jid, *m))
             if ertelendi:
@@ -5464,6 +5603,10 @@ def do_backup(jid, eid):
                              "tekrar deneyin." % engine["name"])
                 return job_done(jid, False, err, {"deferred": True})
             tag_new_backups("elle", basladi, [eid])
+            # Parmak izi: dosya ile şemayı aynı ana bağlıyor.
+            sema_yedege_bagla(eid, _sema_once,
+                              yeni_yedek_dosyalari(eid, basladi),
+                              lambda *m: job_log(jid, *m))
             count, _t, latest, _f = backup_stats(eid)
             yeni = (count > before_count
                     or (latest is not None and latest["epoch"] > before_at))
@@ -6037,6 +6180,14 @@ def _run_scheduled_backup(cfg, tur="zamanlı"):
     # sorusunun cevabı, elle alınmış bir yedeğin varlığıyla karışmamalı.
     # (Taban yedeği de zamanlayıcının turudur, aynı etiketi taşır.)
     tag_new_backups("zamanlı", basladi)
+    # ZAMANLI TURDA DA PARMAK İZİ. Gece yedeği elle alınandan daha az
+    # değerli değil; ikisinden birine şema kaydı yazmamak, kurtarma
+    # noktalarının yarısını "hangi şemayı getirdiği bilinmeyen" hâle
+    # bırakırdı. Burada tur BÜTÜN motorları kapsıyor.
+    for _e in CATALOG.engines:
+        _yeni = yeni_yedek_dosyalari(_e["id"], basladi)
+        if _yeni:
+            sema_yedege_bagla(_e["id"], None, _yeni)
     cfg["last_ok"] = (rc == 0)
     cfg["last_error"] = err
     if rc == 0:

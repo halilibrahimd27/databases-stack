@@ -236,13 +236,6 @@ motor_imaji() {
     esac
 }
 
-motor_parolasi() {
-    case "$1" in
-        postgresql) printf '%s' "${POSTGRES_PASSWORD:-${DB_PASSWORD:-}}" ;;
-        mariadb)    printf '%s' "${MARIADB_PASSWORD:-${DB_PASSWORD:-}}" ;;
-        *)          return 1 ;;
-    esac
-}
 
 # Motorun veri dizini hangi hacimde? Adı `<proje>_<motor>_data` diye tahmin
 # ETMİYORUZ: STACK_PROJECT değiştirilebilir ve var olan bir kurulumdan geçen

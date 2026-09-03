@@ -1087,7 +1087,18 @@
       '{1} cannot be turned on right now',
     '{1}Veriye dokunulmadı. Sunucuda o an başka bir yedekleme ya da geri yükleme sürüyordu; o iş bitince tekrar deneyebilirsiniz.':
       '{1}No data was touched. Another backup or restore was running on the server at that moment; try again once it finishes.',
-    'sn': 's'
+    'sn': 's',
+
+    /* --- şema parmak izi --- */
+    'Yedek alınırken kaydedilen şema: {1}{2}': 'Schema recorded when the backup was taken: {1}{2}',
+    '{1} kısıt': '{1} constraints',
+    '{1} tablo': '{1} tables',
+    '{1} indeks': '{1} indexes',
+    '{1} view': '{1} views',
+    '{1} trigger': '{1} triggers',
+    '{1} rutin': '{1} routines',
+    '— yedek alınırken şema DEĞİŞTİ, bu bağlantı kesin değil': '— the schema CHANGED while the backup was taken, so this link is not certain',
+    'şema {1}': 'schema {1}'
   };
 
   function dilOku() {
