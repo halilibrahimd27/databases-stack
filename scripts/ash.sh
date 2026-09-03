@@ -157,7 +157,8 @@ my_dongu() {
                 IFNULL(TIME,0),
                 '',
                 LEFT(REPLACE(REPLACE(REPLACE(IFNULL(INFO,''), '
-', ' '), '', ' '), '	', ' '), $METIN))
+', ' '), '
+', ' '), '	', ' '), $METIN))
          FROM information_schema.PROCESSLIST
          WHERE COMMAND NOT IN ('Sleep','Daemon','Binlog Dump')
            AND ID <> CONNECTION_ID()
