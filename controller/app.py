@@ -4683,6 +4683,29 @@ def maintenance_refresher():
         time.sleep(600)
 
 
+# Yedek sayfasını ilgilendiren iş türleri. Kilit (BACKUP_LOCK) yalnız
+# "bir yerde bir iş var" der; kullanıcının sorduğu soru ise "BENİM
+# motorumda ne oluyor". Ölçülen olay: kullanıcı MariaDB satırında
+# "Yedek al"a bastı, satır dakikalarca "en yeni 55 dakika önce" yazmaya
+# devam etti, sonra listeye zamanlı bir yedek düştü — panel o süre boyunca
+# hiçbir şey söylemediği için haklı olarak "çalışmadı" sanıldı.
+YEDEK_ISLERI = ("backup", "restore", "drill")
+
+
+def suren_isler_motor_bazli():
+    """motor -> süren iş türleri. Kaynağı etkinlik defteri: bitişi yazılmamış
+    her iş sürüyor sayılır."""
+    out = {}
+    simdi = int(time.time())
+    for i in etkinlik_araligi(simdi - 86400, simdi):
+        if not i.get("suruyor"):
+            continue
+        if i.get("kind") not in YEDEK_ISLERI:
+            continue
+        out.setdefault(i.get("engine"), []).append(i.get("kind"))
+    return out
+
+
 def backups_overview(now=None):
     """GET /api/backups gövdesi: zamanlama + motor başına yedek özeti.
 
@@ -4696,6 +4719,7 @@ def backups_overview(now=None):
     cfg = load_backup_cfg()
     root = backups_dir()
     drills = load_drills()
+    _suren = suren_isler_motor_bazli()
     engines = {}
     for e in CATALOG.engines:
         bk = e.get("backup") or {}
@@ -4703,6 +4727,11 @@ def backups_overview(now=None):
         prova = drills.get(e["id"])
         engines[e["id"]] = {"supported": bool(bk.get("supported")),
                             "drill_supported": drill_supported(e["id"]),
+                            # O MOTORDA ŞU AN SÜREN İŞ. Panelin satırı bunu
+                            # gösterebilsin diye: sayılar dakikalarca eski
+                            # kalırken hiçbir şey söylememek, kullanıcıya
+                            # "çalışmadı" dedirtiyordu.
+                            "calisiyor": _suren.get(e["id"]) or [],
                             "drill": prova,
                             "count": count, "total_bytes": total,
                             "latest": latest, "files": files,

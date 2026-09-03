@@ -767,7 +767,25 @@ function rowHtml(engine, b, st, s) {
         ? !!engine.backup.restorable
         : GERI_YUKLENEBILIR.indexOf(engine.id) !== -1);
 
+  /* O MOTORDA ŞU AN SÜREN İŞ. Kilit bayrağı (s.running) yalnız "bir yerde
+     bir iş var" der; kullanıcının sorduğu soru "BENİM motorumda ne oluyor".
+     Ölçülen olay: kullanıcı MariaDB satırında "Yedek al"a bastı, satır
+     dakikalarca "en yeni 55 dakika önce" yazmaya devam etti, sonra listeye
+     ZAMANLI bir yedek düştü. Panel o süre boyunca hiçbir şey söylemediği
+     için haklı olarak "çalışmadı" sanıldı. Sessiz kalmak da bir cevaptır ve
+     yanlış olanıdır. */
+  const surenler = Array.isArray(b.calisiyor) ? b.calisiyor : [];
+  const IS_ADI = { backup: 'yedek alınıyor', restore: 'geri yükleniyor',
+                   drill: 'kurtarma provası sürüyor' };
+
   const facts = [];
+  if (surenler.length) {
+    /* Sayılardan ÖNCE geliyor: satırın en taze gerçeği bu. Altındaki
+       "en yeni 55 dakika önce" yazısı hâlâ doğru ama artık yanıltmıyor,
+       çünkü yanında işin sürdüğü yazıyor. */
+    facts.push('<span class="badge busy">'
+      + esc(IS_ADI[surenler[0]] || surenler[0] + ' sürüyor') + '…</span>');
+  }
   if (!b.latest) {
     // Bu satırın en önemli bilgisi bu: yedeksiz bir veritabanı, boyut ve
     // adet sütunları boş kaldığı için eskiden gözden kaçıyordu.
@@ -785,7 +803,8 @@ function rowHtml(engine, b, st, s) {
      Düğmeyi tıklanır bırakmak, kullanıcıya bir iş başlatıp saniyesinde hata
      penceresi göstermekten başka işe yaramıyordu. */
   const bkNot = kapali ? 'Motor kapalı — yedek almak için önce açın'
-              : mesgul ? 'Şu an başka bir yedek alınıyor' : '';
+              : surenler.length ? 'Bu motorda bir iş sürüyor, bitmesini bekleyin'
+              : mesgul ? 'Şu an başka bir motorda yedek alınıyor' : '';
   const grNot = !geriOk
       ? 'Bu motorda panelden geri yükleme yok; docs/BACKUP.md anlatıyor'
       : kapali ? 'Motor kapalı — geri yüklemek için önce açın'

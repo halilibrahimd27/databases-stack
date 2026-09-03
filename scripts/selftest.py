@@ -3180,6 +3180,28 @@ ck("controller ASH ucunu sunuyor",
 ck("ASH defteri sınırsız büyümüyor (devir var)",
    "_ash_devret" in _ctrl_py and "ASH_MAX_BYTES" in _ctrl_py)
 
+# --- Yığının kendi işleri: hem ASH penceresinde hem yedek satırında --------
+# JOBS yalnız bellekte; controller yeniden başlayınca buharlaşıyordu. Bir
+# donmanın hangi işle çakıştığını noktasal olay kaydıyla gösteremezsiniz.
+ck("etkinlik defteri işin BAŞLANGIÇ ve BİTİŞ anını diske yazıyor",
+   "etkinlik_basladi(jid, kind, engine)" in _ctrl_py
+   and "etkinlik_bitti(jid, ok, reason)" in _ctrl_py)
+ck("ASH penceresi yığının kendi işleriyle kesişiyor",
+   '"yigin_isleri": etkinlik_araligi(bas, bit)' in _ctrl_py)
+# Bitişi yazılmamış iş "yoktu" diye okunmamalı: controller çökmüşse bitiş
+# kaydı hiç yazılmamış olabilir.
+ck("bitişi olmayan iş 'sürüyor' sayılıyor (yok sayılmıyor)",
+   '"suruyor": suruyor' in _ctrl_py)
+
+# Ölçülen olay: "Yedek al"a basıldı, satır dakikalarca "en yeni 55 dakika
+# önce" yazmaya devam etti, sonra listeye zamanlı bir yedek düştü. Panel o
+# süre boyunca hiçbir şey söylemedi ve haklı olarak "çalışmadı" sanıldı.
+ck("yedek özeti motor başına SÜREN İŞİ bildiriyor",
+   '"calisiyor": _suren.get(e["id"]) or []' in _ctrl_py)
+_bkjs = io.open("gateway/html/yedekler.js", encoding="utf-8").read()
+ck("yedek satırı süren işi GÖSTERİYOR (sessiz kalmıyor)",
+   "b.calisiyor" in _bkjs and "yedek alınıyor" in _bkjs)
+
 # =============================================================================
 print()
 if FAILS:
