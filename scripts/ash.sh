@@ -112,7 +112,15 @@ pg_dongu() {
     # Kendi bağlantımızı (pg_backend_pid) dışarıda bırakıyoruz — ölçüm aracının
     # kendisi ölçümde görünmemeli, yoksa her örnekte bir oturum fazla sayılır.
     local sql
-    sql="SELECT pid,
+    # TEK SÜTUN, ayraç chr(31) (unit separator). Neden sekme değil:
+    # psql'in -F'	' seçeneği kabuktan geçerken GERÇEK SEKME değil, iki
+    # karakterlik "	" dizgisi olarak gidiyordu; ayrıştırıcı satırı
+    # bölemiyor, pid sayıya çevrilemiyor ve satır SESSİZCE düşüyordu.
+    # Sonuç ekranda "ölçüldü, 0 oturum" görünüyordu — yani tam da bu
+    # özelliğin engellemek için yazıldığı sahte sıfır. chr(31) veride
+    # geçmez; sorgu metnindeki sekme/satır sonu da zaten temizleniyor.
+    sql="SELECT concat_ws(chr(31),
+                pid,
                 coalesce(state,''),
                 coalesce(wait_event_type,''),
                 coalesce(wait_event,''),
@@ -121,7 +129,7 @@ pg_dongu() {
                 coalesce(datname,''),
                 coalesce(round(extract(epoch from (now() - xact_start))::numeric, 1)::text, ''),
                 coalesce(array_to_string(pg_blocking_pids(pid), ','), ''),
-                left(regexp_replace(coalesce(query, ''), '[\\s]+', ' ', 'g'), $METIN)
+                left(regexp_replace(coalesce(query, ''), '[[:space:]]+', ' ', 'g'), $METIN))
          FROM pg_stat_activity
          WHERE pid <> pg_backend_pid()
            AND coalesce(state, '') <> 'idle'
@@ -138,7 +146,8 @@ my_dongu() {
     # "kimse kimseyi bekletmiyor" diye okunur — yani ölçemediğimizi ölçmüş
     # gibi göstermiş oluruz. Zincir alanı bu motorda BOŞ ve bunu 'destek'
     # çıktısı açıkça söylüyor.
-    printf '%s' "SELECT ID,
+    printf '%s' "SELECT CONCAT_WS(CHAR(31),
+                ID,
                 IFNULL(COMMAND,''),
                 IFNULL(STATE,''),
                 '',
@@ -147,7 +156,8 @@ my_dongu() {
                 IFNULL(DB,''),
                 IFNULL(TIME,0),
                 '',
-                LEFT(REPLACE(REPLACE(REPLACE(IFNULL(INFO,''), '\n', ' '), '\r', ' '), '\t', ' '), $METIN)
+                LEFT(REPLACE(REPLACE(REPLACE(IFNULL(INFO,''), '
+', ' '), '', ' '), '	', ' '), $METIN))
          FROM information_schema.PROCESSLIST
          WHERE COMMAND NOT IN ('Sleep','Daemon','Binlog Dump')
            AND ID <> CONNECTION_ID()
@@ -170,12 +180,15 @@ cmd_ornekle() {
         postgresql)
             sql="$(pg_dongu)"
             # -q sessiz, -t başlıksız, -A hizalamasız, -F sekme ayraç.
-            # ON_ERROR_STOP=0: tek bir hatalı örnek akışı bitirmesin; hata
-            # zaten 'hata' başlığına dönüşüp defterde boşluk olarak görünür.
+            # ON_ERROR_STOP=1 ŞART: 0 iken psql hatalı sorguda bile ÇIKIŞ 0
+            # döner, çıktı da boş olur — yani sorgu hatası 'ölçüldü, 0 oturum'
+            # diye kaydedilir. Bu tam olarak engellemeye çalıştığımız sahte
+            # sıfırdır ve sahada birebir yaşandı: SQL bozukken defter 30
+            # saniye boyunca 'sistem boştu' yazdı.
             ic="export PGPASSWORD=\"\$PGPW\";
                 while :; do
                   now=\$(date +%s)
-                  if out=\$(psql -qtAF'\t' -U \"\$PGUSER_\" -d \"\$PGDB_\" -v ON_ERROR_STOP=0 -c \"\$SQL\" 2>/dev/null); then
+                  if out=\$(psql -qtAX -U \"\$PGUSER_\" -d \"\$PGDB_\" -v ON_ERROR_STOP=1 -c \"\$SQL\" 2>/dev/null); then
                       printf 'S\t%s\tok\n' \"\$now\"
                       [ -n \"\$out\" ] && printf '%s\n' \"\$out\"
                   else
@@ -204,9 +217,15 @@ cmd_ornekle() {
                   printf 'E\n'
                   sleep $ARALIK
                 done"
+            # Parola adı DEPONUN KURALINA göre: MARIADB_PASSWORD, yoksa
+            # DB_PASSWORD (bkz. pitr.sh'taki motor_parolasi). İlk sürümde
+            # MARIADB_ROOT_PASSWORD yazmıştım; o değişken bu depoda YOK ve
+            # sorgu her örnekte düşüyordu. Üç değerli defter sayesinde bu
+            # "0 oturum" diye DEĞİL "27 örnek ÖLÇÜLEMEDİ" diye göründü —
+            # yani hatanın kendisi tasarımın işe yaradığının kanıtı oldu.
             docker exec \
-                -e MYPW="${MARIADB_ROOT_PASSWORD:-${MYSQL_ROOT_PASSWORD:-$DB_PASSWORD}}" \
-                -e MYUSER_="${MARIADB_USER:-root}" \
+                -e MYPW="${MARIADB_PASSWORD:-${DB_PASSWORD:-}}" \
+                -e MYUSER_=root \
                 -e SQL="$sql" \
                 "$C" sh -c "$ic"
             ;;
@@ -232,6 +251,7 @@ import json, os, sys
 motor = os.environ.get("ASH_MOTOR", "")
 ALAN = ("pid", "durum", "bekleme_turu", "bekleme", "tur",
         "kullanici", "vt", "islem_sn", "bekleten", "sorgu")
+AYRAC = chr(31)          # unit separator — veride geçmez
 
 zaman = None
 ok = None
@@ -244,15 +264,23 @@ def bas():
     kayit = {"t": zaman, "motor": motor, "ok": bool(ok)}
     if ok:
         oturumlar = []
+        bozuk = 0
         for ham in satirlar:
-            p = ham.split("\t")
+            # Ayraç chr(31): veride geçmez. Sekme kullanan ilk sürümde
+            # ayraç kabuktan geçerken iki karakterlik "\t" dizgisine
+            # dönüşüyordu; satır bölünemiyor, pid sayıya çevrilemiyor ve
+            # satır SESSİZCE düşüyordu — sonuç "ölçüldü, 0 oturum".
+            p = ham.split(AYRAC)
             if len(p) < len(ALAN):
                 p += [""] * (len(ALAN) - len(p))
             o = dict(zip(ALAN, p[:len(ALAN)]))
             try:
                 o["pid"] = int(o["pid"])
             except ValueError:
-                continue          # başlık/uyarı satırı: oturum değil
+                # ÇÖZÜLEMEYEN SATIR SESSİZCE DÜŞMEZ. Sayılır; hepsi
+                # çözülemediyse örnek "ölçüldü" sayılmaz.
+                bozuk += 1
+                continue
             try:
                 o["islem_sn"] = float(o["islem_sn"]) if o["islem_sn"] else None
             except ValueError:
@@ -260,8 +288,16 @@ def bas():
             o["bekleten"] = [int(x) for x in o["bekleten"].split(",")
                              if x.strip().isdigit()]
             oturumlar.append(o)
-        kayit["n"] = len(oturumlar)
-        kayit["oturumlar"] = oturumlar
+        if bozuk and not oturumlar:
+            # Satır geldi ama HİÇBİRİ çözülemedi: bu "boştu" değil,
+            # "okuyamadım"dır. Sıfır yazmak sahte sıfır olurdu.
+            kayit["ok"] = False
+            kayit["neden"] = "%d satır çözülemedi (ayraç/biçim)" % bozuk
+        else:
+            kayit["n"] = len(oturumlar)
+            kayit["oturumlar"] = oturumlar
+            if bozuk:
+                kayit["bozuk"] = bozuk
     sys.stdout.write(json.dumps(kayit, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
@@ -351,6 +387,10 @@ Aktif oturum geçmişi (ASH) — databases-stack
         ayrı durmasının sebebi ayrıştırıcının canlı veritabanı olmadan
         sınanabilmesi.
 
+  ./scripts/ash.sh sorgu <motor>
+        Örnekleyicinin motora sorduğu SQL'i basar. Neyin ölçüldüğünü
+        okuyamadığınız bir ölçüme güvenemezsiniz.
+
   ./scripts/ash.sh destek [--json]
         Hangi motorda ölçüm var, olmayanlarda NEDEN yok.
 
@@ -366,6 +406,12 @@ shift 2>/dev/null || true
 
 case "$KOMUT" in
     ornekle)  cmd_ornekle "${1:-}" | cmd_cevir "${1:-}" ;;
+    sorgu)    # Ölçüm aracının motora SORDUĞU şey görünür olmalı: neyin
+              # ölçüldüğünü okuyamadığınız bir ölçüme güvenemezsiniz.
+              motor_kontrol "${1:-}"
+              case "${1:-}" in postgresql) pg_dongu ;; mariadb) my_dongu ;; esac
+              printf '
+' ;;
     cevir)    cmd_cevir "${1:-}" ;;
     destek)   [ "${1:-}" = "--json" ] && cmd_destek 1 || cmd_destek 0 ;;
     *)        kullanim; exit "$KOD_KAPSAM" ;;

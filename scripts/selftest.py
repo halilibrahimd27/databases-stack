@@ -3115,19 +3115,28 @@ ck("defteri olmayan motorda kapsama SIFIR (uydurma özet yok)",
 # --- Betiğin ayrıştırıcısı: üç hâli AYIRIYOR mu (canlı veritabanı olmadan) --
 # Ayrıştırıcı 'cevir' komutu olarak ayrı durduğu için ham girdiyle tek başına
 # sınanabiliyor; bu ayrımın kanıtı ancak böyle alınır.
+# Ayraç chr(31) (unit separator). İlk sürümde sekmeydi; psql'in -F seçeneği
+# kabuktan geçerken iki karakterlik bir dizgiye dönüşüyor, satır bölünemiyor,
+# pid çevrilemiyor ve satır SESSİZCE düşüyordu — sonuç "ölçüldü, 0 oturum",
+# yani engellemek için yazdığımız sahte sıfırın ta kendisi.
+_US = chr(31)
 _ash_ham = (
     "S\t1700000000\tok\n"
-    "123\tactive\tLock\ttransactionid\tclient backend\troot\tapp\t12.5\t99,100"
-    "\tUPDATE t SET x=1\n"
+    + _US.join(["123", "active", "Lock", "transactionid", "client backend",
+                "root", "app", "12.5", "99,100", "UPDATE t SET x=1"]) + "\n"
     "E\n"
-    "S\t1700000001\thata\n"
+    "S\t1700000001\tok\n"
+    "COZULEMEYEN-SATIR\n"      # ayraçsız: örnek ÖLÇÜLEMEDİ sayılmalı
     "E\n"
     "S\t1700000002\tok\n"
     "E\n")
 try:
+    # encoding AÇIKÇA utf-8: text=True yerel kodlamayı kullanır ve Windows'ta
+    # (cp1254) Türkçe karakterler bozulur — kontrol ürünü değil kendi
+    # kodlamasını ölçmüş olurdu.
     _r = subprocess.run(["bash", "scripts/ash.sh", "cevir", "postgresql"],
                         input=_ash_ham, capture_output=True, text=True,
-                        timeout=60)
+                        encoding="utf-8", timeout=60)
     _cikti = [json.loads(x) for x in _r.stdout.splitlines() if x.strip()]
 except Exception as _e:
     _cikti = []
@@ -3138,8 +3147,10 @@ ck("ash.sh 'cevir' üç örneği de üretiyor", len(_cikti) == 3,
 if len(_cikti) == 3:
     ck("ölçülen örnek: ok=true ve oturum sayısı var",
        _cikti[0]["ok"] is True and _cikti[0]["n"] == 1)
-    ck("ölçülemeyen örnekte 'n' alanı HİÇ YOK (0 yazılmıyor)",
-       _cikti[1]["ok"] is False and "n" not in _cikti[1], str(_cikti[1])[:70])
+    # Satır GELDİ ama çözülemedi: bu "boştu" değil "okuyamadım"dır.
+    ck("çözülemeyen satır SESSİZCE DÜŞMÜYOR (örnek ölçülemedi sayılıyor)",
+       _cikti[1]["ok"] is False and "n" not in _cikti[1]
+       and "çözülemedi" in (_cikti[1].get("neden") or ""), str(_cikti[1])[:80])
     ck("gerçekten boş örnek: ok=true ve n=0",
        _cikti[2]["ok"] is True and _cikti[2]["n"] == 0)
     ck("bekleten pid listesi sayıya çevriliyor",
