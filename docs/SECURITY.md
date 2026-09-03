@@ -1,5 +1,7 @@
 # Güvenlik
 
+***Türkçe** · [English](SECURITY.en.md)*
+
 Bu ürün **iç ağ / VPN arkası** kullanım için tasarlandı.
 
 ## Varsayılan güvenlik duruşu

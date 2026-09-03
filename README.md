@@ -2,6 +2,8 @@
 
 # 🗄️ databases-stack
 
+***Türkçe** · [English](README.en.md)*
+
 ### *Tek sunucuda 12 veritabanı — istediğini aç, istemediğini kapat*
 
 **Panelden düğmeye bas, veritabanın açılsın.** Sistem sunucunun belleğini ölçer,

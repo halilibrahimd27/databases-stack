@@ -1,5 +1,7 @@
 # Yavaş sorgu ölçümü
 
+***Türkçe** · [English](SLOWLOG.en.md)*
+
 "Veritabanım yavaş" cümlesinin cevabı neredeyse her zaman ölçülebilir bir
 yerde durur: motor, hangi sorguya ne kadar zaman harcadığını **zaten
 sayıyor**. Eksik olan tek şey o sayacın açılması ve okunabilir hâle

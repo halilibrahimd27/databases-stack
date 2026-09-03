@@ -221,7 +221,7 @@ Backups are **plain gzip** by default. When you give a key in `.env`, every
 backup is encrypted with **AES-256**:
 
 ```bash
-# anahtar üret
+# generate a key
 openssl rand -base64 32 | tr -d '+/='
 
 # .env

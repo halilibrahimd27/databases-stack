@@ -54,8 +54,10 @@ layouts and the file nodes do not match. That is why PITR has its own base
 backup (the `taban` command; "taban" = base):
 
 ```
-./scripts/pitr.sh taban postgresql     # pg_basebackup — a PHYSICAL copy
+./scripts/pitr.sh taban postgresql     # pg_basebackup — FİZİKSEL kopya
 ```
+
+(The comment reads: a PHYSICAL copy. `<tarih>` = date.)
 
 → `backups/postgresql/taban/postgresql_taban_<tarih>.tar.gz` (+ `.meta`)
 
@@ -84,13 +86,15 @@ The PITR settings were added to compose. `archive_mode` **requires a
 restart**, a reload is not enough:
 
 ```bash
-docker compose up -d postgresql mariadb   # the containers are re-created
+docker compose up -d postgresql mariadb   # container'lar yeniden yaratılır
 ./scripts/pitr.sh kur postgresql
 ./scripts/pitr.sh kur mariadb
 ./scripts/pitr.sh taban postgresql
 ./scripts/pitr.sh taban mariadb
 ./scripts/pitr.sh durum
 ```
+
+(The comment reads: the containers are re-created.)
 
 The real job of the `kur` command ("kur" = set up) is **to measure
 permissions**. The archive directory lives on the host, but the container's
@@ -170,9 +174,11 @@ dies, you still have the binlog.
 ### Retention — "the same number of days" is not enough on its own
 
 ```bash
-./scripts/pitr.sh temizle          # default: PITR_RETENTION_DAYS (= RETENTION_DAYS)
+./scripts/pitr.sh temizle          # varsayılan: PITR_RETENTION_DAYS (= RETENTION_DAYS)
 ./scripts/pitr.sh temizle 14
 ```
+
+(The comment reads: default: PITR_RETENTION_DAYS (= RETENTION_DAYS).)
 
 `PITR_RETENTION_DAYS` is by default equal to `RETENTION_DAYS`; if the two
 diverge, `pitr.sh durum` shows it as a **warning**. If the archive is kept
@@ -212,8 +218,10 @@ with two owners is worse than one with no owner at all.
 
 ```
 ./scripts/pitr.sh durum
-./scripts/pitr.sh durum postgresql --json     # for the controller / the panel
+./scripts/pitr.sh durum postgresql --json     # controller / panel için
 ```
+
+(The comment reads: for the controller / the panel.)
 
 ### PostgreSQL
 
@@ -249,11 +257,14 @@ with two owners is worse than one with no owner at all.
 ### Pushing the upper end of the range forward
 
 ```bash
-./scripts/pitr.sh arsivle postgresql   # pg_switch_wal + VERIFY that it landed in the archive
-./scripts/pitr.sh arsivle mariadb      # FLUSH BINARY LOGS + copy to the host
+./scripts/pitr.sh arsivle postgresql   # pg_switch_wal + arşive düştüğünü DOĞRULA
+./scripts/pitr.sh arsivle mariadb      # FLUSH BINARY LOGS + host'a kopyala
 ```
 
-(`arsivle` = archive.) In PostgreSQL a segment does not land in the archive
+(`arsivle` = archive. The comments read: pg_switch_wal + VERIFY that it landed
+in the archive · FLUSH BINARY LOGS + copy to the host.)
+
+In PostgreSQL a segment does not land in the archive
 **until it is full**. `archive_timeout=300` force-closes the segment every 5
 minutes if there have been writes — so **this is the upper bound on RPO**. The
 price: for every 5 minutes with writes, a full-size (16 MB) segment lands in
@@ -266,13 +277,17 @@ fixed disk cost.
 ## Going back
 
 ```bash
-# 1) THE DRILL FIRST — it does not touch production
+# 1) REHEARSE FIRST — does not touch production
 ./scripts/pitr.sh don postgresql "2026-09-01 14:32:00" --prova \
     --dogrula "SELECT count(*) FROM siparisler WHERE tutar < 0"
 
-# 2) if the result is right, then production
+# 2) if the result is correct, apply to production
 ./scripts/pitr.sh don postgresql "2026-09-01 14:32:00"
 ```
+
+(The comments read: the drill first — it does not touch production · if the
+result is right, then production. The example query counts orders with a
+negative amount.)
 
 ### Three safety gates
 
@@ -432,10 +447,13 @@ nobody added them; the result was a PITR window in MariaDB that never moved
 forward.
 
 ```cron
-*/15 * * * *  scripts/pitr.sh arsivle    # RPO upper bound: 15 minutes
-0    1 * * *  scripts/pitr.sh taban      # WAL/binlog is not data on its own
-15   3 * * *  scripts/pitr.sh temizle    # keep the archive from growing forever
+*/15 * * * *  scripts/pitr.sh arsivle    # RPO üst sınırı: 15 dakika
+0    1 * * *  scripts/pitr.sh taban      # WAL/binlog tek başına veri değildir
+15   3 * * *  scripts/pitr.sh temizle    # arşiv sonsuza kadar büyümesin
 ```
+
+(The comments read: RPO upper bound: 15 minutes · WAL/binlog is not data on its
+own · keep the archive from growing forever.)
 
 If no engine name is given, it runs on **all** engines that have PITR. A
 stopped engine is **skipped** (exit 3) and raises no alarm; a cron that alarms
@@ -481,9 +499,12 @@ state: the owner is the engine's user, the group is the group on the server,
 mode **2775**. If it is broken:
 
 ```bash
-./stack.sh doctor            # lists the directories you cannot write to, with their owner
+./stack.sh doctor            # yazamadığınız dizinleri sahibiyle listeler
 sudo ./stack.sh doctor --duzelt
 ```
+
+(The comment reads: lists the directories you cannot write to, with their
+owner. `--duzelt` = fix.)
 
 ---
 

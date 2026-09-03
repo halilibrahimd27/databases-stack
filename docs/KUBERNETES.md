@@ -1,5 +1,7 @@
 # Kubernetes
 
+***Türkçe** · [English](KUBERNETES.en.md)*
+
 Aynı ürün, aynı mantık. Docker'da "aktif et" bir container yaratmaktı;
 Kubernetes'te **StatefulSet'i 0 replikadan 1'e ölçeklemek**. Kapalı motorun
 pod'u hiç yoktur — sıfır bellek, sıfır CPU.

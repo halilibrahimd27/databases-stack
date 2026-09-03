@@ -3321,6 +3321,88 @@ for _js in ("gateway/html/app.js", "gateway/html/yedekler.js"):
     ck("%s sözdizimi geçerli" % _os2.path.basename(_js), _r.returncode == 0,
        (_r.stderr or "").strip().splitlines()[0][:110] if _r.returncode else "")
 
+# =============================================================================
+head("12. İki dil — çeviri belgeyi bozmamalı")
+# =============================================================================
+# Belgeler iki dilde. Çevirinin en tehlikeli yanı sessizce YANLIŞ olmasıdır:
+# bir komut satırındaki tek harf değişirse okuyucu onu kopyalayıp çalıştırır
+# ve neden tutmadığını anlamaz. Bu yüzden ölçtüğümüz şey "iyi çeviri mi"
+# değil — o insan işi — ÇALIŞTIRILABİLİR İÇERİĞİN birebir aynı olduğu.
+import glob as _glob2                                     # noqa: E402
+import re as _re2                                         # noqa: E402
+
+_KOMUT = _re2.compile(
+    r"^\s*(\./|(docker|curl|sudo|psql|mysql|mariadb|redis-cli|openssl|tar|"
+    r"gzip|find|systemctl|crontab|rclone|kubectl|git|apt-get|apk|mongosh|"
+    r"export|cd|cat|echo|grep|sed|chmod|chown|mkdir|cp|mv|rm|ls|wget|bash|sh)"
+    r")")
+
+
+def _kod_satirlari(yol, yalniz_komut=True):
+    ic, out = False, []
+    for ln in io.open(yol, encoding="utf-8"):
+        if ln.startswith("```"):
+            ic = not ic
+            continue
+        if not ic:
+            continue
+        if yalniz_komut and not _KOMUT.match(ln):
+            continue
+        # Satır sonu yorumu çevrilebilir; komutun kendisi çevrilemez.
+        out.append(ln.split("#")[0].rstrip())
+    return out
+
+
+_ciftler = [("README.md", "README.en.md")]
+_ciftler += [(f, f.replace(".md", ".en.md")) for f in sorted(_glob2.glob("docs/*.md"))
+             if not f.endswith(".en.md")]
+
+_eksik = [en for _tr, en in _ciftler if not _os2.path.exists(en)]
+ck("her Türkçe belgenin İngilizce eşi var", not _eksik,
+   ", ".join(_eksik) or "%d çift" % len(_ciftler))
+
+_komut_fark, _kisa, _anahtarsiz = [], [], []
+for _tr, _en in _ciftler:
+    if not _os2.path.exists(_en):
+        continue
+    if _kod_satirlari(_tr) != _kod_satirlari(_en):
+        _komut_fark.append(_en)
+    _a = len(io.open(_tr, encoding="utf-8").readlines())
+    _b = len(io.open(_en, encoding="utf-8").readlines())
+    if _b < _a * 0.7:
+        _kisa.append("%s (%d/%d)" % (_en, _b, _a))
+    for _f in (_tr, _en):
+        if "English](" not in io.open(_f, encoding="utf-8").read()[:2000]                 and "Türkçe](" not in io.open(_f, encoding="utf-8").read()[:2000]:
+            _anahtarsiz.append(_f)
+
+# ÇALIŞTIRILABİLİR SATIR ÇEVRİLEMEZ. Diyagram ve formül satırları çevrilebilir
+# (İngilizce belgede "motorlar → Prometheus" okumak belgenin değerini düşürür),
+# ama `docker compose up -d postgresql` her iki dilde de aynı olmak zorundadır.
+ck("komut satırları iki dilde BİREBİR aynı", not _komut_fark,
+   ", ".join(_komut_fark) or "%d belge denetlendi" % len(_ciftler))
+ck("hiçbir çeviri kısaltılmamış (kaynağın %70'inden az değil)", not _kisa,
+   ", ".join(_kisa) or "hepsi tam")
+ck("her belgede dil anahtarı var", not _anahtarsiz,
+   ", ".join(sorted(set(_anahtarsiz))) or "hepsinde var")
+
+# İngilizce belgede Türkçe YORUM kalmamalı: okuyucu kod bloğunda
+# "# Ana kopyayı öldür" görürse belge yarım çevrilmiş demektir.
+_TRH = set("çğışöüÇĞİŞÖÜ")
+_tr_yorum = []
+for _tr, _en in _ciftler:
+    if not _os2.path.exists(_en):
+        continue
+    _ic = False
+    for _ln in io.open(_en, encoding="utf-8"):
+        if _ln.startswith("```"):
+            _ic = not _ic
+            continue
+        if _ic and _ln.lstrip().startswith("#") and (set(_ln) & _TRH):
+            _tr_yorum.append(_en)
+            break
+ck("İngilizce belgelerde Türkçe kod yorumu kalmamış", not _tr_yorum,
+   ", ".join(_tr_yorum) or "temiz")
+
 # --- python3 - <<EOF ile VERİ BORUSU birlikte kullanılamaz -------------------
 # `python3 - <<EOF` yazıldığında program stdin'den okunur; boruyla gelen veri
 # kaybolur ve süzgeç SIFIR BAYT görür — üstelik hata da vermez, sessizce

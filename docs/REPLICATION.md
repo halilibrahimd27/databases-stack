@@ -1,5 +1,7 @@
 # Yedek kopya (replikasyon)
 
+***Türkçe** · [English](REPLICATION.en.md)*
+
 Replika, ana veritabanının sürekli güncellenen ikinci bir kopyasıdır. İki işe yarar:
 
 - **Yedeklilik** — ana kopya bozulursa veri ikinci kopyada durur

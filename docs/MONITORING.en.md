@@ -43,8 +43,8 @@ whether the calculation is right.
  └─────────┘       │ stores     │       │ alerts   │
                    └────────────┘       └──────────┘
                           ▲
-                     target list
-                (controller generates)
+                   target list
+                   (controller generates)
 ```
 
 Every engine already had an **exporter**; what was missing was the face that

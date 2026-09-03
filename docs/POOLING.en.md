@@ -160,14 +160,14 @@ unnecessary restarts.
 ## 7. Verification
 
 ```bash
-# Havuz üzerinden gerçek sorgu
+# A real query through the pool
 psql "postgresql://root@SUNUCU:6432/defaultdb" -c "select 1"
 
-# Yönetim konsolu: hangi havuz kaç bağlantı tutuyor
+# Admin console: which pool holds how many connections
 psql "postgresql://root@SUNUCU:6432/pgbouncer" -c "SHOW POOLS;"
 psql "postgresql://root@SUNUCU:6432/pgbouncer" -c "SHOW CONFIG;"
 
-# Açılışta hesaplanan sayılar loga basılır
+# The numbers computed at startup are written to the log
 docker logs pgbouncer | head -20
 ```
 

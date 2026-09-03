@@ -1,5 +1,7 @@
 # Yedekleme
 
+***Türkçe** · [English](BACKUP.en.md)*
+
 Yedeği **alan** taraf tek bir betiktir: `scripts/backup.sh`. Panel de, gecelik
 zamanlayıcı da, komut satırı da onu çağırır. Aynı işin ikinci bir uygulaması
 yok — gece üretilen dosya ile panelin ürettiği dosya farklı yollardan

@@ -1,5 +1,7 @@
 # Bağlantı havuzu (PgBouncer) — 6432
 
+***Türkçe** · [English](POOLING.en.md)*
+
 PostgreSQL'de her bağlantı ayrı bir **süreçtir**. Bu belgenin tek cümlelik
 özeti: havuz kullanmayan bir uygulama, veritabanını *bellekle* değil *süreç
 sayısıyla* öldürür. `shared_buffers` ve `work_mem × max_connections` hesabı

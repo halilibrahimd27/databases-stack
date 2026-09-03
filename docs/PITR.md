@@ -1,5 +1,7 @@
 # Zamanda bir ana dönme (PITR)
 
+***Türkçe** · [English](PITR.en.md)*
+
 Gecelik yedekle yapılabilecek en iyi şey **"dünkü yedeğe dön"**dür. Oysa
 istenen neredeyse hiçbir zaman bu değildir: veriyi bozan `UPDATE` dün 14:33'te
 koştuysa **14:32'ye** dönmek gerekir. Aradaki fark bir günlük iştir.

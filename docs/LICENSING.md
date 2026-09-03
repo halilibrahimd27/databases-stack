@@ -1,5 +1,7 @@
 # Lisanslar
 
+***Türkçe** · [English](LICENSING.en.md)*
+
 > Bu sayfa bilgi amaçlıdır, hukuki tavsiye değildir. Şüphede kalırsanız hukuk
 > biriminize danışın.
 

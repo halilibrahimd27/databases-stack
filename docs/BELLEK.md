@@ -1,5 +1,7 @@
 # Bellek: tavan, rezerve ve çekirdek baskısı
 
+***Türkçe** · [English](BELLEK.en.md)*
+
 Bu belge, kontrol servisinin bir motoru açarken neye baktığını ve neden öyle
 baktığını anlatır. Kısa cevap: **`docker --memory` bir tavandır, rezervasyon
 değildir.** Bu ayrımı kaybeden bir hesap, boş bir makinede "yer yok" der.

@@ -188,19 +188,19 @@ Before you go to production, **you must** try a failover:
 ./stack.sh replica on postgresql
 ./stack.sh failover on postgresql
 
-# Ana kopyayı öldür ve izle
+# Kill the primary and watch
 docker stop postgresql
 watch -n2 './stack.sh failover status'
 
-# ~30 saniye içinde devir olmalı. Uygulamanız kesintiden sonra
-# HİÇBİR ayar değişikliği olmadan yazmaya devam edebilmeli.
+# Failover should happen within ~30 seconds. Your application must be able
+# to keep writing after the outage with NO configuration change at all.
 psql -h <sunucu> -p 5432 -U root -d defaultdb -c "SELECT pg_is_in_recovery();"
-#  → f  (yani yazılabilir ana kopya)
+#  -> f  (that is, a writable primary)
 
-# Eski kopyayı yedek olarak geri al (verisi silinip baştan kopyalanır)
+# Bring the old copy back as the replica (its data is wiped and re-cloned)
 ./stack.sh failover rebuild postgresql
 
-# Doğrula: replikasyon artık ters yönde akmalı
+# Verify: replication should now flow in the opposite direction
 docker exec postgresql-replica psql -U root -d postgres   -c "SELECT application_name, state FROM pg_stat_replication;"
 #  → walreceiver | streaming
 ```

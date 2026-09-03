@@ -1,5 +1,7 @@
 # Otomatik devir (failover)
 
+***Türkçe** · [English](FAILOVER.en.md)*
+
 Ana kopya çökerse sistem yedek kopyayı **kendisi** devreye alır ve
 uygulamalarınızın bağlantısını oraya yönlendirir. Uygulama tarafında hiçbir
 değişiklik gerekmez.

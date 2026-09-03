@@ -66,10 +66,10 @@ than that anyway, and allocating it would be stealing from the other engines.
 Other options:
 
 ```bash
-# Tüm özellikler açık, ücretsiz — ama YALNIZ geliştirme/test
+# All features on, free of charge — but for development/testing ONLY
 MSSQL_PID=Developer
 
-# Satın alınmış lisans
+# Purchased license
 MSSQL_PID=Standard      # ya da Enterprise
 ```
 
@@ -107,10 +107,10 @@ failover) works without requiring any change.
 
 ### Elasticsearch → OpenSearch (not a drop-in)
 
-OpenSearch is Apache-2.0, but **it does not step straight into its place**: you
-need OpenSearch Dashboards instead of Kibana, and the client libraries are
-different. If you want to switch, you have to change the engine with
-`ELASTIC_IMAGE` and replace the Kibana service with your own Dashboards.
+OpenSearch is Apache-2.0, but **it is not a direct replacement**: you need
+OpenSearch Dashboards instead of Kibana, and the client libraries are different.
+If you want to switch, you have to change the engine with `ELASTIC_IMAGE` and
+replace the Kibana service with your own Dashboards.
 
 ### MongoDB → FerretDB
 
@@ -156,11 +156,11 @@ for three things:
 # 1. Lisans alternatifi
 REDIS_IMAGE=valkey/valkey:8-alpine
 
-# 2. Kapalı ağda kendi registry aynanız
+# 2. Your own registry mirror on an air-gapped network
 MARIADB_IMAGE=registry.sirket.local/mariadb:11.4
 POSTGRES_IMAGE=registry.sirket.local/postgres:16
 
-# 3. Kurum içi sertleştirilmiş imaj
+# 3. In-house hardened image
 POSTGRES_IMAGE=registry.sirket.local/hardened/postgres:16-fips
 ```
 

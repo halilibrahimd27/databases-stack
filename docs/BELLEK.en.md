@@ -69,7 +69,8 @@ On the measured 16 GB test server: `15984 − 3196 − 448 = 12340 MB`.
 ## 3. The three gates before an engine starts
 
 They are applied in order, and the refusal message says **which gate** it
-caught on (the `plan.rule` field: `tavan` · `rezerve` · `cekirdek`).
+caught on (the `plan.rule` field: `tavan` · `rezerve` · `cekirdek` — the values
+the product prints, in Turkish: ceiling · reserve · kernel).
 
 ### 3.1 Ceiling gate — soft
 
@@ -247,12 +248,12 @@ ceiling change `32 MB`.
 **"The panel says there is not enough memory, but `free -m` says the machine is
 empty."**
 Read the refusal message: it says which gate it caught on.
-- *CEILING crunch* → rebalance, stop an engine, or raise `OVERCOMMIT_LIMIT`.
-  Memory is not actually full.
-- *RESERVE* → the running engines have actually allocated the memory. There is
-  no way out other than stopping an engine or adding RAM.
-- *KERNEL SEATBELT* → `MemAvailable` is low. Something outside the stack may be
-  eating memory; look at `free -m` and `/proc/pressure/memory`.
+- *CEILING crunch* (`tavan`) → rebalance, stop an engine, or raise
+  `OVERCOMMIT_LIMIT`. Memory is not actually full.
+- *RESERVE* (`rezerve`) → the running engines have actually allocated the
+  memory. There is no way out other than stopping an engine or adding RAM.
+- *KERNEL SEATBELT* (`cekirdek`) → `MemAvailable` is low. Something outside the
+  stack may be eating memory; look at `free -m` and `/proc/pressure/memory`.
 
 **"I rebalanced but the ceiling did not change."**
 Look at the job log (`/api/jobs/<id>` → `log`): one of the lines "gerçek

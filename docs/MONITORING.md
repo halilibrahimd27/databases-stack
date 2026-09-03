@@ -1,5 +1,7 @@
 # İzleme
 
+***Türkçe** · [English](MONITORING.en.md)*
+
 Açtığınız veritabanlarının nasıl çalıştığını grafiklerle gösterir. Kurulum
 gerektirmez, yapılandırma istemez: panelden **İzleme**'yi açın, grafikler
 hazır gelir.

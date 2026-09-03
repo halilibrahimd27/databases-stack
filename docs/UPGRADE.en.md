@@ -27,25 +27,25 @@ same major is trouble-free.
 The safest path is dump/restore. On small-to-medium data sets it takes minutes.
 
 ```bash
-# 1. Yedek al ve DOĞRULA (yedeksiz yükseltme yapmayın)
+# 1. Take a backup and VERIFY it (never upgrade without one)
 ./stack.sh backup postgresql
 ./scripts/backup.sh verify backups/postgresql/full/postgresql_full_*.sql.gz
 
 # 2. Motoru durdur
 ./stack.sh disable postgresql
 
-# 3. Eski veriyi kenara al (silmeyin — geri dönüş yolunuz bu)
+# 3. Move the old data aside (do not delete it — this is your way back)
 docker volume create databases-stack_postgresql_data_v15_yedek
 docker run --rm -v databases-stack_postgresql_data:/eski \
                 -v databases-stack_postgresql_data_v15_yedek:/yeni \
                 alpine sh -c 'cp -a /eski/. /yeni/'
 docker volume rm databases-stack_postgresql_data
 
-# 4. Sürümü yükselt ve boş bir cluster ile başlat
+# 4. Raise the version and start with an empty cluster
 sed -i 's/^POSTGRES_VERSION=.*/POSTGRES_VERSION=16/' .env
 ./stack.sh enable postgresql
 
-# 5. Yedeği geri yükle
+# 5. Restore the backup
 ./stack.sh restore postgresql backups/postgresql/full/postgresql_full_*.sql.gz
 ```
 
@@ -68,11 +68,11 @@ MongoDB **does not allow skipping** intermediate versions. At every step
 
 for v in 5.0 6.0 7.0; do
   prev=$(grep ^MONGO_VERSION= .env | cut -d= -f2)
-  # Bir önceki sürümde FCV'yi yükselt
+  # Raise the FCV while still on the previous version
   docker exec mongodb mongosh --quiet -u root -p "$(grep ^MONGO_PASSWORD= .env | cut -d= -f2)" \
     --authenticationDatabase admin \
     --eval "db.adminCommand({setFeatureCompatibilityVersion:'${prev}', confirm:true})"
-  # Sonra imajı değiştir
+  # Then switch the image
   sed -i "s/^MONGO_VERSION=.*/MONGO_VERSION=$v/" .env
   [ "$v" != "4.4" ] && sed -i "s/^MONGO_SHELL=.*/MONGO_SHELL=mongosh/" .env
   ./stack.sh disable mongodb && ./stack.sh enable mongodb

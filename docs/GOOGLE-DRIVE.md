@@ -1,5 +1,7 @@
 # 🔗 GOOGLE DRIVE BAĞLANTI KILAVUZU
 
+***Türkçe** · [English](GOOGLE-DRIVE.en.md)*
+
 ## 📋 GEREKSINIMLER
 
 ### 1. Teknik Gereksinimler:

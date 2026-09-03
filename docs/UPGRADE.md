@@ -1,5 +1,7 @@
 # Sürüm yükseltme
 
+***Türkçe** · [English](UPGRADE.en.md)*
+
 Bu stack'teki tüm imaj sürümleri `.env` içinde **sabitlenmiştir** (`latest` yok).
 Sürpriz güncelleme gelmez; yükseltme bilinçli bir karardır.
 
