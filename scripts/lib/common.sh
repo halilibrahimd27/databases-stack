@@ -60,6 +60,7 @@ paylasilan_dosya() {   # <yol> [mod]
 ENV_FILE="${ENV_FILE:-$STACK_ROOT/.env}"
 TUNING_ENV="$STACK_ROOT/state/tuning.env"
 ROLES_ENV="$STACK_ROOT/state/roles.env"
+VOLUMES_ENV="$STACK_ROOT/state/volumes.env"
 COMPOSE_FILE="$STACK_ROOT/docker-compose.yml"
 CATALOG="$STACK_ROOT/catalog.json"
 
@@ -443,6 +444,10 @@ compose() {
     [ -f "$TUNING_ENV" ] && args+=(--env-file "$TUNING_ENV")
     # roles.env replikasyon rollerini tutar (hangi düğüm primary).
     [ -f "$ROLES_ENV" ] && args+=(--env-file "$ROLES_ENV")
+    # volumes.env hangi hacim kuşağının canlı olduğunu tutar.
+    # Betikler bunu okumazsa compose ESKİ kuşağı bağlar ve motor
+    # geri yüklenmemiş veriyle açılır — sessiz ve yıkıcı.
+    [ -f "$VOLUMES_ENV" ] && args+=(--env-file "$VOLUMES_ENV")
     # Etkin override'lar (replikasyon vb.) state.json'da tutulur
     if [ -f "$STACK_ROOT/state/state.json" ] && command -v python3 >/dev/null 2>&1; then
         local ov

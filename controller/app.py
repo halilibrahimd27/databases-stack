@@ -696,6 +696,11 @@ def compose_base():
         cmd += ["--env-file", TUNING_ENV]
     if os.path.exists(ROLES_ENV):
         cmd += ["--env-file", ROLES_ENV]
+    # Hacim kuşakları: gölge geri yüklemeden sonra hangi hacmin
+    # canlı olduğunu bu dosya söyler. Zincire EN SONDA giriyor ki
+    # bir üsttekiler onu ezemesin.
+    if os.path.exists(VOLUMES_ENV):
+        cmd += ["--env-file", VOLUMES_ENV]
     cmd += ["-p", PROJECT]
     return cmd
 
@@ -1429,6 +1434,7 @@ TOPOLOGY_FILE = os.path.join(STATE_DIR, "topology.json")
 ROUTES_FILE = os.path.join(STATE_DIR, "routes.conf")
 EVENTS_FILE = os.path.join(STATE_DIR, "events.jsonl")
 ROLES_ENV = os.path.join(STATE_DIR, "roles.env")
+VOLUMES_ENV = os.path.join(STATE_DIR, "volumes.env")
 
 FAILOVER_INTERVAL = int(os.environ.get("FAILOVER_INTERVAL", "10"))     # saniye
 FAILOVER_STRIKES = int(os.environ.get("FAILOVER_STRIKES", "3"))        # üst üste hata

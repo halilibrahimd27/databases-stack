@@ -3921,6 +3921,70 @@ ck("controller'da elle yazılı hacim haritası kalmamış",
 ck("volume_of katalogdan okuyor", "def volumes_of(service):" in _capp
    and "CATALOG.engines" in _capp.split("def volumes_of(service):")[1][:400])
 
+# --- KUŞAK İŞARETÇİSİ --------------------------------------------------------
+# Gölge geri yükleme, doğrulanmış yeni kopyaya geçerken hacmin ADINI çeviriyor.
+# Bunun sessiz felaketi şudur: işaretçiyi okumayan bir compose çağrısı ESKİ
+# kuşağı bağlar ve motor, geri yüklenmemiş veriyle açılır — hiçbir hata
+# vermeden. O yüzden burada üç şey ölçülüyor: (1) işaretçi gerçekten
+# değiştirilebilir mi, (2) varsayılanı bugünkü adla BİREBİR aynı mı (aksi
+# hâlde bu değişikliğin kendisi veriyi kaybettirirdi), (3) compose'u çağıran
+# HER İKİ yer de dosyayı zincire alıyor mu.
+_KUSAKLI = {"mariadb_data": "MARIADB_DATA_VOLUME",
+            "postgresql_data": "POSTGRESQL_DATA_VOLUME",
+            "mongodb_data": "MONGODB_DATA_VOLUME",
+            "redis_data": "REDIS_DATA_VOLUME",
+            "mssql_data": "MSSQL_DATA_VOLUME"}
+
+_kusak_eksik, _varsayilan_hata = [], []
+for _v, _dv in sorted(_KUSAKLI.items()):
+    _m = _re2.search(r"^  %s:\n(?:\s*#[^\n]*\n)*\s*name:\s*\$\{([A-Z0-9_]+):-([^}]+)\}"
+                     % _re2.escape(_v), _vsrc, _re2.M)
+    if not _m:
+        _kusak_eksik.append(_v)
+        continue
+    if _m.group(1) != _dv:
+        _varsayilan_hata.append("%s: degisken %s" % (_v, _m.group(1)))
+    elif _m.group(2) != "databases-stack_%s" % _v:
+        _varsayilan_hata.append("%s: varsayilan %s" % (_v, _m.group(2)))
+
+ck("geri yüklenebilir motorların hacmi kuşaklanabilir", not _kusak_eksik,
+   ", ".join(_kusak_eksik) or "%d motor" % len(_KUSAKLI))
+# Varsayılan bugünkü adla aynı DEĞİLSE, bu değişikliğin kendisi bütün
+# kurulumların verisini "kayıp" gösterirdi: compose boş bir hacim yaratır ve
+# motor sıfırdan açılır. Bu yüzden eşitlik metin düzeyinde aranıyor.
+ck("kuşak varsayılanı bugünkü hacim adının aynısı", not _varsayilan_hata,
+   "; ".join(_varsayilan_hata) or "hepsi aynı")
+
+# Geri yüklemesi OLMAYAN motorlarda kuşak aramıyoruz — ama kuşaklı olanlar
+# katalogda da bildirilmiş olmalı, yoksa ürün hacmi adıyla bulamaz.
+_kusak_katalogsuz = sorted(_v for _v in _KUSAKLI
+                           if _v not in {x for xs in _kat_vol.values() for x in xs})
+ck("kuşaklı hacimlerin hepsi katalogda bildirilmiş", not _kusak_katalogsuz,
+   ", ".join(_kusak_katalogsuz) or "hepsi bildirilmiş")
+
+# compose'u iki yer çağırıyor: controller (Python) ve betikler (common.sh).
+# Biri işaretçiyi okumazsa o yoldan açılan motor eski kuşağı bağlar.
+_com = io.open("scripts/lib/common.sh", encoding="utf-8").read()
+ck("controller compose zincirinde volumes.env var",
+   "VOLUMES_ENV" in _capp and '"--env-file", VOLUMES_ENV' in _capp)
+ck("betiklerin compose zincirinde volumes.env var",
+   'VOLUMES_ENV="$STACK_ROOT/state/volumes.env"' in _com
+   and '--env-file "$VOLUMES_ENV"' in _com)
+
+# Sıra önemli: volumes.env EN SONDA olmalı ki bir üstteki dosya onu ezmesin.
+def _zincir_sirasi(metin, adlar):
+    yer = [(metin.index(a), a) for a in adlar if a in metin]
+    return [a for _, a in sorted(yer)]
+
+
+ck("volumes.env zincirin en sonunda (üsttekiler ezemesin)",
+   _zincir_sirasi(_capp.split("def compose_base()")[1][:900],
+                  ["TUNING_ENV", "ROLES_ENV", "VOLUMES_ENV"])
+   == ["TUNING_ENV", "ROLES_ENV", "VOLUMES_ENV"]
+   and _zincir_sirasi(_com.split("compose() {")[1][:900],
+                      ["$TUNING_ENV", "$ROLES_ENV", "$VOLUMES_ENV"])
+   == ["$TUNING_ENV", "$ROLES_ENV", "$VOLUMES_ENV"])
+
 # =============================================================================
 print()
 if FAILS:

@@ -36,15 +36,30 @@ networks:
 
 volumes:
   mariadb_data:
+    # Kuşak işaretçisi — state/volumes.env. Varsayılan,
+    # compose'un kendi ürettiği adın aynısı.
+    name: ${MARIADB_DATA_VOLUME:-databases-stack_mariadb_data}
   mariadb_replica_data:
   postgresql_data:
+    # Kuşak işaretçisi — state/volumes.env. Varsayılan,
+    # compose'un kendi ürettiği adın aynısı.
+    name: ${POSTGRESQL_DATA_VOLUME:-databases-stack_postgresql_data}
   postgresql_replica_data:
   mongodb_data:
+    # Kuşak işaretçisi — state/volumes.env. Varsayılan,
+    # compose'un kendi ürettiği adın aynısı.
+    name: ${MONGODB_DATA_VOLUME:-databases-stack_mongodb_data}
   mongodb_replica_data:
   mongodb_arbiter_data:
   redis_data:
+    # Kuşak işaretçisi — state/volumes.env. Varsayılan,
+    # compose'un kendi ürettiği adın aynısı.
+    name: ${REDIS_DATA_VOLUME:-databases-stack_redis_data}
   redis_replica_data:
   mssql_data:
+    # Kuşak işaretçisi — state/volumes.env. Varsayılan,
+    # compose'un kendi ürettiği adın aynısı.
+    name: ${MSSQL_DATA_VOLUME:-databases-stack_mssql_data}
   cassandra_data:
   elasticsearch_data:
   elasticsearch_snapshots:
