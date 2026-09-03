@@ -186,6 +186,11 @@ CREATE_I = re.compile(r'^\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+', re.I)
 CREATE_R = re.compile(r'^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:DEFINER=\S+\s+)?'
                       r'(FUNCTION|PROCEDURE|TRIGGER)\s+', re.I)
 INSERT = re.compile(r'^\s*INSERT\s+INTO\s+(?:' + AD + r'\s*\.\s*)?' + AD, re.I)
+# Bir KAYIT, satır başında ya da "),"den sonra gelen "(" ile başlar. Tek
+# satırlık ve çok satırlık INSERT'in ikisinde de aynı desen işler.
+# "VALUES" da bir başlangıçtır: tek satırlık INSERT'te ilk kayıt ondan sonra
+# gelir ve yalnız "^" ile "),", o ilk kaydı KAÇIRIR (5 kayıt 4 sayılıyordu).
+TUPLE = re.compile(r'(?:^|\),|VALUES)\s*\(', re.I)
 COPY = re.compile(r'^\s*COPY\s+(?:' + AD + r'\s*\.\s*)?' + AD, re.I)
 
 tablolar = {}       # ad -> {"satir": n, "satir_kesin": bool}
@@ -195,6 +200,7 @@ indeks = 0
 kesildi = False
 okunan = 0
 kopya_hedef = None   # PostgreSQL COPY bloğu içindeyken tablo adı
+insert_hedef = None  # çok satırlı INSERT bloğu içindeyken tablo adı
 
 
 def ad_al(m):
@@ -249,6 +255,23 @@ for satir_b in ham:
     if CREATE_R.match(satir):
         rutin += 1
         continue
+    # ÇOK SATIRLI INSERT. mariadb-dump şöyle yazar:
+    #     INSERT INTO `t` VALUES
+    #     (1,'a'),
+    #     (2,'b');
+    # Yani kayıtlar SONRAKİ satırlardadır. Satır satır sayan ilk sürüm
+    # bunları hiç görmüyor ve her tabloya "1-2 satır" diyordu — 500 satırlık
+    # bir tabloya "2 satır" demek, yanlış bir sayıyı sayı gibi sunmaktır ve
+    # hiç sayı vermemekten kötüdür. Bu yüzden INSERT bloğu içindeyken de
+    # sayıyoruz; blok, satırı ';' ile biten ifadede kapanır.
+    if insert_hedef is not None:
+        t = tablo(insert_hedef)
+        t["satir"] += len(TUPLE.findall(satir))
+        t["satir_kesin"] = False
+        if satir.rstrip().endswith(";"):
+            insert_hedef = None
+        continue
+
     m = INSERT.match(satir)
     if m:
         ad = ad_al(m)
@@ -257,8 +280,10 @@ for satir_b in ham:
         # INSERT'te de bir tane sayılır. Bu bir TAHMİNDİR ve öyle de yazılıyor:
         # kesin sayı ancak yükleyerek bulunur, ve öyle olduğunu söylemeyen bir
         # sayı, kullanıcıyı yanlış bir kesinliğe ikna eder.
-        t["satir"] += satir.count("),(") + 1
+        t["satir"] += len(TUPLE.findall(satir))
         t["satir_kesin"] = False
+        if not satir.rstrip().endswith(";"):
+            insert_hedef = ad          # kayıtlar sonraki satırlarda sürüyor
 
 if len(tablolar) > azami:
     kesildi = True

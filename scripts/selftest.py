@@ -3219,6 +3219,53 @@ ck("inceleme SATIR VERİSİ döndürmüyor (yalnız ad ve sayı)",
 # arasındaki fark, kullanıcıyı yanlış bir kesinliğe ikna etmemek için var.
 ck("kesin satır sayısı ile tahmin AYRILIYOR",
    '"satir_kesin"' in _ins and "satir_kesin" in _bkjs)
+
+# ÇOK SATIRLI INSERT: mariadb-dump 'INSERT INTO t VALUES' yazıp kayıtları
+# SONRAKİ satırlara koyar. Satır satır sayan ilk sürüm her tabloya "1-2
+# satır" diyordu — 500 satırlık bir tabloya "2 satır" demek, yanlış bir
+# sayıyı sayı gibi sunmaktır ve hiç sayı vermemekten kötüdür.
+ck("çok satırlı INSERT bloğu sayılıyor",
+   "insert_hedef" in _ins and "TUPLE.findall" in _ins)
+# Tek satırlık INSERT'te ilk kayıt 'VALUES'tan sonra gelir; onu da saymayan
+# desen 5 kaydı 4 sayıyordu.
+ck("tek satırlık INSERT'te ilk kayıt kaçmıyor (VALUES deseni)",
+   "|VALUES)" in _ins)
+
+# Ayrıştırıcı GERÇEK girdiyle sınanıyor: desen doğruluğunu metne bakarak
+# ölçmenin yolu yok.
+import gzip as _gz, tempfile as _tf, os as _os2                    # noqa: E402
+_bidir = _tf.mkdtemp(prefix="dbstack-inspect-")
+_os2.makedirs(_os2.path.join(_bidir, "postgresql", "full"))
+_bif = _os2.path.join(_bidir, "postgresql", "full", "t.sql.gz")
+with _gz.open(_bif, "wt", encoding="utf-8") as _fh:
+    for _ln in ("CREATE TABLE public.siparisler (id int);",
+                "COPY public.siparisler (id) FROM stdin;",
+                "1", "2", "3", chr(92) + ".",
+                "CREATE TABLE `cok` (id int);",
+                "INSERT INTO `cok` VALUES",
+                "(1,'a'),", "(2,'b'),", "(3,'c');",
+                "INSERT INTO `cok` VALUES (4,'d'),(5,'e');",
+                "CREATE VIEW v1 AS SELECT 1;"):
+        _fh.write(_ln + chr(10))
+try:
+    _ort = dict(_os2.environ, BACKUP_DIR=_bidir)
+    _ir = subprocess.run(["bash", "scripts/backup-inspect.sh", "postgresql",
+                          "t.sql.gz"], capture_output=True, text=True,
+                         encoding="utf-8", timeout=120, env=_ort)
+    _ij = json.loads([x for x in _ir.stdout.splitlines() if x.strip()][-1])
+except Exception as _e:
+    _ij = {"hata": repr(_e)}
+_tab = {t["ad"]: t for t in (_ij.get("tablolar") or [])}
+ck("COPY bloğundan sayılan satır KESİN",
+   _tab.get("public.siparisler", {}).get("satir") == 3
+   and _tab.get("public.siparisler", {}).get("satir_kesin") is True,
+   str(_tab.get("public.siparisler")))
+ck("çok satırlı + tek satırlık INSERT birlikte doğru sayılıyor (5)",
+   _tab.get("cok", {}).get("satir") == 5
+   and _tab.get("cok", {}).get("satir_kesin") is False,
+   str(_tab.get("cok")))
+ck("görünüm sayılıyor", _ij.get("gorunum_sayisi") == 1, str(_ij.get("gorunum_sayisi")))
+_sh.rmtree(_bidir, ignore_errors=True)
 ck("controller inceleme ucunu sunuyor (yol doğrulaması geri yüklemeyle aynı)",
    'endswith("/inspect")' in _ctrl_py and "resolve_backup_file(eid, ad)" in _ctrl_py)
 
