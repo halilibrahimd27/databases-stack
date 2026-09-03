@@ -3027,6 +3027,149 @@ ck("yeniden kurulum yolu 'prepare' fazını çağırıyor (yalnız mariadb için
    and 'script_has_phase(script, "prepare")' in _app)
 
 # =============================================================================
+head("11. Aktif oturum geçmişi (ASH) — 'ölçemedim' ile 'boştu' ayrı")
+# =============================================================================
+# Bu bölümün tamamı TEK bir kurala bakıyor: ölçüm yokluğu "sistem boştu" diye
+# kaydedilemez. O kayıt bir daha düzeltilemez — aylar sonra olayın grafiğine
+# bakan insan, tam olayın dakikasında "hiç oturum yoktu" görür ve yanlış yere
+# bakar. Dört ayrı hâl var ve dördü de birbirinden ayrılmalı:
+#   ok=true, n>0  ölçüldü, oturum vardı
+#   ok=true, n=0  ölçüldü, gerçekten boştu
+#   ok=false      ölçülemedi (sorgu düştü / motor kapandı)
+#   kayıt yok     o saniye hiç örneklenmedi (akış kopuk)
+_ash_dizin = os.path.join("/tmp", "dbstack-selftest", "ash")
+import shutil as _sh                              # noqa: E402
+try:
+    _sh.rmtree(_ash_dizin)
+except OSError:
+    pass
+os.makedirs(_ash_dizin, exist_ok=True)
+app.ASH_DIR = _ash_dizin
+
+_T0 = 1_700_000_000
+
+
+def _ash_ornek(t, ok=True, oturumlar=None):
+    k = {"t": t, "motor": "postgresql", "ok": ok}
+    if ok:
+        k["n"] = len(oturumlar or [])
+        k["oturumlar"] = oturumlar or []
+    return json.dumps(k, ensure_ascii=False)
+
+
+def _ash_defter_yaz(satirlar):
+    with io.open(app._ash_dosya("postgresql"), "w", encoding="utf-8") as fh:
+        for s in satirlar:
+            fh.write(s + "\n")
+
+
+# 10 saniyelik pencere: 4 saniye ölçüldü (biri boş), 2 saniye ölçülemedi,
+# 4 saniye hiç örneklenmedi.
+_bekleyen = {"pid": 22, "durum": "active", "bekleme_turu": "Lock",
+             "bekleme": "transactionid", "tur": "client backend",
+             "kullanici": "app", "vt": "shop", "islem_sn": 9.0,
+             "bekleten": [11], "sorgu": "UPDATE siparis SET durum=? WHERE id=?"}
+_ash_defter_yaz([
+    _ash_ornek(_T0 + 0, True, [_bekleyen]),
+    _ash_ornek(_T0 + 1, True, [_bekleyen, dict(_bekleyen, pid=23)]),
+    _ash_ornek(_T0 + 2, True, []),                 # gerçekten boş
+    _ash_ornek(_T0 + 3, False),                    # ölçülemedi
+    _ash_ornek(_T0 + 4, False),                    # ölçülemedi
+    _ash_ornek(_T0 + 5, True, [_bekleyen]),
+    # T0+6 … T0+9 arası HİÇ kayıt yok (akış kopuk)
+])
+_p = app.ash_pencere("postgresql", _T0, _T0 + 9)
+_k = _p["kapsama"]
+
+ck("ölçülen saniye sayısı yalnız ok=true örnekleri sayıyor",
+   _k["olculen_sn"] == 4, "ölçülen=%s (beklenen 4)" % _k["olculen_sn"])
+ck("ölçülemeyen örnek AYRI sayılıyor (sıfır oturum diye değil)",
+   _k["olculemedi_ornek"] == 2, "ölçülemedi=%s" % _k["olculemedi_ornek"])
+ck("hiç örneklenmemiş saniyeler kapsamada eksik görünüyor",
+   _k["aralik_sn"] == 10 and _k["oran"] == 0.4,
+   "aralık=%s oran=%s" % (_k["aralik_sn"], _k["oran"]))
+ck("kapsama eksikse özet bunu AÇIKÇA söylüyor",
+   isinstance(_k["not"], str) and "6 saniyesi" in _k["not"], str(_k["not"])[:70])
+ck("tam kapsamada uyarı notu YOK (gereksiz alarm üretmiyor)",
+   app.ash_pencere("postgresql", _T0, _T0 + 2)["kapsama"]["not"] is None)
+
+# Asıl değer: "kim kimi bekletiyordu" sorusunun cevabı.
+ck("kök engelleyen pid bulunuyor",
+   _p["bekletenler"] and _p["bekletenler"][0]["pid"] == 11,
+   str(_p["bekletenler"])[:60])
+ck("en çok görülen bekleme türü bulunuyor",
+   _p["beklemeler"] and _p["beklemeler"][0]["ad"] == "Lock:transactionid",
+   str(_p["beklemeler"])[:60])
+ck("aynı anda en çok kaç oturum vardı ölçülüyor",
+   _p["en_cok_oturum"]["n"] == 2 and _p["en_cok_oturum"]["t"] == _T0 + 1,
+   str(_p["en_cok_oturum"]))
+ck("sorgu metni özete giriyor",
+   _p["sorgular"] and _p["sorgular"][0]["ad"].startswith("UPDATE siparis"))
+
+# Hiç defter yokken: "0 oturum" değil, "hiç ölçülmedi".
+_p2 = app.ash_pencere("mariadb", _T0, _T0 + 9)
+ck("defteri olmayan motorda kapsama SIFIR (uydurma özet yok)",
+   _p2["kapsama"]["olculen_sn"] == 0 and _p2["kapsama"]["oran"] == 0.0
+   and not _p2["beklemeler"])
+
+# --- Betiğin ayrıştırıcısı: üç hâli AYIRIYOR mu (canlı veritabanı olmadan) --
+# Ayrıştırıcı 'cevir' komutu olarak ayrı durduğu için ham girdiyle tek başına
+# sınanabiliyor; bu ayrımın kanıtı ancak böyle alınır.
+_ash_ham = (
+    "S\t1700000000\tok\n"
+    "123\tactive\tLock\ttransactionid\tclient backend\troot\tapp\t12.5\t99,100"
+    "\tUPDATE t SET x=1\n"
+    "E\n"
+    "S\t1700000001\thata\n"
+    "E\n"
+    "S\t1700000002\tok\n"
+    "E\n")
+try:
+    _r = subprocess.run(["bash", "scripts/ash.sh", "cevir", "postgresql"],
+                        input=_ash_ham, capture_output=True, text=True,
+                        timeout=60)
+    _cikti = [json.loads(x) for x in _r.stdout.splitlines() if x.strip()]
+except Exception as _e:
+    _cikti = []
+    _r = None
+ck("ash.sh 'cevir' üç örneği de üretiyor", len(_cikti) == 3,
+   "%d satır%s" % (len(_cikti),
+                   (" · " + (_r.stderr or "")[:60]) if _r else " (çalıştırılamadı)"))
+if len(_cikti) == 3:
+    ck("ölçülen örnek: ok=true ve oturum sayısı var",
+       _cikti[0]["ok"] is True and _cikti[0]["n"] == 1)
+    ck("ölçülemeyen örnekte 'n' alanı HİÇ YOK (0 yazılmıyor)",
+       _cikti[1]["ok"] is False and "n" not in _cikti[1], str(_cikti[1])[:70])
+    ck("gerçekten boş örnek: ok=true ve n=0",
+       _cikti[2]["ok"] is True and _cikti[2]["n"] == 0)
+    ck("bekleten pid listesi sayıya çevriliyor",
+       _cikti[0]["oturumlar"][0]["bekleten"] == [99, 100])
+
+_ash_src = io.open("scripts/ash.sh", encoding="utf-8").read()
+# `docker exec` süreç açma maliyeti ~100 ms; saniyelik örnekleme her örnekte
+# yeni exec açarak yapılamaz — ölçüm aracı ölçtüğü sunucuyu meşgul eder.
+# Yorum satırları sayılmıyor: aranan şey KODDA kaç exec olduğu. Motor başına
+# bir tane olmalı — döngü container'ın içinde döndüğü için örnek başına yeni
+# süreç açılmıyor.
+_ash_exec = [ln for ln in _ash_src.splitlines()
+             if "docker exec" in ln and not ln.lstrip().startswith("#")]
+ck("örnekleme döngüsü container'ın İÇİNDE (örnek başına yeni exec yok)",
+   "while :; do" in _ash_src and len(_ash_exec) == 2,
+   "kodda %d exec (motor başına 1 beklenir)" % len(_ash_exec))
+ck("döngü içinde bekleme var (sürekli sorgu değil)",
+   "sleep $ARALIK" in _ash_src)
+ck("kapsam dışı motorlarda SEBEP yazılı",
+   "kapsam_notu()" in _ash_src and "tek iş parçacıklı" in _ash_src)
+# MariaDB'de bekleme zinciri bilerek boş: yanlış sürümde sessizce boş dönen
+# bir sorgu "kimse kimseyi bekletmiyor" diye okunurdu.
+ck("MariaDB'de bekleme zincirinin YOKLUĞU açıkça yazılı",
+   "data_lock_waits" in _ash_src and "SESSİZCE BOŞ" in _ash_src)
+ck("controller ASH ucunu sunuyor",
+   '"/api/ash"' in _ctrl_py and "ash_gozetmen" in _ctrl_py)
+ck("ASH defteri sınırsız büyümüyor (devir var)",
+   "_ash_devret" in _ctrl_py and "ASH_MAX_BYTES" in _ctrl_py)
+
+# =============================================================================
 print()
 if FAILS:
     print("\033[31m✗ %d test başarısız:\033[0m %s" % (len(FAILS), ", ".join(FAILS)))

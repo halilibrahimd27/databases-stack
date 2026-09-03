@@ -32,6 +32,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import uuid
 
 # =============================================================================
@@ -4046,6 +4047,277 @@ def replication_refresher():
 
 
 # =============================================================================
+# AKTİF OTURUM GEÇMİŞİ (ASH) — "o an tam olarak ne oluyordu"
+# =============================================================================
+# "Dün gece site dört dakika dondu, sabah baktım her şey normal." Bu sorunun
+# cevabı üründe YOKTU ve elimizdeki iki ölçüm de onu cevaplayamıyor:
+#   • Prometheus 15-60 saniyede bir "ayakta mı" diye bakar; donmuş bir motor
+#     up=1 döndürür (bağlantıyı kabul eder, sorgu kilit bekler).
+#   • Yavaş sorgu ölçümü KÜMÜLATİF sayaç okur; dört dakikalık olay 24 saatlik
+#     toplamın içinde kaybolur ve kimin kimi beklettiğini hiç söylemez.
+# Eksik olan, zaman içinde ÖRNEKLENMİŞ bir defter. Bu bölüm onu tutuyor.
+#
+# NEDEN AYRI BİR SÜREÇ İLKELİ GEREKTİ:
+# run() bloklayan subprocess.run'dır; saniyede bir örnek veren SONSUZ bir akış
+# onunla okunamaz. Burada Popen + satır satır okuyan bir iş parçacığı + ölen
+# akışı yeniden doğuran bir gözetmen var. `docker exec` süreç açma maliyeti
+# ~100 ms olduğu için exec MOTOR BAŞINA BİR KEZ açılır; döngü container'ın
+# içinde döner (bkz. scripts/ash.sh).
+#
+# ÜÇ DEĞERLİ DEFTER — bu bölümün en önemli kuralı:
+#   ok=true, n>0   → ölçüldü, oturum vardı
+#   ok=true, n=0   → ölçüldü, gerçekten boştu
+#   ok=false       → ÖLÇÜLEMEDİ (sorgu düştü / motor kapandı)
+#   kayıt YOK      → o saniye hiç örneklenmedi (akış kopuk)
+# Son iki hâli "0 oturum" diye yazmak, ölçüm yokluğunu "sistem boştu" diye
+# kaydetmek olurdu ve o kayıt bir daha düzeltilemez: aylar sonra olayın
+# grafiğine bakan insan, tam olayın dakikasında "hiç oturum yoktu" görür.
+ASH_SCRIPT = os.path.join(PROJECT_DIR, "scripts", "ash.sh")
+ASH_DIR = os.path.join(STATE_DIR, "ash")
+# Motor başına iki dosya (güncel + bir devir) tutulur; üst sınır ikisinin
+# toplamıdır. Boşta ~200 bayt/örnek × 86400 = günde ~17 MB; 24 MB'lık iki
+# dosya kabaca 2,5 gün eder. Sınırsız büyüyen bir defter, events.jsonl'de bir
+# kez yaşandı — tekrarlamıyoruz.
+ASH_MAX_BYTES = int(os.environ.get("ASH_MAX_BYTES", str(24 * 1024 * 1024)))
+ASH_ARALIK_SN = int(os.environ.get("ASH_ARALIK_SN", "1"))
+# Gözetmen turu: akış öldüyse yeniden doğurma gecikmesi. Çok kısa olursa
+# sürekli açılıp kapanan bir exec döngüsü olur (motoru meşgul eder).
+ASH_GOZETMEN_SN = int(os.environ.get("ASH_GOZETMEN_SN", "15"))
+ASH_MOTORLAR = ("postgresql", "mariadb")
+
+_ASH = {}                      # eid -> {"proc", "thread", "son", "hata", "n"}
+_ASH_KILIT = threading.Lock()
+
+
+def _ash_dosya(eid):
+    return os.path.join(ASH_DIR, "%s.jsonl" % eid)
+
+
+def _ash_devret(yol):
+    """Dosya sınırı aştıysa tek devir: <ad> → <ad>.1 (eskisi silinir)."""
+    try:
+        if os.path.getsize(yol) < ASH_MAX_BYTES:
+            return
+        os.replace(yol, yol + ".1")
+    except OSError:
+        pass
+
+
+def _ash_yaz(eid, satir):
+    try:
+        os.makedirs(ASH_DIR, exist_ok=True)
+        yol = _ash_dosya(eid)
+        with open(yol, "a", encoding="utf-8") as fh:
+            fh.write(satir + "\n")
+        _ash_devret(yol)
+    except OSError as e:
+        log("ash defteri yazılamadı (%s): %r" % (eid, e))
+
+
+def _ash_okuyucu(eid, proc):
+    """Örnekleyicinin çıktısını satır satır deftere yazar.
+
+    Her satır zaten tek satır JSON; burada YENİDEN ayrıştırmıyoruz (yalnız
+    zaman damgasını okumak için hafif bir kontrol). Ayrıştırmayı iki yerde
+    yapmak, iki yerin er geç ayrışması demek."""
+    try:
+        for satir in iter(proc.stdout.readline, ""):
+            satir = satir.strip()
+            if not satir or not satir.startswith("{"):
+                continue
+            _ash_yaz(eid, satir)
+            with _ASH_KILIT:
+                d = _ASH.setdefault(eid, {})
+                d["son"] = int(time.time())
+                d["hata"] = None
+    except Exception as e:                       # akış koptu
+        with _ASH_KILIT:
+            _ASH.setdefault(eid, {})["hata"] = repr(e)
+    finally:
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+
+
+def _ash_baslat(eid):
+    """Motor için örnekleyiciyi açar. Zaten açıksa dokunmaz."""
+    with _ASH_KILIT:
+        d = _ASH.get(eid) or {}
+        p = d.get("proc")
+        if p is not None and p.poll() is None:
+            return False
+    try:
+        env = dict(os.environ)
+        env.update(script_env())
+        proc = subprocess.Popen(
+            ["bash", ASH_SCRIPT, "ornekle", eid],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, bufsize=1, cwd=PROJECT_DIR, env=env)
+    except OSError as e:
+        with _ASH_KILIT:
+            _ASH.setdefault(eid, {})["hata"] = "örnekleyici açılamadı: %r" % e
+        return False
+    t = threading.Thread(target=_ash_okuyucu, args=(eid, proc), daemon=True)
+    t.start()
+    with _ASH_KILIT:
+        _ASH[eid] = {"proc": proc, "thread": t, "son": None, "hata": None,
+                     "basladi": int(time.time())}
+    log("ash örnekleyici başladı:", eid)
+    return True
+
+
+def _ash_durdur(eid):
+    with _ASH_KILIT:
+        d = _ASH.get(eid) or {}
+        p = d.get("proc")
+    if p is None or p.poll() is not None:
+        return False
+    try:
+        p.terminate()
+    except OSError:
+        pass
+    log("ash örnekleyici durduruldu:", eid)
+    return True
+
+
+def ash_gozetmen():
+    """Açık motorlarda örnekleyici koşsun, kapalılarda koşmasın.
+
+    Motor kapatıldığında örnekleyiciyi bırakmak, her saniye 'hata' yazan bir
+    akış demek: defter dolar ve içinde işe yarar tek satır olmaz."""
+    while True:
+        try:
+            acik = set(load_state().get("profiles", []))
+            calisan = {c["service"] for c in docker_containers()
+                       if c["status"] == "running"}
+            for eid in ASH_MOTORLAR:
+                e = CATALOG.engine(eid)
+                if not e:
+                    continue
+                prim = current_primary(e)
+                gerekli = (e.get("profile") in acik) and (prim in calisan)
+                if gerekli:
+                    _ash_baslat(eid)
+                else:
+                    _ash_durdur(eid)
+        except Exception as e:
+            log("ash gözetmeni: %r" % e)
+        time.sleep(ASH_GOZETMEN_SN)
+
+
+def _ash_satirlar(eid, bas, bit):
+    """[bas, bit] aralığındaki örnek kayıtları — eski dosya dahil."""
+    out = []
+    for yol in (_ash_dosya(eid) + ".1", _ash_dosya(eid)):
+        try:
+            with open(yol, encoding="utf-8") as fh:
+                for satir in fh:
+                    satir = satir.strip()
+                    if not satir:
+                        continue
+                    try:
+                        d = json.loads(satir)
+                    except ValueError:
+                        continue
+                    t = d.get("t")
+                    if isinstance(t, int) and bas <= t <= bit:
+                        out.append(d)
+        except OSError:
+            continue
+    out.sort(key=lambda d: d.get("t") or 0)
+    return out
+
+
+def ash_pencere(eid, bas, bit, adet=5):
+    """Bir zaman aralığının ÖZETİ: kim bekletti, ne bekledi, hangi sorgu.
+
+    Kapsama (coverage) ayrıca yazılır: aralıktaki kaç saniye ÖLÇÜLDÜ. Bu sayı
+    olmadan özetin anlamı yok — beş saniyelik bir örneklemden çıkarılmış
+    "en çok bekleten sorgu", dört dakikalık bir olay hakkında hiçbir şey
+    söylemez ve söylediğini sanmak daha kötüdür."""
+    kayitlar = _ash_satirlar(eid, bas, bit)
+    toplam_sn = max(1, bit - bas + 1)
+    olculen = set()
+    olculemedi = 0
+    bekleme, bekleten, sorgu = {}, {}, {}
+    en_cok, en_cok_t = 0, None
+    for d in kayitlar:
+        t = d.get("t")
+        if not d.get("ok"):
+            olculemedi += 1
+            continue
+        olculen.add(t)
+        oturumlar = d.get("oturumlar") or []
+        if len(oturumlar) > en_cok:
+            en_cok, en_cok_t = len(oturumlar), t
+        for o in oturumlar:
+            b = (o.get("bekleme_turu") or "") + (
+                (":" + o["bekleme"]) if o.get("bekleme") else "")
+            if b:
+                bekleme[b] = bekleme.get(b, 0) + 1
+            for pid in (o.get("bekleten") or []):
+                bekleten[pid] = bekleten.get(pid, 0) + 1
+            q = (o.get("sorgu") or "").strip()
+            if q:
+                sorgu[q] = sorgu.get(q, 0) + 1
+
+    def ilk(d):
+        return [{"ad": k, "ornek": v} for k, v in
+                sorted(d.items(), key=lambda kv: -kv[1])[:adet]]
+
+    return {
+        "engine": eid,
+        "from": bas, "to": bit,
+        # Kapsama ÖNCE geliyor: özet ondan sonra okunmalı.
+        "kapsama": {
+            "aralik_sn": toplam_sn,
+            "olculen_sn": len(olculen),
+            "olculemedi_ornek": olculemedi,
+            "oran": round(len(olculen) / float(toplam_sn), 3),
+            "not": ("bu aralığın %d saniyesi HİÇ örneklenmedi — özet yalnız "
+                    "ölçülen saniyeler hakkındadır"
+                    % (toplam_sn - len(olculen)))
+                   if len(olculen) < toplam_sn else None,
+        },
+        "en_cok_oturum": {"n": en_cok, "t": en_cok_t},
+        "beklemeler": ilk(bekleme),
+        "bekletenler": [{"pid": k, "ornek": v} for k, v in
+                        sorted(bekleten.items(), key=lambda kv: -kv[1])[:adet]],
+        "sorgular": ilk(sorgu),
+    }
+
+
+def ash_ozet():
+    """GET /api/ash gövdesi: hangi motorda ölçüm akıyor, akmıyorsa neden."""
+    simdi = int(time.time())
+    out = {"interval_sn": ASH_ARALIK_SN, "engines": {}}
+    acik = set(load_state().get("profiles", []))
+    for e in CATALOG.engines:
+        eid = e["id"]
+        if eid not in ASH_MOTORLAR:
+            # Kapsam dışı motorda NEDEN olmadığı katalogda değil betikte
+            # yazılı; burada yalnız kapsam dışı olduğunu söylüyoruz.
+            continue
+        with _ASH_KILIT:
+            d = dict(_ASH.get(eid) or {})
+        p = d.get("proc")
+        canli = bool(p is not None and p.poll() is None)
+        son = d.get("son")
+        out["engines"][eid] = {
+            "aktif": e.get("profile") in acik,
+            "ornekleniyor": canli,
+            "son_ornek": son,
+            "gecikme_sn": (simdi - son) if son else None,
+            "hata": d.get("hata"),
+            # Son bir saatin kapsaması: "ölçüm var" demek yetmez, NE KADARINI
+            # ölçtüğümüz de yazılmalı.
+            "son_saat": ash_pencere(eid, simdi - 3600, simdi)["kapsama"],
+        }
+    return out
+
+
+# =============================================================================
 # PITR DURUMU ve DEVİR PROVASI
 # =============================================================================
 # İkisi de "ölçülmüş güvence" ailesinden: biri "ne kadar geriye dönebilirim",
@@ -5184,6 +5456,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(200, _oku_json_dosya(HADRILL_FILE))
         if path == "/api/maintenance":
             return self._send(200, load_maintenance())
+        if path == "/api/ash":
+            return self._send(200, ash_ozet())
+        if path.startswith("/api/ash/"):
+            # /api/ash/<motor>?from=&to=  — "dün 03:14'te ne oluyordu"
+            eid = path[len("/api/ash/"):].strip("/")
+            if eid not in ASH_MOTORLAR:
+                return self._send(404, {"error":
+                                        "bu motorda oturum örneklemesi yok: %s"
+                                        % eid})
+            q = urllib.parse.parse_qs(
+                self.path.split("?", 1)[1] if "?" in self.path else "")
+
+            def _sayi(ad, vars):
+                try:
+                    return int(q.get(ad, [""])[0])
+                except (ValueError, IndexError):
+                    return vars
+
+            simdi = int(time.time())
+            # Varsayılan pencere son 15 dakika: "az önce ne oldu" sorusunun
+            # penceresi. Aralık ters verilirse düzeltiyoruz, hata döndürmek
+            # yerine — kullanıcı saatleri karıştırdığında boş sonuç yerine
+            # doğru sonucu görmeli.
+            bit = _sayi("to", simdi)
+            bas = _sayi("from", bit - 900)
+            if bas > bit:
+                bas, bit = bit, bas
+            # Üst sınır: tek istekte en çok 24 saat. Sınırsız bırakmak,
+            # defterin tamamını belleğe almak demek.
+            if bit - bas > 86400:
+                bas = bit - 86400
+            return self._send(200, ash_pencere(eid, bas, bit))
         if path == "/api/backups":
             return self._send(200, backups_overview())
         if path.startswith("/api/engines/") and path.endswith("/connection"):
@@ -5500,6 +5804,8 @@ def main():
         threading.Thread(target=maintenance_refresher, daemon=True).start()
         threading.Thread(target=pitr_refresher, daemon=True).start()
         threading.Thread(target=replication_refresher, daemon=True).start()
+        # ASH gözetmeni: açık motorlarda saniyelik oturum örneklemesi.
+        threading.Thread(target=ash_gozetmen, daemon=True).start()
 
     Server(("0.0.0.0", LISTEN_PORT), Handler).serve_forever()
 
