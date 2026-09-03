@@ -48,7 +48,9 @@ RUN_LOG="$LOG_DIR/e2e_$(date +%Y%m%d_%H%M%S).log"
 # pitr ve encrypt yedekleme ailesinden: ikisi de backup paketinden sonra
 # koşmalı (taze bir dump ve arşiv gerekiyor). ha-drill GERÇEK bir devir
 # yapar — failover paketiyle aynı aileden, onun hemen ardında.
-GUVENLI=(security sizing replication failover ha-drill backup drill import
+# shadow GERÇEK bir takas yapar (ha-drill'in gerçek bir devir yapması gibi)
+# ve girdisi taze bir yedektir: backup ve drill'in hemen ardında duruyor.
+GUVENLI=(security sizing replication failover ha-drill backup drill shadow import
          encrypt pitr maintenance slowlog ash monitoring lifecycle)
 ISTEGE_BAGLI=(k8s)
 
@@ -59,16 +61,25 @@ declare -A ACIKLAMA=(
   [replication]="Yedek kopya: akıyor mu, salt-okunur mu, kapatınca kalıntı bırakmıyor mu"
   [failover]="Otomatik devir: ölüm → devir → AYNI ADRESTEN yazma → veri kaybı yok"
   [backup]="Yedek al → veriyi sil → geri yükle → veri geri geldi"
+  [shadow]="Gölge geri yükleme: kesinti gateway portundan, geri dönüş bileti, ayrışma"
+  [ha-drill]="Devir provası: GERÇEK bir devir yapar, kesintiyi gateway'den ölçer"
+  [drill]="Kurtarma provası: yedek tek kullanımlık bir kopyada gerçekten açılıyor mu"
+  [import]="Dışarıdan veri alma: dump içeri aktarılıyor, sayılar tutuyor mu"
+  [encrypt]="Şifreli yedek: doğru anahtarla açılıyor, yanlış anahtarla BAŞARISIZ"
+  [pitr]="Zamanda geri dönme: arşiv zinciri, taban ve hedef ana dönüş"
+  [maintenance]="Bakım: şişkinlik ölçülüyor, güvenli bakım tabloyu kilitlemiyor"
+  [slowlog]="Yavaş sorgu günlüğü: açılıyor, sorgu yakalanıyor, değişmez metinler maskeleniyor"
+  [ash]="Aktif oturum geçmişi: örnekleniyor, bekleyen/bekleten ayırt ediliyor"
   [monitoring]="İzleme zinciri: hedefler, metrikler, her panonun her sorgusu"
   [k8s]="Kubernetes: ayarlar pod içinde uygulanıyor mu (k3s açar ve SONUNDA kapatır)"
 )
 
 liste() {
     heading "Uçtan uca doğrulama paketleri"
-    for s in "${GUVENLI[@]}"; do printf '  %-13s %s\n' "$s" "${ACIKLAMA[$s]}"; done
+    for s in "${GUVENLI[@]}"; do printf '  %-13s %s\n' "$s" "${ACIKLAMA[$s]:-—}"; done
     echo
     printf '  %s(isteğe bağlı — --hepsi ile)%s\n' "$YELLOW" "$NC"
-    for s in "${ISTEGE_BAGLI[@]}"; do printf '  %-13s %s\n' "$s" "${ACIKLAMA[$s]}"; done
+    for s in "${ISTEGE_BAGLI[@]}"; do printf '  %-13s %s\n' "$s" "${ACIKLAMA[$s]:-—}"; done
     echo
 }
 

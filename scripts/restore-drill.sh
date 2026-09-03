@@ -892,14 +892,31 @@ olum_sebebi() {
     fi
 }
 
+# ÜST ÜSTE KAÇ KEZ CEVAP VERİRSE HAZIR SAYILIR. Bir kez yetmiyor ve bu
+# ÖLÇÜLDÜ: MariaDB imajı ilk açılışta önce GEÇİCİ bir kurulum sunucusu
+# başlatıyor, veri dizinini kuruyor, sonra onu KAPATIP asıl sunucuyu
+# açıyor. Tek atışlık 'SELECT 1' o geçici sunucuya denk gelince "hazır"
+# diyorduk; hemen ardından sunucu kapanıyor ve dökümü boşluğa akıtıyorduk.
+# Sonuç, sapasağlam bir yedeğe "yedek dosyası sonuna kadar OKUNAMADI"
+# damgası vurmaktı — hatanın sebebini de yanlış yere yazıyordu (şifreleme).
+# Üst üste üç cevap, kapanan bir sunucuyu eler; sayaç her düşüşte sıfırlanır.
+HAZIR_USTUSTE="${PROVA_HAZIR_USTUSTE:-3}"
+
 hazir_bekle() {   # hazir_bekle <saniye> <container>
-    local bitis=$(( $(date +%s) + $1 )) C="$2" durum
+    local bitis=$(( $(date +%s) + $1 )) C="$2" durum ardarda=0
     while :; do
         durum="$(docker inspect -f '{{.State.Running}}' "$C" 2>/dev/null)"
         if [ "$durum" != "true" ]; then
             HATA="$(olum_sebebi "$C")"; return 1
         fi
-        "hazir_$MOTOR" "$C" && return 0
+        if "hazir_$MOTOR" "$C"; then
+            ardarda=$(( ardarda + 1 ))
+            [ "$ardarda" -ge "$HAZIR_USTUSTE" ] && return 0
+        else
+            # Bir kez bile düşerse baştan sayıyoruz: aradaki düşüş, kurulum
+            # sunucusunun kapandığı andır.
+            ardarda=0
+        fi
         if [ "$(date +%s)" -ge "$bitis" ]; then
             HATA="geçici container $1 sn içinde hazır olmadı. $(olum_sebebi "$C")"
             return 1
@@ -1043,7 +1060,22 @@ canli_hacim() {   # canli_hacim <motor> <taban>
 # docker'ın kendi muhasebesinden okunuyor; okunamazsa dump boyutundan
 # türetiyoruz ve hangi yöntemi kullandığımızı SÖYLÜYORUZ. "Yer yok" demek
 # felaket anında ürünü kilitlemek olurdu; o yüzden sayıyı da yazıyoruz.
-disk_bos_mb() {
+disk_bos_mb() {   # disk_bos_mb [hacim]
+    # ÖLÇÜLDÜ: controller container'ının içinden `df /var/lib/docker` diye
+    # sormak işe yaramıyor — o yol orada YOK, df düşüyor ve kapı sessizce
+    # "ölçemedim"e geçiyordu. Yani ürünün "önceden sayıyla söyle" sözü,
+    # panelden çalıştırıldığında hiç tutmuyordu.
+    # Doğru soru şu: HACMİN DURDUĞU dosya sisteminde ne kadar yer var. Bunu
+    # o hacmi bağlayan bir container'a soruyoruz; imaj zaten yerelde duruyor
+    # (motorun kendi imajı), yeni bir şey indirmiyoruz.
+    local hacim="${1:-}" mb=""
+    if [ -n "$hacim" ] && [ -n "${IMAJ:-}" ]; then
+        mb="$(docker run --rm --network none -v "$hacim":/olcum                 --entrypoint df "$IMAJ" -Pk /olcum 2>/dev/null               | awk 'NR==2 {print int($4/1024)}')"
+        if printf '%s' "${mb:-}" | grep -qE '^[0-9]+$'; then
+            printf '%s' "$mb"; return 0
+        fi
+    fi
+    # Host'ta çalışıyorsak bu yol doğrudur ve bir container başlatmaya gerek yok.
     local kok
     kok="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null)"
     [ -n "$kok" ] || kok="/var/lib/docker"
@@ -1155,7 +1187,7 @@ if [ "$GOLGE" -eq 1 ]; then
         # cömert bir üst sınır. Tahmin olduğunu mesajda söylüyoruz.
         GEREK_MB=$(( _d * 3 )); GEREK_KAYNAK="dökümün 3 katı (üretim hacmi ölçülemedi — TAHMİN)"
     fi
-    BOS_MB="$(disk_bos_mb)"
+    BOS_MB="$(disk_bos_mb "$CANLI")"
     if sayi_mi "${BOS_MB:-}"; then
         dlog "disk: gereken ~${GEREK_MB} MB ($GEREK_KAYNAK) + ${GOLGE_EMNIYET_MB} MB emniyet, boşta ${BOS_MB} MB"
         if [ "$BOS_MB" -lt $(( GEREK_MB + GOLGE_EMNIYET_MB )) ]; then
