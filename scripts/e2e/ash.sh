@@ -126,7 +126,7 @@ heading "Ayrıştırıcı: ölçüldü / gerçekten boş / ölçülemedi"
 
 US="$(printf '\037')"
 HAM="$(printf 'S\t1000\tok\n7%sactive%sLock%stuple%sclient backend%sroot%sdb%s3.5%s42,43%sUPDATE x\nE\nS\t1001\tok\nCOZULEMEYEN\nE\nS\t1002\tok\nE\nS\t1003\thata\nE\n' \
-        "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US")"
+        "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US")"
 CIKTI="$(printf '%s' "$HAM" | "${ASH_CAGRI[@]}" cevir "$MOTOR" 2>/dev/null)"
 SAYIM="$(printf '%s\n' "$CIKTI" | grep -c '^{' || true)"
 if [ "${SAYIM:-0}" -ne 4 ]; then
