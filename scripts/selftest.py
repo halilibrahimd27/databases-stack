@@ -3441,6 +3441,11 @@ ck("belgeler arası bağlantıların hepsi var olan dosyaya gidiyor", not _kirik
 _HTML_DIZIN = "gateway/html"
 _i18n_yol = _os2.path.join(_HTML_DIZIN, "i18n.js")
 _i18n_src = io.open(_i18n_yol, encoding="utf-8").read()
+import html.parser as _html_parser        # noqa: E402
+# Bu iki sabit aşağıdaki JS bölümünde de kullanılıyor; burada TANIMLANIYOR
+# çünkü HTML denetimi ondan önce koşuyor.
+_TR_HARF = "çğıöşüÇĞİÖŞÜ"
+_ATIL = _re2.compile(r"^[\s:;,.·—–|()\[\]{}<>&%*+=0-9-]*$")
 
 _BS = chr(92)
 _ANAHTAR_DESEN = r"^\s*'((?:[^'" + _BS + _BS + r"]|" + _BS + _BS + r".)+)':"
@@ -3470,66 +3475,157 @@ ck("her sayfada dil düğmesi var", not _dugmesiz,
    ", ".join(_dugmesiz) or "hepsinde var")
 
 
-def _i18n_isaretli(yol):
-    """HTML'de data-i18n / data-i18n-html ile işaretlenmiş metinler."""
-    from html.parser import HTMLParser
+# ÇALIŞMA ANIYLA BİREBİR AYNI ARAMA. Eski sürüm boşlukları sıkıştırarak
+# bakıyordu; ürün ise data-i18n metnini SIKIŞTIRMADAN arıyordu. Sonuç: HTML'de
+# birden çok satıra yayılan her cümle için kontrol "karşılığı var" derken panel
+# İngilizcede Türkçe kalıyordu — kontrol, ürünün yaptığından BAŞKA bir şeyi
+# ölçüyordu ve bu, bu depoda kovalanan hataların en sinsi türü.
+#
+# İkinci boşluk: İŞARETSİZ metin. data-i18n taşımayan bir başlık ne uygula()
+# ile çevriliyordu ne de denetleniyordu. DOM yürüyücüsü onu metin düğümü
+# olarak çevirebilir — yeter ki sözlükte olsun. O yüzden artık işaretli
+# olsun olmasın HER Türkçe metin aranıyor.
+class _I18nTarayici(_html_parser.HTMLParser):
+    ATLA = {"script", "style", "title"}
+    NITELIK = ("title", "aria-label", "placeholder")
 
-    class _C(HTMLParser):
-        def __init__(self):
-            HTMLParser.__init__(self, convert_charrefs=False)
-            self.bulunan, self.yigin = [], []
+    def __init__(self):
+        _html_parser.HTMLParser.__init__(self, convert_charrefs=False)
+        self.yol = []
+        self.tampon = []
+        self.derinlik = 0
+        self.tur = None
+        self.isaretli = []
+        self.serbest = []
 
-        def handle_starttag(self, etiket, nitelikler):
-            d = dict(nitelikler)
-            tur = ("html" if "data-i18n-html" in d
-                   else ("txt" if "data-i18n" in d else None))
-            if tur:
-                self.yigin.append([etiket, [], 0])
-            elif self.yigin:
-                self.yigin[-1][2] += 1
-                self.yigin[-1][1].append(self.get_starttag_text())
+    def _icinde(self):
+        return self.derinlik > 0
 
-        def handle_startendtag(self, etiket, nitelikler):
-            if self.yigin:
-                self.yigin[-1][1].append(self.get_starttag_text())
+    def handle_starttag(self, tag, attrs):
+        d = dict(attrs)
+        tur = ("html" if "data-i18n-html" in d
+               else ("txt" if "data-i18n" in d else None))
+        if self._icinde():
+            self.derinlik += 1
+            self.tampon.append(self.get_starttag_text())
+            return
+        if tur:
+            self.derinlik = 1
+            self.tampon = []
+            self.tur = tur
+            return
+        if "data-i18n-attr" not in d:
+            for ad in self.NITELIK:
+                if d.get(ad):
+                    self.serbest.append(d[ad])
+        self.yol.append(tag)
 
-        def handle_endtag(self, etiket):
-            if not self.yigin:
-                return
-            u = self.yigin[-1]
-            if u[2] > 0 and etiket != u[0]:
-                u[2] -= 1
-                u[1].append("</%s>" % etiket)
-            elif etiket == u[0]:
-                self.yigin.pop()
-                m = _re2.sub(r"\s+", " ", "".join(u[1])).strip()
+    def handle_startendtag(self, tag, attrs):
+        if self._icinde():
+            self.tampon.append(self.get_starttag_text())
+        else:
+            self.handle_starttag(tag, attrs)
+            if self.yol and self.yol[-1] == tag:
+                self.yol.pop()
+
+    def handle_endtag(self, tag):
+        if self._icinde():
+            self.derinlik -= 1
+            if self.derinlik == 0:
+                m = _re2.sub(r"\s+", " ", "".join(self.tampon)).strip()
                 if m:
-                    self.bulunan.append(m)
+                    self.isaretli.append(m)
+                self.tampon = []
             else:
-                u[1].append("</%s>" % etiket)
+                self.tampon.append("</%s>" % tag)
+            return
+        while self.yol and self.yol.pop() != tag:
+            pass
 
-        def handle_data(self, veri):
-            if self.yigin:
-                self.yigin[-1][1].append(veri)
+    def handle_data(self, veri):
+        if self._icinde():
+            self.tampon.append(veri)
+            return
+        if self.yol and self.yol[-1] in self.ATLA:
+            return
+        d = _re2.sub(r"\s+", " ", veri).strip()
+        if d:
+            self.serbest.append(d)
 
-        def handle_entityref(self, ad):
-            if self.yigin:
-                self.yigin[-1][1].append("&%s;" % ad)
+    def handle_entityref(self, ad):
+        if self._icinde():
+            self.tampon.append("&%s;" % ad)
 
-    c = _C()
-    c.feed(io.open(yol, encoding="utf-8").read())
-    return c.bulunan
+    def handle_charref(self, ad):
+        if self._icinde():
+            self.tampon.append("&#%s;" % ad)
 
 
-# Dilden bağımsız olanlar (marka, sekme adı) çevrilmez; onları saymıyoruz.
 _NOTR = {"Windows", "macOS", "Linux (Ubuntu / Debian)", "Android / iOS"}
 _isaretli_eksik = []
 for _s in sorted(_glob2.glob(_os2.path.join(_HTML_DIZIN, "*.html"))):
-    for _m in _i18n_isaretli(_s):
+    _c = _I18nTarayici()
+    _c.feed(io.open(_s, encoding="utf-8").read())
+    _ad = _os2.path.basename(_s)
+    for _m in _c.isaretli:
         if _m not in _ANAHTARLAR and _m not in _NOTR:
-            _isaretli_eksik.append("%s: %s" % (_os2.path.basename(_s), _m[:44]))
-ck("data-i18n ile işaretlenen her metnin karşılığı var", not _isaretli_eksik,
-   "; ".join(_isaretli_eksik[:2]) or "hepsi sözlükte")
+            _isaretli_eksik.append("%s: %s" % (_ad, _m[:44]))
+    for _m in _c.serbest:
+        if _ATIL.match(_m) or not any(_ch in _TR_HARF for _ch in _m):
+            continue
+        if _m not in _ANAHTARLAR:
+            _isaretli_eksik.append("%s (işaretsiz): %s" % (_ad, _m[:40]))
+ck("HTML'deki her Türkçe metnin karşılığı var (işaretli + işaretsiz)",
+   not _isaretli_eksik, "; ".join(_isaretli_eksik[:2]) or "hepsi sözlükte")
+
+# uygula() ile denetim AYNI normalleştirmeyi kullanmalı. Yukarıdaki hata tam
+# olarak buradan çıktı; bir daha ayrışmasınlar diye kontrolün kendisini
+# denetliyoruz.
+ck("data-i18n metni sıkıştırılarak aranıyor (denetimle aynı yol)",
+   "el.textContent.replace(/\\s+/g, ' ').trim()" in _i18n_src)
+
+# --- catalog.json: kullanıcının okuduğu metnin ÇOĞU oradan geliyor ----------
+# Motor açıklamaları, kategori başlıkları, rozetler, lisans ve devir notları
+# katalogda yazılı. Panel bunları olduğu gibi basıyor; sözlükte yoksa
+# İngilizce panelde Türkçe kalıyorlar — ilk sürümde 103 metnin 103'ü öyleydi
+# ve hiçbir kontrol bunu görmüyordu.
+_kat_json = json.loads(io.open("catalog.json", encoding="utf-8").read())
+_kat_metin = []
+
+
+def _kat_ekle(x):
+    if isinstance(x, str):
+        d = _re2.sub(r"\s+", " ", x).strip()
+        if d and any(_ch in _TR_HARF for _ch in d):
+            _kat_metin.append(d)
+
+
+_kats = _kat_json.get("categories")
+if isinstance(_kats, dict):
+    for _v in _kats.values():
+        _kat_ekle(_v)
+for _e in _kat_json["engines"]:
+    for _alan in ("summary", "note", "badge", "detail"):
+        _kat_ekle(_e.get(_alan))
+    for _blok in ("panel", "backup", "replication", "license", "connection",
+                  "failover", "plain"):
+        _b = _e.get(_blok)
+        if isinstance(_b, dict):
+            for _alan in ("note", "summary", "detail", "label", "warning",
+                          "title", "badge"):
+                _kat_ekle(_b.get(_alan))
+    _r = _e.get("resources") or {}
+    if isinstance(_r.get("reserve"), dict):
+        _kat_ekle(_r["reserve"].get("note"))
+    for _tn in (_r.get("tuning") or []):
+        _kat_ekle((_tn or {}).get("note"))
+    for _cp in (_e.get("client_ports") or []):
+        _kat_ekle((_cp or {}).get("label"))
+
+_kat_eksik = sorted(set(_m for _m in _kat_metin if _m not in _ANAHTARLAR))
+ck("catalog.json'daki her kullanıcı metninin karşılığı var", not _kat_eksik,
+   "; ".join(_m[:40] for _m in _kat_eksik[:2])
+   or "%d metin" % len(set(_kat_metin)))
 
 # --- JS'in ÜRETTİĞİ metinler ---------------------------------------------
 # Çeviri DOM'a uygulanıyor (i18n.js/agaci): anahtar birimi METİN
@@ -3658,6 +3754,17 @@ def _js_zincirler(src):
             i += 1
             continue
         parcalar = []
+        # ZİNCİR BİR İFADEYLE BAŞLIYORSA baştaki delik kaçmasın:
+        #   mb(x) + ' baştan ayrılan'
+        # ekranda "512 MB baştan ayrılan" olur, ama tarayıcı ilk DİZGİDEN
+        # başladığı için anahtarı "baştan ayrılan" diye çıkarıyordu — yani
+        # gerçekte hiç oluşmayan bir metni arıyorduk ve o satır İngilizceye
+        # hiç çevrilmiyordu. Geriye bakıp '+' görürsek delik ekliyoruz.
+        _g = i - 1
+        while _g >= 0 and src[_g] in " \t\r\n":
+            _g -= 1
+        if _g >= 0 and src[_g] == "+" and not (_g > 0 and src[_g - 1] == "+"):
+            parcalar.append(_DELIK)
         j, metin = _js_dizgi_metni(src, i)
         parcalar.append(metin)
         while True:
@@ -3718,8 +3825,6 @@ def _metin_dugumleri(html):
     return parcalar
 
 
-_ATIL = _re2.compile(r"^[\s:;,.·—–|()\[\]{}<>&%*+=0-9-]*$")
-_TR_HARF = "çğıöşüÇĞİÖŞÜ"
 # Bunlar metin düğümü olarak ekrana çıkar ama ÇEVRİLMEZ: birebir komut ya da
 # her iki dilde aynı olan teknik ad.
 _CEVRILMEZ = {"docker update"}

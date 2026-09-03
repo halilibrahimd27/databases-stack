@@ -1028,7 +1028,11 @@ function rowHtml(engine, b, st, s) {
     provaRozet = `<span class="bk-drill bk-drill-ok"
       title="${esc(tamTarih(pr.at))} · ${esc(pr.detail || '')}"
       >prova geçti ${esc(bagilZaman(pr.at))}${
-        pr.seconds != null ? ' · ' + esc(pr.seconds) + ' sn' : ''}</span>`;
+        /* Birim KAYNAKTA çevriliyor: bu metin 'prova geçti {1}{2}'
+           kalıbının ikinci deliğine düşüyor ve iki delik yan yana
+           olduğu için hangi parçanın nereye ait olduğu belirsiz —
+           kalıp eşleşse bile 'sn' Türkçe kalıyordu. */
+        pr.seconds != null ? ' · ' + esc(pr.seconds) + ' ' + T('sn') : ''}</span>`;
   } else if (pr.ok === false) {
     provaRozet = `<span class="bk-drill bk-drill-err"
       title="${esc(tamTarih(pr.at))} · ${esc(pr.detail || '')}"

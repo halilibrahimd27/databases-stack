@@ -1221,7 +1221,7 @@ async function refreshAsh() {
        ürün yönetiyor. */
     const isler = (o.yigin_isleri || []).map((i) =>
       `<li>${esc(i.kind)}${i.engine ? ' (' + esc(i.engine) + ')' : ''}
-         <span class="card-detail">${i.suruyor ? 'sürüyor' : i.sure_sn + ' sn'}</span></li>`).join('');
+         <span class="card-detail">${i.suruyor ? T('sürüyor') : i.sure_sn + ' ' + T('sn')}</span></li>`).join('');
     const en = (o.en_cok_oturum || {}).n || 0;
     return `<div class="ash-eng">
       <b>${esc(ad)}</b> ${kaps}

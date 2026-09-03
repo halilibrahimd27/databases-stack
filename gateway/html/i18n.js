@@ -827,7 +827,267 @@
     'çalışmaya devam eder':
       'keeps running',
     '— geri yükleme süresi kadar değil. Geri yükleme dakikalar sürebilir; motor o süre boyunca açık kalır.':
-      '— not the length of the restore. The restore can take minutes; the engine stays up the whole time.'
+      '— not the length of the restore. The restore can take minutes; the engine stays up the whole time.',
+
+    /* --- catalog.json içeriği: motor açıklamaları, kategoriler,
+           rozetler, lisans ve devir notları --- */
+    '"Bu e-postayı arka planda gönder" tarzı işler. Kafka\'dan çok daha basit; çoğu proje için yeterlidir.':
+      'Jobs of the "send this email in the background" kind. Far simpler than Kafka, and enough for most projects.',
+    '"Kimin arkadaşının arkadaşı", öneri motorları, dolandırıcılık tespiti gibi bağlantı sorguları.':
+      'Connection queries such as "friend of a friend", recommendation engines and fraud detection.',
+    '.NET / Windows tabanlı kurumsal uygulamalar genelde bunu ister. Ücretsiz Express sürümüyle gelir: veritabanı başına 10 GB\'a kadar veri, ~1.4 GB tampon havuzu. Diğerlerinden daha çok RAM tüketir.':
+      '.NET / Windows-based enterprise applications usually ask for this. It ships with the free Express edition: up to 10 GB of data per database and a ~1.4 GB buffer pool. It uses more RAM than the others.',
+    '0: \'max server memory\' bir tavandır. SQL Server sayfa havuzunu iş yükü geldikçe büyütür, açılışta o kadar belleği almaz.':
+      '0: \'max server memory\' is a ceiling. SQL Server grows its page pool as the workload arrives; it does not take that much memory at start-up.',
+    '0: Erlang VM belleği iş yüküyle büyür; açılışta ayrılan bir taban ayarlanmıyor.':
+      '0: Erlang VM memory grows with the workload; no floor is set at start-up.',
+    '0: MinIO nesne verisini diskte tutar, belleği istek başına kullanır; açılış tabanı yoktur.':
+      '0: MinIO keeps object data on disk and uses memory per request; there is no start-up floor.',
+    '0: Prometheus TSDB belleği seri sayısıyla büyür; açılışta ayrılan sabit bir taban yok.':
+      '0: Prometheus TSDB memory grows with the number of series; there is no fixed floor allocated at start-up.',
+    '0: WiredTiger önbelleği bir TAVANDIR. Veri okundukça o sınıra doğru büyür, açılışta ayrılmaz.':
+      '0: the WiredTiger cache is a CEILING. It grows towards that limit as data is read; nothing is allocated at start-up.',
+    '0: max_server_memory_usage bir tavandır; ClickHouse sorgu geldikçe büyür.':
+      '0: max_server_memory_usage is a ceiling; ClickHouse grows as queries arrive.',
+    '0: maxmemory bir TAVANDIR. Redis boş başlar, veri yazıldıkça büyür; baştan ayırdığı bir taban yoktur (ölçüm: 1278 MB tavan, 5 MB kullanım).':
+      '0: maxmemory is a CEILING. Redis starts empty and grows as data is written; it reserves no floor up front (measured: 1278 MB ceiling, 5 MB in use).',
+    '4.0\'dan beri SSPL. OSI onaylı \'açık kaynak\' DEĞİL. Kendi işiniz için kullanmak serbesttir; MongoDB\'yi bir SERVİS olarak üçüncü taraflara sunarsanız tüm hizmet yığınınızı açmanız istenir.':
+      'SSPL since 4.0. NOT OSI-approved \'open source\'. Using it for your own business is free; if you offer MongoDB to third parties AS A SERVICE you are required to open your whole service stack.',
+    '7.11\'den beri ELv2+SSPL; OSI onaylı değil. 8.16+ sürümlerde AGPL-3.0 seçeneği de var. Kendi kullanımınız serbest; yönetilen arama servisi olarak SATAMAZSINIZ.':
+      'ELv2+SSPL since 7.11; not OSI-approved. Versions 8.16+ also offer AGPL-3.0. Your own use is free; you may NOT sell it as a managed search service.',
+    '7.4 ile RSALv2+SSPL\'e geçti, 8.0 ile üçüncü seçenek olarak AGPL-3.0 eklendi. Pinlenen 8-alpine AGPL kapsamındadır. Copyleft istemiyorsanız Valkey birebir yerine geçer: REDIS_IMAGE=valkey/valkey:8-alpine':
+      'Moved to RSALv2+SSPL with 7.4; 8.0 added AGPL-3.0 as a third option. The pinned 8-alpine falls under AGPL. If you do not want copyleft, Valkey is a drop-in replacement: REDIS_IMAGE=valkey/valkey:8-alpine',
+    'AMQP mesaj kuyruğu. Klasik iş kuyruğu senaryoları.':
+      'AMQP message queue. Classic job-queue scenarios.',
+    'Always On AG ayrı node\'lar ve Windows/Linux cluster ister; tek makinede kurulamaz.':
+      'Always On AG requires separate nodes and a Windows/Linux cluster; it cannot be set up on a single machine.',
+    'Always On AG tek container\'da kurulamaz; ayrı node\'lar + Enterprise/Developer cluster gerekir.':
+      'Always On AG cannot be set up in a single container; it needs separate nodes plus an Enterprise/Developer cluster.',
+    'Amazon S3\'ün kendi sunucunuzdaki karşılığı. Yüklenen dosyaları veritabanı yerine burada tutun.':
+      'The equivalent of Amazon S3 on your own server. Keep uploaded files here rather than in the database.',
+    'Arama ve log analitiği motoru. Kibana ile birlikte gelir.':
+      'Search and log analytics engine. Ships with Kibana.',
+    'Arama ve log incelemesi için':
+      'For search and log inspection',
+    'Açık olan her veritabanı için hazır grafikler gelir: kaç bağlantı var, saniyede kaç işlem düşüyor, bellek yetiyor mu, yedek kopya geride mi. Her grafiğin altında ne anlama geldiği ve ne zaman endişelenmeniz gerektiği yazar.':
+      'Every database that is on gets ready-made graphs: how many connections there are, how many transactions per second, whether memory is sufficient, whether the standby is behind. Under each graph it says what it means and when you should be concerned.',
+    'Açık veritabanlarının grafikleri. Prometheus + Grafana.':
+      'Graphs for the databases that are on. Prometheus + Grafana.',
+    'BSD benzeri, en serbest lisanslardan biri. Kısıtlama yok.':
+      'BSD-like, one of the most permissive licences. No restriction.',
+    'Basit iş kuyruğu için':
+      'For a simple job queue',
+    'Bilgisayarınıza kurun':
+      'Install it on your computer',
+    'Bir sistemin ürettiği olayları başka sistemlerin sırayla tüketmesi. Mikroservis mimarilerinde yaygındır.':
+      'Events produced by one system, consumed in order by others. Common in microservice architectures.',
+    'Bolt protokolü':
+      'Bolt protocol',
+    'Cassandra\'da primary yoktur; her node eşittir. Dayanıklılık replication_factor ile sağlanır.':
+      'Cassandra has no primary; every node is equal. Durability comes from replication_factor.',
+    'Cassandra\'da primary/replica yoktur; keyspace başına replication_factor ile node ekleyerek ölçeklenir.':
+      'Cassandra has no primary/replica; you scale by adding nodes with a per-keyspace replication_factor.',
+    'Causal cluster yalnız Enterprise\'da vardır.':
+      'Causal clustering exists only in Enterprise.',
+    'Causal cluster yalnızca Neo4j Enterprise\'da vardır; Community tek node çalışır.':
+      'Causal clustering exists only in Neo4j Enterprise; Community runs on a single node.',
+    'Community sürümü GPL-3.0. Kullanmak serbest; kümeleme, çevrimiçi yedek ve rol bazlı yetkilendirme yalnız ticari Enterprise\'da var.':
+      'The Community edition is GPL-3.0. Free to use; clustering, online backup and role-based authorisation exist only in the commercial Enterprise edition.',
+    'Dağıtık event streaming platformu (KRaft, Zookeeper\'sız).':
+      'Distributed event streaming platform (KRaft, no Zookeeper).',
+    'Dağıtık wide-column store. Yüksek yazma hacmi, lineer ölçek.':
+      'Distributed wide-column store. High write volume, linear scaling.',
+    'Distributed mode en az 4 disk/node ister; tek node erasure-code\'suz çalışır.':
+      'Distributed mode needs at least 4 disks/nodes; a single node runs without erasure coding.',
+    'Doküman':
+      'Document',
+    'Doküman veritabanı. Şemasız JSON/BSON kayıtlar.':
+      'Document database. Schemaless JSON/BSON records.',
+    'Dosya bazlı zayıf copyleft. Kullanımda pratik kısıtlama yok.':
+      'File-level weak copyleft. No practical restriction on use.',
+    'Dosya ve görsel depolama':
+      'File and image storage',
+    'ES_JAVA_OPTS içindeki -Xms açılışta ayrılan heap\'tir ve -Xmx ile eşit verilir.':
+      'The -Xms in ES_JAVA_OPTS is the heap allocated at start-up and is set equal to -Xmx.',
+    'En sık kullanılan':
+      'Most used',
+    'GTID tabanlı asenkron replikasyon. Replika read-only açılır.':
+      'GTID-based asynchronous replication. The replica starts read-only.',
+    'Gelişmiş ilişkisel veritabanı. JSONB, GIS, full-text.':
+      'Advanced relational database. JSONB, GIS, full-text.',
+    'Genelde başka bir DB ile birlikte':
+      'Usually alongside another DB',
+    'Grafana OSS AGPL-3.0\'dır. Olduğu gibi çalıştırmak serbesttir; AGPL yükümlülüğü ancak Grafana\'yı DEĞİŞTİRİP ağ üzerinden üçüncü taraflara sunarsanız doğar. İç ağda kendi panolarınızı kullanmak bu kapsama girmez.':
+      'Grafana OSS is AGPL-3.0. Running it as-is is free; the AGPL obligation arises only if you MODIFY Grafana and offer it to third parties over a network. Using your own dashboards on an internal network does not fall under that.',
+    'Graph veritabanı. İlişki ağırlıklı sorgular (Cypher).':
+      'Graph database. Relationship-heavy queries (Cypher).',
+    'HTTP arayüzü':
+      'HTTP interface',
+    'Her kaydın alanları farklı olabilir. Ürün katalogları, form yanıtları, IoT kayıtları gibi değişken veriler.':
+      'Every record can have different fields. Variable data such as product catalogues, form responses and IoT readings.',
+    'Hız için geçici bellek deposu':
+      'A temporary in-memory store for speed',
+    'Index başına number_of_replicas ile. Tek node\'da replika ataması yapılamaz (yellow health normaldir).':
+      'Per index, via number_of_replicas. On a single node no replica can be assigned (yellow health is normal).',
+    'InnoDB buffer pool\'unu sunucu AÇILIŞTA ayırır ve işletim sistemine geri vermez; MARIADB_MEM_LIMIT ise yalnızca üst sınırdır.':
+      'The server allocates the InnoDB buffer pool AT START-UP and never gives it back to the operating system; MARIADB_MEM_LIMIT is only a ceiling.',
+    'KAFKA_HEAP_OPTS içindeki -Xms açılışta ayrılan JVM heap\'idir.':
+      'The -Xms in KAFKA_HEAP_OPTS is the JVM heap allocated at start-up.',
+    'Kafka bir log\'dur, veritabanı değil — yedek yerine RF ve retention politikası kullanılır.':
+      'Kafka is a log, not a database — instead of backups you use RF and a retention policy.',
+    'Kafka protokolü':
+      'Kafka protocol',
+    'Kafka\'ya göre daha kolay':
+      'Easier than Kafka',
+    'Kalıcı veri deposu değildir. Oturum bilgisi, önbellek ve iş kuyruğu için kullanılır; uygulamayı belirgin hızlandırır.':
+      'Not a durable data store. Used for session state, caching and job queues; it makes an application noticeably faster.',
+    'Klasik tablolu veri için en yaygın seçim':
+      'The most common choice for classic tabular data',
+    'Kolon tabanlı OLAP veritabanı. Milyar satırda saniyealtı sorgu.':
+      'Column-oriented OLAP database. Sub-second queries over a billion rows.',
+    'Kullanıcılar, siparişler, ürünler gibi satır-sütun verisi için. JSON alanları, harita/konum verisi, tam metin arama ve karmaşık raporlama sorguları da doğrudan içinde çözülür — çoğu proje bunun dışına çıkmadan yıllarca gider.':
+      'For row-and-column data such as users, orders and products. JSON fields, map/location data, full-text search and complex reporting queries are all handled inside it too — most projects go for years without needing anything else.',
+    'Kullanıcılar, siparişler, ürünler gibi satır-sütun verisi. WordPress, Laravel, çoğu web uygulaması bunu ister.':
+      'Row-and-column data such as users, orders and products. WordPress, Laravel and most web applications ask for this.',
+    'Mesajlaşma & Streaming':
+      'Messaging & Streaming',
+    'Microsoft SQL Server 2022 Express. T-SQL iş yükleri.':
+      'Microsoft SQL Server 2022 Express. T-SQL workloads.',
+    'Microsoft dünyası uygulamaları için':
+      'For applications in the Microsoft world',
+    'Milyonlarca satır üzerinde toplam/ortalama alan raporlar. Günlük uygulama verisi için değil, analiz için.':
+      'Reports that sum or average over millions of rows. Not for everyday application data — for analysis.',
+    'MongoDB kendi seçimini yapar. Çoğunluk gerektiği için 3. üye olarak bir arbiter eklenir — 2 üyeyle biri düşünce çoğunluk kaybolur ve seçim yapılamaz.':
+      'MongoDB holds its own election. Because a majority is required, an arbiter is added as a third member — with two members, losing one destroys the majority and no election can be held.',
+    'MongoDB protokolü':
+      'MongoDB protocol',
+    'MySQL protokolü':
+      'MySQL protocol',
+    'MySQL uyumlu ilişkisel veritabanı. Genel amaçlı OLTP.':
+      'MySQL-compatible relational database. General-purpose OLTP.',
+    'Partition lider seçimi KRaft controller\'ın işidir; tek broker\'da devreye girmez.':
+      'Partition leader election is the KRaft controller\'s job; it does not come into play on a single broker.',
+    'PgBouncer bağlantı havuzu':
+      'PgBouncer connection pool',
+    'PostgreSQL protokolü':
+      'PostgreSQL protocol',
+    'REPLICAOF NO ONE ile replika primary olur. Redis Sentinel\'e gerek kalmaz; aynı işi controller yapar.':
+      'REPLICAOF NO ONE makes the replica the primary. Redis Sentinel is not needed; the controller does the same job.',
+    'RESP protokolü':
+      'RESP protocol',
+    'Rapor ve analiz sorguları için':
+      'For reporting and analytics queries',
+    'Replica set (rs0). Primary de --replSet ile yeniden başlar — kesinti olur.':
+      'Replica set (rs0). The primary also restarts with --replSet — there is an outage.',
+    'ReplicatedMergeTree + ClickHouse Keeper gerektirir; tek node\'da kapalıdır.':
+      'Requires ReplicatedMergeTree plus ClickHouse Keeper; it is off on a single node.',
+    'Replika yükseltilir ve yazmaya açılır. Eski primary fence edilir (durdurulur) — iki primary\'nin aynı anda yazması (split-brain) böyle engellenir.':
+      'The replica is promoted and opened for writes. The old primary is fenced (stopped) — that is how two primaries writing at once (split-brain) is prevented.',
+    'Sabit şeması olmayan kayıtlar için':
+      'For records with no fixed schema',
+    'Saniyede on binlerce kayıt yazan sistemler (sensör, tıklama, log). Küçük projeler için gereğinden ağırdır.':
+      'Systems writing tens of thousands of records per second (sensors, clicks, logs). Heavier than small projects need.',
+    'Sertifikayı indirin':
+      'Download the certificate',
+    'Servisler arası olay akışı için':
+      'For event flow between services',
+    'Shard\'ların primary/replica ataması küme içinde otomatiktir; tek node\'da yapacak bir şey yoktur.':
+      'Primary/replica assignment of shards is automatic within the cluster; on a single node there is nothing to do.',
+    'Site içi arama kutusu, ya da uygulama loglarını toplayıp Kibana\'da grafikle inceleme. Yanında Kibana arayüzü gelir.':
+      'An on-site search box, or collecting application logs and inspecting them graphically in Kibana. The Kibana interface comes with it.',
+    'Standby pg_ctl promote ile primary olur. Eski primary fence edilir; geri döndüğünde otomatik primary OLMAZ, replika olarak yeniden kurulur.':
+      'The standby becomes primary via pg_ctl promote. The old primary is fenced; when it comes back it does NOT automatically become primary, it is rebuilt as a replica.',
+    'TDS protokolü':
+      'TDS protocol',
+    'Tablolu veri + gelişmiş özellikler':
+      'Tabular data plus advanced features',
+    'Tam açık kaynak. Kullanımda kısıtlama yok.':
+      'Fully open source. No restriction on use.',
+    'Topic başına replication.factor ile. Tek broker\'da RF=1 sınırı vardır.':
+      'Per topic, via replication.factor. A single broker is limited to RF=1.',
+    'Varsayılan MSSQL_PID=Express: ücretsizdir ve üretimde kullanılabilir. Sınırları: veritabanı başına 10 GB, ~1.4 GB tampon havuzu, en fazla 4 çekirdek. Tüm özellikler gerekiyorsa MSSQL_PID=Developer ücretsizdir ama YALNIZ geliştirme/test içindir; üretimde Standard/Enterprise lisansı gerekir.':
+      'The default MSSQL_PID=Express is free and may be used in production. Its limits: 10 GB per database, ~1.4 GB buffer pool, at most 4 cores. If you need every feature, MSSQL_PID=Developer is free but is for development/test ONLY; production requires a Standard/Enterprise licence.',
+    'Veritabanlarınızın grafikleri':
+      'Graphs of your databases',
+    'Veritabanı değil, izleme aracı':
+      'Not a database — a monitoring tool',
+    'cassandra-env.sh MAX_HEAP_SIZE\'ı hem -Xms hem -Xmx yapar; JVM heap\'i açılışta ayırır.':
+      'cassandra-env.sh sets MAX_HEAP_SIZE as both -Xms and -Xmx; the JVM allocates the heap at start-up.',
+    'heap initial ve max eşit veriliyor, JVM açılışta ayırır. Sayfa önbelleği (NEO4J_PAGECACHE) sayfa okundukça dolar, o bir tavandır.':
+      'Heap initial and max are set equal, so the JVM allocates at start-up. The page cache (NEO4J_PAGECACHE) fills as pages are read; that one is a ceiling.',
+    'replicaof ile anlık. Kesinti yok, replika read-only.':
+      'Instant, via replicaof. No outage; the replica is read-only.',
+    'shared_buffers\'ı postmaster AÇILIŞTA tek parça paylaşımlı bellek olarak ayırır. work_mem bağlantı başına ve geçicidir, rezerve değildir.':
+      'The postmaster allocates shared_buffers AT START-UP as one block of shared memory. work_mem is per-connection and temporary, not a reservation.',
+    'Çok yüksek yazma hacmi için':
+      'For very high write volume',
+    'Ölçüm verisi yedeklenmez: kaybolursa yeniden toplanır, veritabanlarınızın verisi değildir. Panolar zaten dosya olarak depoda durur.':
+      'Measurement data is not backed up: if lost it is collected again, and it is not your databases\' data. The dashboards are kept in the repository as files anyway.',
+    'Ücretli DEĞİL, AGPL-3.0. Ancak 2025\'te community konsolundaki YÖNETİM özellikleri ticari AIStor\'a taşındı. Bu yüzden sürüm bilerek o değişiklikten önceye sabitlendi (konsol tam çalışsın diye). AGPL: MinIO\'yu değiştirip servis olarak sunarsanız kaynağı açmanız gerekir; kendi altyapınızda kullanmak serbesttir.':
+      'NOT paid — AGPL-3.0. However, in 2025 the MANAGEMENT features of the community console moved to the commercial AIStor. The version is therefore pinned deliberately to before that change (so the console works in full). AGPL: if you modify MinIO and offer it as a service you must open your source; using it on your own infrastructure is free.',
+    'İlerleme aşağıda canlı görünür. Pencereyi kapatsanız da iş sunucuda devam eder.':
+      'Progress appears live below. The job carries on server-side even if you close the window.',
+    'İlişki ağırlıklı veri için':
+      'For relationship-heavy data',
+    'İlişkisel':
+      'Relational',
+    'İlk açılışta veritabanı imajı indirileceği için bu birkaç dakika sürebilir. Pencereyi açık bırakabilirsiniz; iş sunucuda devam eder.':
+      'The first start pulls the database image, so this can take a few minutes. You can leave the window open; the job carries on server-side.',
+    'İzleme aracının yedeği olmaz; kapalıyken veritabanlarınız etkilenmez.':
+      'A monitoring tool has no standby; while it is off your databases are unaffected.',
+    'İşlem sürüyor…':
+      'Working…',
+    'Tam açık kaynak. Kısıtlama yok.':
+      'Fully open source. No restriction.',
+    'İlk açılışta veritabanı imajı indirileceği için bu birkaç dakika sürebilir.':
+      'The first start pulls the database image, so this can take a few minutes.',
+    'İlk açılışta veritabanı imajı indirileceği için bu birkaç dakika sürebilir. Pencereyi açık bırakabilirsiniz; ilerleme aşağıda canlı görünür.':
+      'The first start pulls the database image, so this can take a few minutes. You can leave the window open; progress appears live below.',
+
+    /* --- değerle başlayan kalıplar ('512 MB baştan ayrılan') --- */
+    '{1} Baştan ayıracağı: {2}.':
+      '{1} Would reserve up front: {2}.',
+    '{1} açılsın mı?':
+      'Turn on {1}?',
+    '{1} açılıyor…':
+      'Starting {1}…',
+    '{1} bakımı…':
+      '{1} maintenance…',
+    '{1} bağlantı bilgileri':
+      '{1} connection details',
+    '{1} baştan ayrılan':
+      '{1} reserved up front',
+    '{1} boş':
+      '{1} free',
+    '{1} boş · baskı {2}':
+      '{1} free · pressure {2}',
+    '{1} geri yükleniyor…':
+      'Restoring {1}…',
+    '{1} geri yüklensin mi?':
+      'Restore {1}?',
+    '{1} kapatılsın mı?':
+      'Turn off {1}?',
+    '{1} kapatılıyor…':
+      'Stopping {1}…',
+    '{1} kurtarma provası…':
+      '{1} restore drill…',
+    '{1} takas öncesine dönsün mü?':
+      'Take {1} back to before the switch?',
+    '{1} takas öncesine dönüyor…':
+      'Taking {1} back to before the switch…',
+    '{1} yeni kopyaya geçsin mi?':
+      'Switch {1} to the new copy?',
+    '{1} yeni kopyaya hazırlanıyor…':
+      'Preparing {1} on a new copy…',
+    '{1} çekirdek':
+      '{1} cores',
+    '{1} üst sınır':
+      '{1} ceiling',
+    '{1} şu an açılamıyor':
+      '{1} cannot be turned on right now',
+    '{1}Veriye dokunulmadı. Sunucuda o an başka bir yedekleme ya da geri yükleme sürüyordu; o iş bitince tekrar deneyebilirsiniz.':
+      '{1}No data was touched. Another backup or restore was running on the server at that moment; try again once it finishes.',
+    'sn': 's'
   };
 
   function dilOku() {
@@ -1064,7 +1324,17 @@
     k.querySelectorAll('[data-i18n]').forEach(function (el) {
       /* Özgün Türkçe metin bir kez saklanıyor: dil ileri geri
          değiştirildiğinde İngilizceyi tekrar çevirmeye kalkmayalım. */
-      if (!el.dataset.i18nSrc) el.dataset.i18nSrc = el.textContent.trim();
+      /* İÇ BOŞLUKLAR SIKIŞTIRILIR. Ölçülen hata: HTML'de birden çok
+         satıra yayılan bir cümlenin textContent'i satır sonlarını ve
+         girintileri taşıyor; sözlük anahtarı ise tek boşlukla yazılı.
+         İkisi eşleşmediği için ÇOK SATIRLI HER data-i18n çevrilmeden
+         kalıyordu — panelin başlık ve açıklama metinlerinin çoğu böyle.
+         Daha kötüsü: selftest de sıkıştırarak baktığı için 'karşılığı var'
+         diyordu; kontrol, ürünün yaptığından BAŞKA bir şeyi ölçüyordu.
+         uygulaHtml() zaten böyle normalleştiriyordu; ikisi artık aynı. */
+      if (!el.dataset.i18nSrc) {
+        el.dataset.i18nSrc = el.textContent.replace(/\s+/g, ' ').trim();
+      }
       el.textContent = t(el.dataset.i18nSrc);
     });
     k.querySelectorAll('[data-i18n-attr]').forEach(function (el) {
