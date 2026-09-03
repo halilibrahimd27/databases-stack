@@ -3353,12 +3353,15 @@ def _kod_satirlari(yol, yalniz_komut=True):
     return out
 
 
-_ciftler = [("README.md", "README.en.md")]
-_ciftler += [(f, f.replace(".md", ".en.md")) for f in sorted(_glob2.glob("docs/*.md"))
-             if not f.endswith(".en.md")]
+# ADLANDIRMA: <ad>.md = İNGİLİZCE (deponun varsayılanı; GitHub bunu gösterir),
+# <ad>.tr.md = Türkçe. Açık kaynak bir depoda varsayılanın İngilizce olması,
+# projeyi ilk açan insanın okuyabildiği bir şeyle karşılaşması demek.
+_ciftler = [("README.md", "README.tr.md")]
+_ciftler += [(f, f.replace(".md", ".tr.md")) for f in sorted(_glob2.glob("docs/*.md"))
+             if not f.endswith(".tr.md")]
 
 _eksik = [en for _tr, en in _ciftler if not _os2.path.exists(en)]
-ck("her Türkçe belgenin İngilizce eşi var", not _eksik,
+ck("her İngilizce belgenin Türkçe eşi var", not _eksik,
    ", ".join(_eksik) or "%d çift" % len(_ciftler))
 
 _komut_fark, _kisa, _anahtarsiz = [], [], []
@@ -3389,19 +3392,34 @@ ck("her belgede dil anahtarı var", not _anahtarsiz,
 # "# Ana kopyayı öldür" görürse belge yarım çevrilmiş demektir.
 _TRH = set("çğışöüÇĞİŞÖÜ")
 _tr_yorum = []
-for _tr, _en in _ciftler:
-    if not _os2.path.exists(_en):
+for _en_dosya, _tr_dosya in _ciftler:
+    if not _os2.path.exists(_tr_dosya):
         continue
     _ic = False
-    for _ln in io.open(_en, encoding="utf-8"):
+    for _ln in io.open(_en_dosya, encoding="utf-8"):
         if _ln.startswith("```"):
             _ic = not _ic
             continue
         if _ic and _ln.lstrip().startswith("#") and (set(_ln) & _TRH):
-            _tr_yorum.append(_en)
+            _tr_yorum.append(_en_dosya)
             break
 ck("İngilizce belgelerde Türkçe kod yorumu kalmamış", not _tr_yorum,
    ", ".join(_tr_yorum) or "temiz")
+
+# Yeniden adlandırma sırasında bir bağlantının sessizce boşa düşmesi,
+# belgeyi okuyanın 404 görmesi demek. .md ↔ .tr.md geçişinde tam olarak bu
+# risk var: dosya adları değişti, bağlantılar değişmeyebilir.
+_kirik = []
+for _b in ["README.md", "README.tr.md"] + sorted(_glob2.glob("docs/*.md")):
+    _icerik = io.open(_b, encoding="utf-8").read()
+    for _m in _re2.finditer(r"\]\(((?:\.\./)?(?:docs/)?[A-Za-z0-9._-]+\.md)[^)]*\)",
+                            _icerik):
+        _hedef = _os2.path.normpath(
+            _os2.path.join(_os2.path.dirname(_b) or ".", _m.group(1)))
+        if not _os2.path.exists(_hedef):
+            _kirik.append("%s → %s" % (_b, _m.group(1)))
+ck("belgeler arası bağlantıların hepsi var olan dosyaya gidiyor", not _kirik,
+   ", ".join(_kirik[:3]) or "kırık yok")
 
 # --- python3 - <<EOF ile VERİ BORUSU birlikte kullanılamaz -------------------
 # `python3 - <<EOF` yazıldığında program stdin'den okunur; boruyla gelen veri

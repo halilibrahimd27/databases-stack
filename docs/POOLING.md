@@ -1,173 +1,186 @@
-# Bağlantı havuzu (PgBouncer) — 6432
+# Connection pool (PgBouncer) — 6432
 
-***Türkçe** · [English](POOLING.en.md)*
+*[Türkçe](POOLING.tr.md) · **English***
 
-PostgreSQL'de her bağlantı ayrı bir **süreçtir**. Bu belgenin tek cümlelik
-özeti: havuz kullanmayan bir uygulama, veritabanını *bellekle* değil *süreç
-sayısıyla* öldürür. `shared_buffers` ve `work_mem × max_connections` hesabı
-doğru yapılmış 2 GB'lık bir PostgreSQL, 200 kısa ömürlü bağlantı açan küçük
-bir uygulamanın altında "RAM yetiyor" derken cevap veremez hale gelir.
+In PostgreSQL every connection is a separate **process**. The one-sentence
+summary of this document: an application that uses no pool kills the database
+not with *memory* but with *process count*. A 2 GB PostgreSQL whose
+`shared_buffers` and `work_mem × max_connections` math was done correctly
+becomes unable to answer — while still saying "there is enough RAM" — under a
+small application that opens 200 short-lived connections.
 
-Bu yığın **6432** portunda bir PgBouncer sunar. **5432 değişmez**: doğrudan
-bağlantı varsayılan yoldur, havuz isteyene açıktır.
+This stack serves a PgBouncer on port **6432**. **5432 does not change**: the
+direct connection is the default path, the pool is open to whoever wants it.
 
 ---
 
-## 1. Ne zaman gerekir
+## 1. When it is needed
 
-Havuz **gerekir** ise:
+A pool **is needed** if:
 
-- Uygulama sunucusu her istekte yeni bağlantı açıyorsa — PHP-FPM, CGI,
-  cron işleri, kısa ömürlü işçiler, "serverless" çalışan kod.
-- `FATAL: sorry, too many clients already` görüyorsanız.
-- Aşağıdaki sorgu yüzlerce `idle` satır döndürüyorsa:
+- Your application server opens a new connection on every request — PHP-FPM,
+  CGI, cron jobs, short-lived workers, code running "serverless".
+- You are seeing `FATAL: sorry, too many clients already`.
+- The query below returns hundreds of `idle` rows:
 
 ```sql
 SELECT state, count(*) FROM pg_stat_activity GROUP BY state ORDER BY 2 DESC;
 ```
 
-Havuz **gerekmez** ise:
+A pool **is not needed** if:
 
-- Uygulama çerçevesi zaten havuz tutuyorsa (HikariCP, SQLAlchemy `pool_size`,
-  `pgx`/`node-postgres` havuzu). Bağlantı sayısı zaten sınırlıdır; ikinci bir
-  havuz katmanı fayda getirmez, yalnız bir atlama daha ekler.
-- Uzun süren analitik sorgular çalıştırıyorsanız: havuz bağlantıyı *işlem*
-  bitince geri alır, uzun tek işlemde kazanç yoktur.
+- Your application framework already keeps a pool (HikariCP, SQLAlchemy
+  `pool_size`, the `pgx`/`node-postgres` pool). The connection count is already
+  bounded; a second pool layer brings no benefit, it only adds one more hop.
+- You run long analytical queries: the pool takes the connection back when the
+  *transaction* ends, and there is no gain in a single long transaction.
 
 ---
 
-## 2. 5432 ile 6432 farkı
+## 2. The difference between 5432 and 6432
 
-| | **5432 — doğrudan** | **6432 — havuz** |
+| | **5432 — direct** | **6432 — pooled** |
 |---|---|---|
-| Arkasında | PostgreSQL'in kendisi | PgBouncer, `pool_mode = transaction` |
-| Oturum durumu | korunur | **korunmaz** (bkz. 3. bölüm) |
-| Bağlantı maliyeti | bir süreç (MB'lar) | bir tampon (~8 KB) |
-| Devirde | gateway tablosu otomatik güncellenir | havuz **yeniden yaratılmalı** |
-| Kimler kullanmalı | psql, pgAdmin, yedekleme, replikasyon, göç araçları | çok sayıda kısa ömürlü bağlantı açan uygulamalar |
+| Behind it | PostgreSQL itself | PgBouncer, `pool_mode = transaction` |
+| Session state | preserved | **not preserved** (see section 3) |
+| Cost of a connection | a process (megabytes) | a buffer (~8 KB) |
+| On failover | the gateway table is updated automatically | the pool **must be recreated** |
+| Who should use it | psql, pgAdmin, backup, replication, migration tools | applications that open many short-lived connections |
 
-5432'yi havuza çevirmek bilerek yapılmadı: (1) replikasyon ve devir testleri
-5432'den geçen yolu ölçüyor, o portu değiştirmek testin doğruladığı yolu
-ürünün gerçek yolundan ayırırdı; (2) transaction pooling çalışan istemcileri
-sessizce bozabilir — varsayılanı böyle bir şey olamaz.
+Turning 5432 into a pool was deliberately not done: (1) the replication and
+failover tests measure the path that goes through 5432, and changing that port
+would separate the path the test verifies from the product's real path;
+(2) transaction pooling can silently break working clients — the default cannot
+be a thing like that.
 
 ---
 
-## 3. Transaction pooling'in sınırları
+## 3. The limits of transaction pooling
 
-`pool_mode = transaction`: sunucu bağlantısı **işlem bitince** havuza döner ve
-bir sonraki işlemde **başka bir istemciye** gidebilir. Bu yüzden oturuma
-bağlanan her şey güvenilmezdir:
+`pool_mode = transaction`: the server connection returns to the pool **when the
+transaction ends** and on the next transaction it can go **to another client**.
+That is why everything that hangs on the session is unreliable:
 
-- SQL düzeyinde `PREPARE` / `DEALLOCATE`
-- `SET` / `RESET` ile oturum değişkenleri
+- `PREPARE` / `DEALLOCATE` at the SQL level
+- session variables via `SET` / `RESET`
 - `LISTEN` / `NOTIFY`
-- `WITH HOLD` cursor, oturum düzeyinde advisory lock, geçici tablolar
+- `WITH HOLD` cursors, session-level advisory locks, temporary tables
 
-**Çalışan durum:** protokol düzeyinde hazırlanmış deyimler (JDBC, asyncpg,
-Npgsql, `pgx`). PgBouncer 1.25.2'de `max_prepared_statements` varsayılanı
-**200**'dür — çalışan havuzda `SHOW CONFIG` ile doğrulandı — yani bu sürücüler
-transaction pooling'de sorunsuz çalışır.
+**What does work:** prepared statements at the protocol level (JDBC, asyncpg,
+Npgsql, `pgx`). In PgBouncer 1.25.2 the `max_prepared_statements` default is
+**200** — verified with `SHOW CONFIG` on the running pool — so these drivers
+work fine under transaction pooling.
 
-**Sinsi olan:** tek istemciyle denediğinizde `PREPARE` + `EXECUTE` ve `SET`
-"çalışıyor" görünür. Ölçüldü: havuzda başka istemci yokken aynı sunucu
-bağlantısı geri verildiği için iş görür. Yük altında bu garanti **yoktur**;
-bozulma ancak eşzamanlılık artınca ortaya çıkar. Oturum davranışına ihtiyaç
-duyan iş 5432'ye bağlanmalıdır.
+**The insidious part:** when you try it with a single client, `PREPARE` +
+`EXECUTE` and `SET` look like they "work". Measured: with no other client in
+the pool the same server connection is handed back, so it does the job. Under
+load that guarantee **does not exist**; the breakage only surfaces once
+concurrency rises. Work that needs session behavior must connect to 5432.
 
 ---
 
-## 4. Havuz ayarları nereden geliyor
+## 4. Where the pool settings come from
 
-Ayarlar **`POSTGRES_MAX_CONNECTIONS`'tan türetilir** — sabit değildir. Kural
-şudur: *havuzun sunucuda açacağı bağlantı, sunucunun kabul ettiğini aşamaz.*
-Aşarsa havuz sorunu çözmez, **üretir**: `too many clients` hatasını
-uygulamadan alıp kendi üstüne taşır ve artık tek arıza noktası havuzdur.
+The settings are **derived from `POSTGRES_MAX_CONNECTIONS`** — they are not
+fixed. The rule is this: *the connections the pool will open on the server
+cannot exceed what the server accepts.* If they do, the pool does not solve the
+problem, it **produces** one: it takes the `too many clients` error away from
+the application and carries it onto itself, and from then on the single point
+of failure is the pool.
 
-Hesabı `docker-compose.yml`deki `pgbouncer` entrypoint'i yapar. 200 örneği:
+The math is done by the `pgbouncer` entrypoint in `docker-compose.yml`. The 200
+example:
 
-| Ayar | Formül | 200'de | Neden |
+| Setting | Formula | At 200 | Why |
 |---|---|---|---|
-| `default_pool_size` | `max_connections / 4` | 50 | tek bir (rol, veritabanı) çifti payın dörtte birinden fazlasını almasın |
-| `max_user_connections` | `max_connections / 2` | 100 | rol başına tavan |
-| `max_db_connections` | `max_connections / 2` | 100 | veritabanı başına tavan |
-| `max_client_conn` | `max_connections × 5` | 1000 | istemci ucuzdur (~8 KB), sunucu bağlantısı pahalıdır (bir süreç) |
+| `default_pool_size` | `max_connections / 4` | 50 | a single (role, database) pair should not take more than a quarter of the share |
+| `max_user_connections` | `max_connections / 2` | 100 | ceiling per role |
+| `max_db_connections` | `max_connections / 2` | 100 | ceiling per database |
+| `max_client_conn` | `max_connections × 5` | 1000 | a client is cheap (~8 KB), a server connection is expensive (a process) |
 
-Kalan **%50 bilerek boş bırakılır**: pgAdmin, `postgres-exporter`, yedek alan
-`pg_dump` ve doğrudan 5432'ye bağlanan yönetici de bağlantı bulabilmeli.
-Havuz o payı da yerse veritabanı "ayakta" görünürken panelden bakamaz, yedek
-alamaz hale gelirsiniz.
+The remaining **50% is left free deliberately**: pgAdmin, `postgres-exporter`,
+the `pg_dump` that takes the backup and the administrator connecting directly
+to 5432 must be able to find a connection too. If the pool eats that share as
+well, the database looks "up" while you become unable to look at it from the
+panel or to take a backup.
 
-PgBouncer'da **genel** bir üst sınır yoktur; yukarıdaki iki tavan birliktedir.
-Bu yüzden sınır tam olarak şudur: havuzun açabileceği toplam bağlantı
-`100 × min(rol sayısı, veritabanı sayısı)`. İkisinden **küçük olanı 2'yi
-geçmediği sürece** toplam `max_connections`ı aşamaz. Üçten fazla rol *ve*
-üçten fazla veritabanını aynı anda havuz üzerinden kullanacaksanız
-`max_connections`ı büyütün (daha çok RAM = katalogdaki `per_gb` kuralı) ya da
-uygulamaları tek rolde toplayın.
+There is no **global** upper limit in PgBouncer; the two ceilings above work
+together. So the limit is exactly this: the total number of connections the
+pool can open is `100 × min(number of roles, number of databases)`. **As long
+as the smaller of the two does not exceed 2**, the total cannot exceed
+`max_connections`. If you are going to use more than three roles *and* more
+than three databases over the pool at the same time, increase `max_connections`
+(more RAM = the `per_gb` rule in the catalog) or gather the applications onto a
+single role.
 
-Tepe anında serbest sunucu bağlantısı kalmazsa istemci **reddedilmez, sıraya
-alınır** (`query_wait_timeout` varsayılanı 120 sn). Havuzun bütün değeri
-burada: 1000 istemci sıraya girer, veritabanı 50 süreçle çalışmaya devam eder.
+If no free server connection is left at peak, the client **is not refused, it
+is queued** (`query_wait_timeout` default 120 s). The whole value of the pool
+is here: 1000 clients queue up, the database keeps working with 50 processes.
 
 ---
 
-## 5. Devirden sonra havuz YENİDEN YARATILMALIDIR
+## 5. After a failover the pool MUST BE RECREATED
 
-PgBouncer'ın hedefi **ana kopyadır** ve devirde ana kopya değişir
-(`postgresql` → `postgresql-replica`). Hedef adres `POSTGRES_PRIMARY_HOST`
-ortam değişkeninden gelir, ama **container yaratılırken** `pgbouncer.ini`'ye
-yazılır: çalışan container ortam değişkenini yeniden okumaz. Devirden sonra
-yeniden yaratılmazsa havuz, fence edilmiş (durdurulmuş) eski ana kopyaya
-bakmaya devam eder — 6432'ye bağlanan uygulamalar için devir hiç olmamış gibi
-görünür.
+PgBouncer's target is the **primary**, and on failover the primary changes
+(`postgresql` → `postgresql-replica`). The target address comes from the
+`POSTGRES_PRIMARY_HOST` environment variable, but it is written into
+`pgbouncer.ini` **when the container is created**: a running container does not
+re-read the environment variable. If it is not recreated after a failover, the
+pool keeps looking at the fenced (stopped) old primary — for applications
+connecting to 6432 it looks as if the failover never happened.
 
 ```bash
 docker compose --profile postgresql up -d --force-recreate --no-deps pgbouncer
 ```
 
-Bu, izleme ucunun (`postgres-exporter`) devirde yeniden yaratılmasıyla aynı
-sınıftan bir iştir; farkı, burada etkilenenin grafikler değil **trafik**
-olmasıdır.
+This is a job of the same class as recreating the monitoring endpoint
+(`postgres-exporter`) on failover; the difference is that what is affected here
+is not the graphs but the **traffic**.
 
-**Karıştırmayın:** ana kopya *aynı adla* yeniden başlarsa (yeniden başlatma,
-kısa kesinti) havuz kendi kendine toparlanır. Ölçüldü: arka uç durduğunda
-istemciler sıraya alınır, arka uç döndükten ~15 sn sonra (`server_login_retry`)
-sorgular yeniden akar. Yeniden yaratma yalnızca **adres değiştiğinde** gerekir.
-
----
-
-## 6. Sağlık kontrolü ne söyler, ne söylemez
-
-`pgbouncer` servisinin healthcheck'i `pg_isready -p 6432` çalıştırır ve
-**yalnız havuz sürecini** ölçer. Ölçüldü: PostgreSQL tamamen durdurulmuşken de
-`accepting connections` der, çünkü PgBouncer istemciyi kabul edip sıraya alır.
-Bu bilerek böyle: motorun sağlığı zaten `postgresql` servisinin
-healthcheck'inde ölçülüyor; ikinci kez ölçmek, havuz sapasağlam ayaktayken onu
-"hasta" gösterip gereksiz yeniden başlatma üretirdi.
+**Do not confuse this:** if the primary comes back up *under the same name*
+(a restart, a short downtime) the pool recovers on its own. Measured: when the
+backend goes down clients are queued, and ~15 s after the backend returns
+(`server_login_retry`) queries flow again. Recreating is needed only **when the
+address changes**.
 
 ---
 
-## 7. Doğrulama
+## 6. What the health check says and what it does not
+
+The healthcheck of the `pgbouncer` service runs `pg_isready -p 6432` and
+measures **only the pool process**. Measured: it says `accepting connections`
+even when PostgreSQL is completely stopped, because PgBouncer accepts the
+client and queues it. This is deliberate: the engine's health is already
+measured in the `postgresql` service's healthcheck; measuring it a second time
+would show the pool as "sick" while it is perfectly fine and would produce
+unnecessary restarts.
+
+---
+
+## 7. Verification
 
 ```bash
-# Havuz üzerinden gerçek sorgu
+# A real query through the pool
 psql "postgresql://root@SUNUCU:6432/defaultdb" -c "select 1"
 
-# Yönetim konsolu: hangi havuz kaç bağlantı tutuyor
+# Admin console: which pool holds how many connections
 psql "postgresql://root@SUNUCU:6432/pgbouncer" -c "SHOW POOLS;"
 psql "postgresql://root@SUNUCU:6432/pgbouncer" -c "SHOW CONFIG;"
 
-# Açılışta hesaplanan sayılar loga basılır
+# The numbers computed at startup are written to the log
 docker logs pgbouncer | head -20
 ```
 
+(`SUNUCU` = your server address. The comments, top to bottom: a real query
+through the pool; the admin console — which pool is holding how many
+connections; the numbers computed at startup are printed to the log.)
+
 ---
 
-## 8. Kubernetes'te yok
+## 8. Not there on Kubernetes
 
-`scripts/gen-k8s.py` her motor için yalnız motorun kendi StatefulSet'ini
-üretir; **PgBouncer manifestlerde yoktur**. Üretilen `postgresql` Service'inde
-6432 portu görünür ama arkasında havuz olmadığı için yanıt vermez. K8s'te
-havuz istiyorsanız ayrı bir Deployment + Service eklemeniz gerekir; bu yığının
-havuzu Docker kurulumuna aittir.
+For each engine `scripts/gen-k8s.py` produces only the engine's own
+StatefulSet; **PgBouncer is not in the manifests**. Port 6432 shows up on the
+generated `postgresql` Service, but nothing answers on it because there is no
+pool behind it. If you want a pool on K8s you need to add a separate Deployment
++ Service; this stack's pool belongs to the Docker setup.

@@ -1,60 +1,64 @@
-# İzleme
+# Monitoring
 
-***Türkçe** · [English](MONITORING.en.md)*
+*[Türkçe](MONITORING.tr.md) · **English***
 
-Açtığınız veritabanlarının nasıl çalıştığını grafiklerle gösterir. Kurulum
-gerektirmez, yapılandırma istemez: panelden **İzleme**'yi açın, grafikler
-hazır gelir.
+It shows you with graphs how the databases you have turned on are running. It
+needs no setup and asks for no configuration: open **Monitoring** ("İzleme")
+from the panel, and the graphs are already there.
 
 ```bash
 ./stack.sh enable monitoring
 ./stack.sh panel monitoring        # adresi ve parolayı yazar
 ```
 
-Kapattığınızda hiçbir container çalışmaz, RAM tüketimi sıfırdır — diğer
-motorlarla aynı mantık.
+(`# adresi ve parolayı yazar` = it prints the address and the password.)
 
-## Ne göreceksiniz
+When you turn it off no container runs and RAM usage is zero — the same logic
+as the other engines.
 
-| Pano | Cevapladığı soru |
+## What you will see
+
+| Dashboard | The question it answers |
 |---|---|
-| **Genel Bakış** | Her şey ayakta mı? Hangi motor ne kadar RAM kullanıyor? Disk ne zaman dolar? |
-| **Motor panoları** | Kaç bağlantı var? Saniyede kaç işlem? Önbellek işe yarıyor mu? Yedek kopya geride mi? |
+| **Overview** ("Genel Bakış") | Is everything up? Which engine is using how much RAM? When does the disk fill up? |
+| **Engine dashboards** | How many connections are there? How many operations per second? Is the cache doing any good? Is the replica behind? |
 
-Her panelin altında ne anlama geldiği ve **ne zaman endişelenmeniz gerektiği**
-yazar. Amaç, veritabanı yönetmeyi bilmeden de "bir şey ters gidiyor mu?"
-sorusuna bakışta cevap verebilmenizdir.
+Under each panel it says what it means and **when you should worry**. The goal
+is that you can answer the question "is something going wrong?" at a glance,
+without knowing how to administer a database.
 
-**Genel Bakış panosu bu ürün için özel olarak önemlidir:** yığın belleği
-otomatik hesaplayıp dağıtır (bkz. [SIZING](../README.md#bellek-otomatik-hesaplanır)).
-Bu panoda her container'ın *gerçekte* ne kadar kullandığını ayrılan limitle
-yan yana görürsünüz — yani hesabın doğru olup olmadığını gözünüzle
-doğrulayabilirsiniz.
+**The Overview dashboard matters especially for this product:** the stack
+calculates and distributes memory automatically (see
+[SIZING](../README.md#memory-is-calculated-automatically)). On this
+dashboard you see how much each container is *actually* using side by side
+with the limit allocated to it — that is, you can verify with your own eyes
+whether the calculation is right.
 
-## Nasıl çalışıyor
+## How it works
 
 ```
-  motorlar          Prometheus            Grafana
+  engines           Prometheus            Grafana
  ┌─────────┐       ┌────────────┐       ┌──────────┐
- │exporter │──────▶│  toplar    │──────▶│ çizer    │
- └─────────┘       │  saklar    │       │ uyarır   │
+ │exporter │──────▶│ scrapes    │──────▶│ draws    │
+ └─────────┘       │ stores     │       │ alerts   │
                    └────────────┘       └──────────┘
                           ▲
-                   hedef listesi
-                   (controller üretir)
+                   target list
+                   (controller generates)
 ```
 
-Her motorun zaten bir **exporter**'ı vardı; eksik olan onu okuyan yüzdü.
+Every engine already had an **exporter**; what was missing was the face that
+reads it.
 
-**Hedef listesi elle yazılmaz.** Bir motoru açıp kapattığınızda controller
-`state/prometheus/targets.json` dosyasını yeniden üretir; Prometheus dosyayı
-izler ve listeyi kendiliğinden günceller. Yeniden başlatma gerekmez. Kapalı
-motor listede bulunmadığı için "erişilemiyor" uyarısı da yağmaz — kapalı olmak
-arıza değildir.
+**The target list is not written by hand.** When you turn an engine on or off,
+the controller regenerates `state/prometheus/targets.json`; Prometheus watches
+the file and updates the list on its own. No restart is needed. An engine that
+is off is not in the list, so no "unreachable" warnings rain down either —
+being off is not a failure.
 
-Prometheus, exporter'lara Docker ağı üzerinden **doğrudan** bağlanır; aradan
-TLS ve parola çıkar. Dışarıdaki kurumsal bir Prometheus'unuz varsa o, gateway
-üzerinden toplamaya devam edebilir:
+Prometheus connects to the exporters **directly** over the Docker network; TLS
+and passwords drop out of the path. If you have a corporate Prometheus
+outside, it can keep scraping through the gateway:
 
 ```yaml
 scrape_configs:
@@ -66,82 +70,90 @@ scrape_configs:
     static_configs: [{ targets: ['<sunucu>:9443'] }]
 ```
 
-## Kaynak kullanımı
+(`# motor başına bir uç` = one endpoint per engine; `<panel parolası>` = the
+panel password, `<sunucu>` = your server.)
 
-| Servis | Bellek | Ne yapar |
+## Resource usage
+
+| Service | Memory | What it does |
 |---|---|---|
-| Prometheus | ~512 MB | Metrikleri toplar ve saklar |
-| Grafana | ~256 MB | Grafikleri çizer |
-| node-exporter | ~64 MB | Sunucunun RAM/disk/CPU durumu |
+| Prometheus | ~512 MB | Collects and stores the metrics |
+| Grafana | ~256 MB | Draws the graphs |
+| node-exporter | ~64 MB | The server's RAM/disk/CPU state |
 
-Toplam ~830 MB. Container başına bellek/CPU için ayrı bir araç (cAdvisor)
-çalıştırılmaz: o bilgiyi zaten belleği dağıtan controller'ın kendisi
-yayınlar. Böylece grafiklerdeki sayılar, ayırma kararını veren kodun kendi
-defterinden gelir — ayrı bir aracın farklı sayması kafa karıştırırdı.
+~830 MB in total. A separate tool for per-container memory/CPU (cAdvisor) is
+not run: that information is already published by the controller that
+distributes the memory itself. This way the numbers in the graphs come from
+the very ledger of the code that makes the allocation decision — a separate
+tool counting differently would be confusing.
 
-Diğer motorlar gibi, sunucuda yer yoksa **açılmaz** ve size sebebini söyler —
-sessizce sunucuyu boğmaz.
+Like the other engines, if there is no room on the server it **does not start**
+and tells you why — it does not silently choke the server.
 
-Saklama süresi varsayılan **15 gün**, disk sınırı **2 GB**. İkisi birlikte
-sınırlanır: yalnız süre sınırlansaydı yoğun bir kurulumda disk sessizce dolar
-ve veritabanları yazmayı bırakırdı. Değiştirmek için `.env`:
+The retention period is **15 days** by default, the disk limit **2 GB**. The
+two are limited together: if only the period were limited, on a busy
+installation the disk would silently fill up and the databases would stop
+writing. To change them, `.env`:
 
 ```
 PROMETHEUS_RETENTION=30d
 PROMETHEUS_RETENTION_SIZE=5GB
 ```
 
-## Uyarılar
+## Alerts
 
-`config/prometheus/rules/databases.yml` içinde **dört** kural vardır ve bu
-sayı kasıtlı olarak azdır:
+There are **four** rules in `config/prometheus/rules/databases.yml`, and that
+number is deliberately small:
 
-- **MotorErisilemiyor** — açık bir motor 2 dakikadır cevap vermiyor
-- **BellekSinirinaYaklasiyor** — bir container ayrılan belleğin %90'ını aştı
-  (öncesinde uyarmak, gece yarısı OOM ile düşmesinden iyidir)
-- **ReplikasyonGeride** — yedek kopya 5 dakikadan fazla geride; bu durumda
-  otomatik devir yapılırsa aradaki veri kaybolur
-- **DiskDoluyor** — %10'dan az yer kaldı
+- **MotorErisilemiyor** — an engine that is on has not answered for 2 minutes
+- **BellekSinirinaYaklasiyor** — a container has exceeded 90% of the memory
+  allocated to it (warning beforehand is better than it going down at midnight
+  with an OOM)
+- **ReplikasyonGeride** — the replica is more than 5 minutes behind; if an
+  automatic failover happens in this state, the data in between is lost
+- **DiskDoluyor** — less than 10% of the space is left
 
-Yüzlerce hassas kural, uzman olmayan kullanıcı için gürültüden başka bir şey
-değildir. Her uyarının açıklamasında **ne yapılacağı** yazar.
+Hundreds of finely tuned rules are nothing but noise for a non-expert user.
+Each alert's description says **what to do**.
 
-Bildirim (e-posta, Slack, webhook) kurmak isterseniz Grafana içinden:
-**Alerting → Contact points**.
+If you want to set up notifications (e-mail, Slack, webhook), from inside
+Grafana: **Alerting → Contact points**.
 
-## Panoları değiştirmek
+## Changing the dashboards
 
-Panolar `config/grafana/dashboards/*.json` altında **kodun bir parçası**
-olarak durur ve salt-okunur bağlanır: sürüm kontrolünde kalırlar, kurulumda
-kendiliğinden gelirler, kazara silinemezler.
+The dashboards live under `config/grafana/dashboards/*.json` as **part of the
+code** and are mounted read-only: they stay in version control, they arrive by
+themselves at install time, and they cannot be deleted by accident.
 
-Kendi panonuzu yapmak isterseniz Grafana'da yeni pano oluşturun — buradakiler
-etkilenmez. Hazır panolardan birini değiştirmek isterseniz JSON dosyasını
-düzenleyin; Grafana 30 saniyede bir yeniden okur.
+If you want to build your own dashboard, create a new dashboard in Grafana —
+the ones here are not affected. If you want to change one of the ready-made
+dashboards, edit the JSON file; Grafana re-reads it every 30 seconds.
 
-## Sorun giderme
+## Troubleshooting
 
-**Grafikler boş.** Prometheus hedefleri topluyor mu, bakın: Grafana içinden
-**Connections → Data sources → Prometheus → Explore** ve `up{job="databases"}`
-sorgusunu çalıştırın. Hiç satır yoksa hedef listesi boştur — açık bir motor
-olduğundan emin olun, sonra:
+**The graphs are empty.** Check whether Prometheus is scraping the targets:
+from inside Grafana, **Connections → Data sources → Prometheus → Explore**, and
+run the query `up{job="databases"}`. If there is no row at all, the target list
+is empty — make sure an engine is on, then:
 
 ```bash
 cat state/prometheus/targets.json      # controller ne üretmiş?
 ./stack.sh logs prometheus
 ```
 
-**Bir motorun panosu boş, diğerleri dolu.** O motorun exporter'ı çalışmıyor
-olabilir:
+(`# controller ne üretmiş?` = what did the controller generate?)
+
+**One engine's dashboard is empty, the others are full.** That engine's
+exporter may not be running:
 
 ```bash
 docker ps --filter name=-exporter
 ./stack.sh logs <motor>-exporter
 ```
 
-MSSQL ve Neo4j'nin exporter'ı yoktur; onlar yalnız Genel Bakış panosunda
-(controller'ın yayınladığı bellek/CPU kullanımı olarak) görünür.
+MSSQL and Neo4j have no exporter; they appear only on the Overview dashboard
+(as the memory/CPU usage the controller publishes).
 
-**Grafana'ya giriş.** Panel zaten parola arkasında olduğu için Grafana'ya
-ziyaretçi olarak girersiniz; pano düzenlemek için `admin` kullanıcısıyla giriş
-yapın. Parola `credentials.txt` içindedir.
+**Logging in to Grafana.** Since the panel is already behind a password, you
+enter Grafana as a viewer; to edit dashboards, log in with the `admin` user.
+The password is in `credentials.txt`.

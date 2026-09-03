@@ -1,82 +1,83 @@
-# Güvenlik
+# Security
 
-***Türkçe** · [English](SECURITY.en.md)*
+*[Türkçe](SECURITY.tr.md) · **English***
 
-Bu ürün **iç ağ / VPN arkası** kullanım için tasarlandı.
+This product was designed for use **on an internal network / behind a VPN**.
 
-## Varsayılan güvenlik duruşu
+## Default security posture
 
-| Konu | Durum |
+| Topic | Status |
 |---|---|
-| Panellerin portları | Host'a **açılmaz** — yalnız gateway üzerinden erişilir |
-| Panel trafiği | TLS (iç CA, IP SAN'lı) + HTTP basic auth |
-| Veritabanı portları | Host'a açılır (uygulamanız bağlanabilsin diye) |
-| Parolalar | Motor başına ayrı, `install.sh` tarafından rastgele üretilir |
-| Kontrol servisi | Portu yok; yalnız gateway'den, paylaşılan token ile |
-| Metrik uçları | Tek TLS+auth'lu portta (9443), exporter portları kapalı |
-| Betiklerde parola | Ortam değişkeniyle geçer, komut satırında **görünmez** |
+| Panel ports | **Not published** to the host — reachable only through the gateway |
+| Panel traffic | TLS (internal CA, with IP SANs) + HTTP basic auth |
+| Database ports | Published to the host (so your application can connect) |
+| Passwords | Separate per engine, generated randomly by `install.sh` |
+| Controller | No port of its own; only from the gateway, with a shared token |
+| Metric endpoints | On a single TLS+auth port (9443), exporter ports closed |
+| Passwords in scripts | Passed through an environment variable, **not visible** on the command line |
 
-### Parolaların komut satırında olmaması neden önemli
+### Why it matters that passwords are not on the command line
 
-`docker exec mariadb mariadb -u root -pPAROLA` yazarsanız parola host'ta
-`ps aux` çıktısında ve `/proc/<pid>/cmdline` içinde görünür — sunucudaki her
-kullanıcı okuyabilir. Bu yüzden tüm betikler `MYSQL_PWD`, `PGPASSWORD`,
-`REDISCLI_AUTH`, `SQLCMDPASSWORD` gibi ortam değişkenlerini kullanır.
+If you type `docker exec mariadb mariadb -u root -pPAROLA`, the password shows up
+on the host in `ps aux` output and inside `/proc/<pid>/cmdline` — every user on
+the server can read it. That is why all scripts use environment variables such as
+`MYSQL_PWD`, `PGPASSWORD`, `REDISCLI_AUTH`, `SQLCMDPASSWORD`.
 
-## Kontrol servisinin yetkisi
+## The controller's privileges
 
-Kontrol servisi Docker soketine bağlıdır. **Bu, host üzerinde root'a eşdeğer bir
-yetkidir** — container başlatabilen, host dosya sistemini bağlayabilir. Bu yüzden:
+The controller is bound to the Docker socket. **This is a privilege equivalent to
+root on the host** — anything that can start a container can mount the host file
+system. That is why:
 
-- Host'a hiç port açmaz; ağdan doğrudan erişilemez
-- Gateway'in eklediği `X-Api-Token` olmadan her isteği 401 ile reddeder
-  (aynı docker ağındaki ele geçirilmiş bir panel bile ulaşamaz)
-- Yalnızca `catalog.json` içinde tanımlı motor kimliklerini kabul eder; keyfi
-  servis adı ya da dosya yolu geçirilemez
-- Alt süreçleri kabuk olmadan (`shell=False`) çalıştırır — komut enjeksiyonu yok
+- It publishes no port to the host at all; it cannot be reached directly from the network
+- It refuses every request with 401 unless it carries the `X-Api-Token` the gateway
+  adds (not even a compromised panel on the same docker network can reach it)
+- It accepts only the engine ids defined in `catalog.json`; no arbitrary service
+  name or file path can be passed in
+- It runs its subprocesses without a shell (`shell=False`) — no command injection
 
-> Kubernetes dağıtımında bu yetki çok daha dardır: yalnızca StatefulSet okuma ve
-> ölçekleme. Sıkı güvenlik gereksiniminiz varsa K8s yolunu tercih edin.
+> On the Kubernetes deployment this privilege is far narrower: reading and scaling
+> StatefulSets, nothing more. If you have strict security requirements, prefer the
+> K8s path.
 
-## TLS — domain olmadan
+## TLS — without a domain
 
-İç ağda alan adı yoktur, Let's Encrypt kullanılamaz (doğrulama için dışarıdan
-erişilebilir bir isim ister). Çözüm kendi mini sertifika otoritemiz
-(`scripts/gen-certs.sh`):
+There is no domain name on an internal network, and Let's Encrypt cannot be used
+(its validation wants a name reachable from outside). The solution is our own
+miniature certificate authority (`scripts/gen-certs.sh`):
 
-- `certs/ca.crt` — istemcilere kurulur, 10 yıl geçerli
-- `certs/server.crt` — sunucunun tüm IP'leri ve adları SAN olarak yazılı, 825 gün
+- `certs/ca.crt` — installed on the clients, valid for 10 years
+- `certs/server.crt` — every IP and name of the server written in as a SAN, 825 days
 
-Neden self-signed değil de CA: tarayıcılar IP adresli self-signed sertifikaya
-**asla** güvenmez, ama güvenilen bir CA'nın imzaladığı IP SAN'lı sertifikayı
-kabul eder. CA'yı bir kez kurunca uyarı tamamen kalkar.
+Why a CA rather than self-signed: browsers **never** trust a self-signed
+certificate with an IP address, but they do accept a certificate with an IP SAN
+signed by a trusted CA. Install the CA once and the warning goes away entirely.
 
-CA'nın özel anahtarı (`certs/ca.key`) sızarsa saldırgan bu ağ için geçerli
-sertifika üretebilir — dosya `600` iznindedir ve `.gitignore` içindedir.
+If the CA's private key (`certs/ca.key`) leaks, an attacker can produce valid
+certificates for this network — the file is mode `600` and is in `.gitignore`.
 
-Sunucunun IP'si değişirse:
+If the server's IP changes:
 
 ```bash
 ./scripts/gen-certs.sh 192.168.1.55
 docker restart gateway
 ```
 
-## Yapılması önerilenler
+## Recommended steps
 
-**1. Uygulamanız root ile bağlanmasın**
+**1. Don't let your application connect as root**
 
 ```bash
 ./stack.sh app-user
 ```
 
-`DROP DATABASE`, `DROP TABLE`, `TRUNCATE`, `FLUSHALL` yetkisi olmayan bir
-kullanıcı oluşturur. MariaDB'de yetkiler `*.*` üzerinde değil kullanıcı
-veritabanları üzerinde verilir — böylece `mysql` şemasındaki parola hash'lerini
-okuyamaz.
+Creates a user with no `DROP DATABASE`, `DROP TABLE`, `TRUNCATE` or `FLUSHALL`
+privilege. On MariaDB the grants are given on the user databases, not on `*.*` —
+so it cannot read the password hashes in the `mysql` schema.
 
-**2. Veritabanı portlarını dışarı kapatın**
+**2. Close the database ports to the outside**
 
-Uygulamalarınız da aynı sunucudaysa portları hiç açmayın:
+If your applications are on the same server, don't publish the ports at all:
 
 ```yaml
 # docker-compose.override.yml
@@ -87,7 +88,7 @@ services:
   redis:      { ports: [] }
 ```
 
-**3. Güvenlik duvarı**
+**3. Firewall**
 
 ```bash
 ufw allow from 10.8.0.0/24 to any port 443            # yalnız VPN ağı
@@ -95,25 +96,28 @@ ufw allow from 10.8.0.0/24 to any port 8081:8091 proto tcp
 ufw deny 3306,5432,27017,6379,1433/tcp                # gerekmiyorsa
 ```
 
-**4. Yedeklerinizi test edin**
+(`# yalnız VPN ağı` = the VPN network only; `# gerekmiyorsa` = if you don't need them.)
 
-Test edilmemiş yedek, yedek değildir:
+**4. Test your backups**
+
+An untested backup is not a backup:
 
 ```bash
 ./scripts/backup.sh verify backups/mariadb/full/<dosya>
 ```
 
-Yılda en az bir kez gerçek bir geri yükleme provası yapın.
+(`<dosya>` = the file name.) Run a real restore drill at least once a year.
 
-## Bilinen kabuller
+## Known accepted compromises
 
-- **Elasticsearch'ün HTTP TLS'i kapalıdır.** Basic auth açıktır ve trafik iç ağda,
-  gateway'in TLS'i arkasındadır. 9200 portunu dışarı açmayın.
-- **Kafka'da kimlik doğrulama yoktur.** SASL kurulumu tek makinelik bir stack'in
-  kapsamını aşar; 9092'yi yalnız güvendiğiniz ağa açın.
-- **Redis'in `default` kullanıcısı tam yetkilidir.** Uygulamalarınızı
-  `./stack.sh app-user` ile oluşturulan kısıtlı kullanıcıya geçirin.
-- **`credentials.txt` ve `.env` düz metindir** (mod 600). Sunucuya kimlerin
-  eriştiğini sınırlayın.
-- **Dashboard'daki "Bağlantı bilgisi" parolayı gösterir.** Bu bilinçli: oraya
-  erişebilen kişi zaten phpMyAdmin/pgAdmin üzerinden tam yetkilidir.
+- **Elasticsearch's HTTP TLS is off.** Basic auth is on, and the traffic stays on
+  the internal network, behind the gateway's TLS. Do not open port 9200 to the outside.
+- **Kafka has no authentication.** Setting up SASL is out of scope for a
+  single-machine stack; open 9092 only to a network you trust.
+- **Redis's `default` user has full privileges.** Move your applications to the
+  restricted user created by `./stack.sh app-user`.
+- **`credentials.txt` and `.env` are plain text** (mode 600). Limit who has access
+  to the server.
+- **The Dashboard's "Bağlantı bilgisi" (connection info) button shows the
+  password.** This is deliberate: anyone who can reach it already has full
+  privileges through phpMyAdmin/pgAdmin.

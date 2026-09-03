@@ -1,34 +1,35 @@
 # Kubernetes
 
-***Türkçe** · [English](KUBERNETES.en.md)*
+*[Türkçe](KUBERNETES.tr.md) · **English***
 
-Aynı ürün, aynı mantık. Docker'da "aktif et" bir container yaratmaktı;
-Kubernetes'te **StatefulSet'i 0 replikadan 1'e ölçeklemek**. Kapalı motorun
-pod'u hiç yoktur — sıfır bellek, sıfır CPU.
+Same product, same logic. In Docker, "activate" meant creating a container; in
+Kubernetes it means **scaling the StatefulSet from 0 replicas to 1**. A stopped
+engine has no pod at all — zero memory, zero CPU.
 
-## Manifestler üretilir, elle yazılmaz
+## Manifests are generated, not hand-written
 
-`catalog.json` tek yetki kaynağıdır. Compose ve Kubernetes aynı kaynaktan
-türetilir ki zamanla ayrışmasınlar.
+`catalog.json` is the single source of truth. Compose and Kubernetes are derived
+from the same source so that they do not drift apart over time.
 
 ```bash
 python3 scripts/gen-k8s.py --with-secrets
 kubectl apply -k k8s/base
 ```
 
-Üretilenler:
+What gets generated:
 
-| Dosya | İçerik |
+| File | Contents |
 |---|---|
-| `namespace.yaml` | `databases-stack` isim alanı |
-| `engine-<motor>.yaml` | StatefulSet (**replicas: 0**) + Service + PVC şablonu |
-| `controller.yaml` | Kontrol servisi + ServiceAccount + Role + RoleBinding |
-| `catalog-configmap.yaml` | Motor kataloğu (kontrol servisi bunu okur) |
-| `secret.yaml` | Parolalar — `k8s/secrets/` altında, `.gitignore` içinde |
+| `namespace.yaml` | The `databases-stack` namespace |
+| `engine-<motor>.yaml` | StatefulSet (**replicas: 0**) + Service + PVC template |
+| `controller.yaml` | The controller + ServiceAccount + Role + RoleBinding |
+| `catalog-configmap.yaml` | The engine catalog (the controller reads this) |
+| `secret.yaml` | Passwords — under `k8s/secrets/`, in `.gitignore` |
 
-`--with-secrets` vermezseniz `secret.example.yaml` üretilir (yer tutucularla).
+If you do not pass `--with-secrets`, `secret.example.yaml` is generated instead
+(with placeholders).
 
-## Kontrol servisinin yetkisi
+## What the controller is allowed to do
 
 ```yaml
 rules:
@@ -40,22 +41,24 @@ rules:
   verbs: ["get", "list", "watch"]
 ```
 
-Docker kurulumunda kontrol servisi `docker.sock`a bağlıdır — bu host üzerinde
-root'a eşdeğerdir. Kubernetes'te yetki yalnızca StatefulSet ölçekleme ile
-sınırlıdır. **Güvenlik açısından K8s yolu belirgin şekilde daha iyidir.**
+In the Docker setup the controller is bound to `docker.sock` — on the host that
+is equivalent to root. In Kubernetes its authority is limited to StatefulSet
+scaling and nothing else. **From a security standpoint the K8s path is clearly
+better.**
 
-## Boyutlandırma K8s'te nasıl çalışır?
+## How does sizing work on K8s?
 
-Mantık aynıdır, iki fark vardır:
+The logic is the same; there are two differences.
 
-**1. Kapasite ölçümü.** Docker'da host'un `/proc/meminfo`'su okunur. Kubernetes'te
-**en büyük node'un allocatable belleği** esas alınır — cluster'ın toplamı değil.
-Sebep: bir StatefulSet pod'u tek bir node'a sığmak zorundadır. Toplam RAM'e göre
-hesaplamak, hiçbir node'a sığmayan bir limit üretip pod'u sonsuza dek `Pending`
-durumunda bırakırdı.
+**1. Capacity measurement.** In Docker the host's `/proc/meminfo` is read. In
+Kubernetes **the allocatable memory of the largest node** is taken as the basis —
+not the cluster total. The reason: a StatefulSet pod has to fit on a single node.
+Calculating from the total RAM would produce a limit that fits on no node and
+would leave the pod `Pending` forever.
 
-**2. Uygulama.** Docker'da hesaplanan değerler `state/tuning.env`e yazılıp
-compose'a verilir. K8s'te aynı değerler doğrudan kaynağa uygulanır:
+**2. Application.** In Docker the computed values are written to
+`state/tuning.env` and handed to compose. On K8s the same values are applied
+directly to the resource:
 
 ```
 kubectl set resources statefulset/postgresql --limits=memory=3276Mi --requests=memory=3276Mi
@@ -63,10 +66,10 @@ kubectl set env       statefulset/postgresql POSTGRES_SHARED_BUFFERS=819MB ...
 kubectl scale         statefulset/postgresql --replicas=1
 ```
 
-## Depolama
+## Storage
 
-`volumeClaimTemplates` varsayılan StorageClass'ı kullanır. Kendi sınıfınızı
-vermek için `k8s/base/engine-<motor>.yaml` içine ekleyin:
+`volumeClaimTemplates` uses the default StorageClass. To supply your own class,
+add it inside `k8s/base/engine-<motor>.yaml`:
 
 ```yaml
   volumeClaimTemplates:
@@ -77,52 +80,56 @@ vermek için `k8s/base/engine-<motor>.yaml` içine ekleyin:
       accessModes: ["ReadWriteOnce"]
 ```
 
-Boyutlar `scripts/gen-k8s.py` içindeki `STORAGE` sözlüğündedir; değiştirip
-yeniden üretin.
+(`# ← buraya` = "← here"; the comment marks the line you add.)
 
-## Kapsam dışı olanlar
+The sizes live in the `STORAGE` dictionary inside `scripts/gen-k8s.py`; change it
+and regenerate.
 
-Üretilen manifestler **veritabanlarını ve kontrol düzlemini** kapsar. Şunlar
-Docker kurulumundadır ama K8s tarafına dahil edilmemiştir:
+## What is out of scope
 
-- **Web panelleri** (phpMyAdmin, pgAdmin, Kibana…) — kendi Deployment'ları
-  gerekir; K8s'te genelde Ingress arkasında ayrı yönetilir
-- **Gateway/TLS** — K8s'te bu iş Ingress Controller + cert-manager'ın işidir
-- **Yedekleme cron'ları** — `CronJob` olarak yazılmalıdır
+The generated manifests cover **the databases and the control plane**. The
+following exist in the Docker setup but were not included on the K8s side:
 
-Bunları eklemek isterseniz `scripts/gen-k8s.py` genişletilebilir; katalogda
-gereken bilgi (panel adı, port, servis) zaten mevcuttur.
+- **Web panels** (phpMyAdmin, pgAdmin, Kibana…) — they need their own
+  Deployments; on K8s they are usually managed separately behind an Ingress
+- **Gateway/TLS** — on K8s that job belongs to the Ingress Controller +
+  cert-manager
+- **Backup crons** — they should be written as `CronJob`s
 
-## Üretim için öneriler
+If you want to add them, `scripts/gen-k8s.py` can be extended; the catalog
+already holds the information needed (panel name, port, service).
 
-- **Sırlar**: `secret.yaml`ı git'e koymayın. sealed-secrets, external-secrets
-  ya da Vault kullanın.
-- **Gerçek yüksek erişilebilirlik** istiyorsanız operatörlere bakın:
+## Recommendations for production
+
+- **Secrets**: do not put `secret.yaml` into git. Use sealed-secrets,
+  external-secrets or Vault.
+- **Real high availability**: if that is what you want, look at the operators:
   CloudNativePG (PostgreSQL), Strimzi (Kafka), ECK (Elasticsearch),
-  Percona/MongoDB Operator. Bu ürünün StatefulSet'leri tek instance içindir.
-- **Anti-affinity ve PodDisruptionBudget** çok node'lu cluster'da eklenmelidir.
+  Percona/MongoDB Operator. This product's StatefulSets are for a single instance.
+- **Anti-affinity and PodDisruptionBudget** should be added on a multi-node
+  cluster.
 
-## Aynı makinede hem Docker yığını hem k3s çalıştırmayın
+## Do not run the Docker stack and k3s on the same machine
 
-Ürünü denemek için aynı sunucuya k3s kurmak cazip görünür, ama **k3s yayınlanan
-80 ve 443 portlarını Docker'dan kapar**. Sebep, iptables `nat/PREROUTING`
-zincirinde `KUBE-SERVICES` ve `CNI-HOSTPORT-DNAT` kurallarının `DOCKER`
-zincirinden **önce** gelmesidir: paket gateway'e hiç ulaşmadan Traefik'e
-yönlenir.
+Installing k3s on the same server to try the product looks tempting, but **k3s
+takes the published ports 80 and 443 away from Docker**. The reason is that in
+the iptables `nat/PREROUTING` chain the `KUBE-SERVICES` and `CNI-HOSTPORT-DNAT`
+rules come **before** the `DOCKER` chain: the packet is routed to Traefik without
+ever reaching the gateway.
 
-Belirti kafa karıştırıcıdır — her şey sağlıklı görünür:
+The symptom is confusing — everything looks healthy:
 
 - `docker ps` → gateway "Up (healthy)"
-- `docker exec gateway nginx -t` → geçerli
+- `docker exec gateway nginx -t` → valid
 - `docker exec gateway curl http://127.0.0.1/` → 200
-- ama tarayıcıda düz metin **`404 page not found`** (Traefik'in cevabı)
+- but in the browser, plain text **`404 page not found`** (Traefik's answer)
 
-`./stack.sh doctor` bu durumu artık işlevsel olarak yakalar: container içinden
-ve dışarıdan gelen cevabı karşılaştırır.
+`./stack.sh doctor` now catches this functionally: it compares the answer coming
+from inside the container with the one coming from outside.
 
-**Önemli:** `systemctl stop k3s` bu sorunu ÇÖZMEZ. k3s durunca pod'ları
-containerd altında yaşamaya devam eder ve iptables kuralları yerinde kalır.
-Gerçekten temizlemek için:
+**Important:** `systemctl stop k3s` does NOT fix this. When k3s stops, its pods
+keep living under containerd and the iptables rules stay in place. To really
+clean up:
 
 ```bash
 sudo /usr/local/bin/k3s-killall.sh     # pod'ları öldürür, iptables kurallarını temizler
@@ -130,7 +137,11 @@ sudo systemctl disable --now k3s       # yeniden başlatmada geri gelmesin
 docker restart gateway
 ```
 
-k3s'i tamamen kaldırmak için `sudo /usr/local/bin/k3s-uninstall.sh`.
+(The comments: the first line kills the pods and clears the iptables rules, the
+second keeps k3s from coming back on reboot.)
 
-Doğru yaklaşım: Docker kurulumu ve Kubernetes kurulumu **ayrı makinelerde**
-olsun. İkisi aynı katalogdan beslenir, ama aynı host'un ağ yığınını paylaşamaz.
+To remove k3s completely: `sudo /usr/local/bin/k3s-uninstall.sh`.
+
+The right approach: keep the Docker setup and the Kubernetes setup **on separate
+machines**. Both are fed from the same catalog, but they cannot share the same
+host's network stack.

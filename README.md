@@ -2,112 +2,123 @@
 
 # 🗄️ databases-stack
 
-***Türkçe** · [English](README.en.md)*
+*[Türkçe](README.tr.md) · **English***
 
-### *Tek sunucuda 12 veritabanı — istediğini aç, istemediğini kapat*
+### *12 databases on one server — turn on what you want, turn off what you don't*
 
-**Panelden düğmeye bas, veritabanın açılsın.** Sistem sunucunun belleğini ölçer,
-o veritabanına ne kadar ayıracağını ve iç ayarlarını kendisi hesaplar.
-Sen hiçbir teknik değer girmezsin.
+**Press a button in the panel and your database comes up.** The system measures
+the server's memory and works out by itself how much to give that database and
+what its internal settings should be. You enter no technical values at all.
 
-**Ana kopya çökerse yedeğe kendisi geçer** — uygulamanın bağlantı adresi değişmeden.
+**If the primary goes down it fails over to the replica by itself** — without
+your application's connection address changing.
 
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ed?style=flat-square&logo=docker&logoColor=white)](https://docs.docker.com/compose/)
-[![Kubernetes](https://img.shields.io/badge/Kubernetes-hazır-326ce5?style=flat-square&logo=kubernetes&logoColor=white)](docs/KUBERNETES.md)
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-ready-326ce5?style=flat-square&logo=kubernetes&logoColor=white)](docs/KUBERNETES.md)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
 </div>
 
 ---
 
-## Nasıl görünüyor?
+## What does it look like?
 
 <div align="center">
-<img src="ss/01-panel.png" alt="Yönetim paneli" width="900">
+<img src="ss/01-panel.png" alt="Management panel" width="900">
 </div>
 
-Sayfa iki bölgeden oluşur. Üstte **şu an açık** olanlar kart hâlinde: ne kadar
-bellek aldıkları, hangi porttan bağlanılacağı, yedek kopyası ve otomatik devri
-var mı. Altta **kapalı** olanlar tek satır — hiç kaynak harcamıyorlar, bir
-kartı hak etmiyorlar. Satıra tıklayınca ne işe yaradığı, tahmini belleği ve
-lisansı açılır.
+The page has two zones. At the top, the ones that are **currently on**, as
+cards: how much memory they took, which port to connect to, whether they have a
+replica and automatic failover. At the bottom, the **off** ones as single rows —
+they consume nothing, they don't deserve a card. Click a row and what it is for,
+its estimated memory and its license open up.
 
-Üst bardaki birincil sayı **gerçek kullanımdır**, altındaki satırda ise iki
-ayrı büyüklük durur: *baştan ayrılan* (motorun açılışta gerçekten aldığı
-bellek) ve *üst sınır* (docker limiti). İkisini ayırmak şart, çünkü docker
-limiti bir **tavandır, rezervasyon değil** — tavanları toplayıp RAM ile
-kıyaslamak, yoldaki arabaların azami hızlarını toplayıp "yol kapasitesi aşıldı"
-demeye benzer. Ölçülen bir örnek: 16 GB'lık sunucuda tavan toplamı 14 GB
-görünürken gerçek kullanım 2 GB, çekirdeğin bellek baskısı ise sıfırdı.
-Ayrıntı: [Bellek otomatik hesaplanır](#bellek-otomatik-hesaplan%C4%B1r).
+The primary number in the top bar is **actual usage**; the line under it holds
+two separate quantities: *reserved up front* (the memory the engine really takes
+at startup) and *upper limit* (the docker limit). Separating the two is
+essential, because the docker limit is a **ceiling, not a reservation** — adding
+up ceilings and comparing them with RAM is like adding up the top speeds of the
+cars on a road and declaring "road capacity exceeded". A measured example: on a
+16 GB server the ceiling total showed 14 GB while actual usage was 2 GB, and the
+kernel's memory pressure was zero.
+Details: [Memory is calculated automatically](#memory-is-calculated-automatically).
 
 <div align="center">
-<img src="ss/03-islemler.png" alt="Geri dönüşü zor işlemler kapalı bir bölümde" width="900">
+<img src="ss/03-islemler.png" alt="Hard-to-undo actions in a collapsed section" width="900">
 </div>
 
-Gündelik işler kartın yüzünde (paneli aç, bağlantı bilgisi). **Geri dönüşü zor
-olanlar** — kapatmak, yedek kopyayı kaldırmak, otomatik devri kapatmak —
-kapalı bir bölümde ve her biri **ne olacağını tek cümleyle** söylüyor. Yan yana
-duran altı düğme arasından yanlışına basmak bu üründe mümkün değil.
+Everyday actions are on the face of the card (open the panel, connection info).
+**The hard-to-undo ones** — turning it off, removing the replica, turning off
+automatic failover — sit in a collapsed section and each one says **in a single
+sentence what will happen**. Hitting the wrong one out of six buttons standing
+side by side is not possible in this product.
 
 <div align="center">
-<img src="ss/06-yedekler.png" alt="Yedekler sayfası" width="900">
+<img src="ss/06-yedekler.png" alt="Backups page" width="900">
 </div>
 
-Yedekler kendi sayfasında (**Araçlar → Yedekler**): gecelik turun saati ve kaç
-gün saklanacağı, her motorun kaç yedeği olduğu, en yenisinin ne zaman alındığı
-ve her dosyanın **kaynağı** — `elle`, `zamanlı` ya da `dış` (komut satırı).
-Kurtarma da buradan: **Son yedeğe dön** ya da dosya listesinden belirli bir
-güne. Geri yükleme veriyi silip yerine koyduğu için onay penceresi motor adını
-yazdırır — tek tıkla olacak bir iş değil.
+Backups have their own page (**Tools ("Araçlar") → Backups ("Yedekler")**): the
+time of the nightly round and how many days files are kept, how many backups
+each engine has, when the newest one was taken, and every file's **source** —
+`elle`, `zamanlı` or `dış` (command line). (`elle` = manual, `zamanlı` =
+scheduled, `dış` = external.) Recovery is here too: **Restore latest backup
+("Son yedeğe dön")**, or a particular day from the file list. Because a restore
+deletes the data and puts something else in its place, the confirmation dialog
+makes you type the engine name — this is not a one-click job.
 
-Her motorun satırında bir de **prova rozeti** var: `prova geçti 17 dakika önce
-· 10 sn`. Bu, o yedeğin tek kullanımlık bir container'da gerçekten geri
-yüklendiği ve kaç saniye sürdüğü demek — vaat değil ölçüm. Provayı panelden,
-haftalık zamanlayıcıdan ya da komut satırından çalıştırmanız fark etmez:
-sonuç aynı deftere, **kaynağı yazılı** olarak düşer.
+Each engine's row also carries a **drill badge**: `prova geçti 17 dakika önce ·
+10 sn` (drill passed 17 minutes ago · 10 s). That means this backup really was
+restored in a single-use container, and this is how many seconds it took — a
+measurement, not a promise. Whether you run the drill from the panel, from the
+weekly scheduler or from the command line makes no difference: the result lands
+in the same ledger, **with its source written down**.
 
 <div align="center">
-<img src="ss/05-izleme.png" alt="Grafana panoları" width="900">
+<img src="ss/05-izleme.png" alt="Grafana dashboards" width="900">
 </div>
 
-İzleme ayrı bir kurulum değil, panelden açılan bir modül: **İzleme aç** deyince
-Prometheus + Grafana kalkar, açık olan her motorun exporter'ı hedef listesine
-kendiliğinden eklenir ve **11 hazır pano** gelir — hepsi Türkçe ve "her şey
-yolunda mı?" sorusuna cevap verecek şekilde yazılmış. Tek bir PromQL sorgusu
-yazmanız gerekmez; kapattığınızda da hedef listesinden kendiliğinden çıkar.
+Monitoring is not a separate installation, it is a module you turn on from the
+panel: say **Enable monitoring ("İzleme aç")** and Prometheus + Grafana come up,
+the exporter of every running engine is added to the target list by itself, and
+**11 ready-made dashboards** arrive — all of them in Turkish and written to
+answer the question "is everything fine?". You do not need to write a single
+PromQL query; and when you turn it off, it drops out of the target list by
+itself.
 
 <div align="center">
-<img src="ss/04-olaylar.png" alt="Son olaylar" width="900">
+<img src="ss/04-olaylar.png" alt="Recent events" width="900">
 </div>
 
-Panelin altında **ne olduğu yazıyor**: hangi motor ne zaman açıldı, ne kadar
-bellek ayrıldı, hangi ayar hesaplandı, bir aktivasyon neden reddedildi, otomatik
-devir ne zaman ve **hangi sebeple** çalıştı. Sunucuya girip `docker logs`
-okumadan olan biteni buradan takip edersiniz.
+At the bottom of the panel **it says what happened**: which engine came up when,
+how much memory was allocated, which setting was calculated, why an activation
+was refused, when automatic failover ran and **for what reason**. You follow
+what is going on from here, without logging into the server and reading
+`docker logs`.
 
 <div align="center">
-<img src="ss/02-kurulum.png" alt="Sertifika kurulum rehberi" width="620">
+<img src="ss/02-kurulum.png" alt="Certificate installation guide" width="620">
 </div>
 
-İç ağda alan adı olmadığı için TLS sertifikasını sunucu kendisi üretir.
-Tarayıcının "güvenli değil" uyarısını kaldırmak için **tek seferlik** bu rehber
-adım adım anlatır — sertifikayı kurduktan sonra sayfa sizi otomatik panele
-geçirir. Panele bir kez girdiğinizde bütün yönetim ekranları (phpMyAdmin,
-pgAdmin, Grafana…) parola sormadan açılır; dışarıdan doğrudan gelen biri ise
-hâlâ parola ekranıyla karşılaşır.
+There is no domain name on an internal network, so the server produces the TLS
+certificate itself. To get rid of the browser's "not secure" warning, this
+**one-time** guide walks you through it step by step — once you install the
+certificate the page moves you on to the panel automatically. Once you are in
+the panel, every management screen (phpMyAdmin, pgAdmin, Grafana…) opens without
+asking for a password; someone arriving directly from outside still meets the
+password screen.
 
 ---
 
-## Kurulum
+## Installation
 
-**Önkoşul:** Docker (yoksa `install.sh` size kurulum komutunu verir):
+**Prerequisite:** Docker (if you don't have it, `install.sh` gives you the
+install command):
 
 ```bash
 curl -fsSL https://get.docker.com | sudo sh && sudo usermod -aG docker $USER && newgrp docker
 ```
 
-Sonra:
+Then:
 
 ```bash
 sudo mkdir -p /opt/databases && sudo chown $USER:$USER /opt/databases
@@ -115,243 +126,255 @@ git clone https://github.com/halilibrahimd27/databases-stack.git /opt/databases
 cd /opt/databases && ./install.sh
 ```
 
-Bu kadar. Soru sormaz. Parolaları, TLS sertifikalarını ve sunucu adresini kendisi
-üretir/algılar, sonuçları ekrana ve `credentials.txt`e yazar.
+That's all. It asks nothing. It generates/detects the passwords, the TLS
+certificates and the server address itself, and writes the results to the screen
+and to `credentials.txt`.
 
-Sonra tarayıcıdan `https://<sunucu-ip>/` adresine gidin ve ihtiyacınız olan
-veritabanının satırındaki **Aktif Et** düğmesine basın.
+Then go to `https://<sunucu-ip>/` in your browser and press the **Activate
+("Aktif Et")** button on the row of the database you need.
 
-> **Tarayıcı "güvenli değil" diyorsa:** `http://<sunucu-ip>/ca.crt` adresinden
-> sertifikayı indirip bilgisayarınıza kurun, uyarı kalkar. Bu iç ağa özel bir
-> sertifika otoritesidir — alan adı (domain) gerektirmez, internete çıkmaz.
+> **If the browser says "not secure":** download the certificate from
+> `http://<sunucu-ip>/ca.crt` and install it on your computer; the warning goes
+> away. This is a certificate authority private to the internal network — it
+> needs no domain name and never goes out to the internet.
 
 ---
 
-## Nasıl çalışıyor?
+## How does it work?
 
-Kurulumdan sonra **hiçbir veritabanı çalışmıyor.** Sadece üç küçük servis ayakta:
-giriş kapısı (nginx), kontrol servisi ve Adminer. Toplam ~450 MB.
+After installation **no database is running.** Only three small services are up:
+the front door (nginx), the controller and Adminer. ~450 MB in total.
 
-Panelde bir veritabanını açtığınızda arka planda şunlar olur:
+When you turn a database on in the panel, this is what happens behind the
+scenes:
 
 ```
-"Aktif Et"  →  Kontrol servisi sunucuyu ölçer
-                 ├─ Toplam RAM, çekirdeğin MemAvailable'ı, boş disk, CPU
-                 ├─ Açık motorların REZERVESİ (açılışta gerçekten ayırdıkları)
-                 ├─ Açık container'ların TAVANI (docker --memory)
-                 └─ /proc/pressure/memory — çekirdek baskı altında mı?
+"Aktif Et"  →  The controller measures the server
+                 ├─ Total RAM, the kernel's MemAvailable, free disk, CPU
+                 ├─ The RESERVE of running engines (what they really take at startup)
+                 ├─ The CEILING of running containers (docker --memory)
+                 └─ /proc/pressure/memory — is the kernel under pressure?
                              ↓
-               Üç kapı da geçiliyor mu?
-                 ├─ HAYIR → açmaz, HANGİ kapıya takıldığını söyler
-                 └─ EVET  → tavanı ve motorun iç ayarlarını hesaplar
+               Do all three gates pass?
+                 ├─ NO  → does not start it, says WHICH gate it hit
+                 └─ YES → calculates the ceiling and the engine's internal settings
                              (buffer pool, JVM heap, WiredTiger cache,
                               max_connections, work_mem …)
                              ↓
                docker compose --profile <motor> up -d
 ```
 
-**Kapalı bir veritabanı hiç container yaratmaz** — sıfır RAM, sıfır CPU tüketir.
-Kapatmak verileri silmez; diskte kalır, tekrar açtığınızda her şey yerindedir.
+**A database that is off creates no container at all** — zero RAM, zero CPU.
+Turning it off does not delete the data; it stays on disk, and when you turn it
+back on everything is where you left it.
 
-### Bellek otomatik hesaplanır
+### Memory is calculated automatically
 
-Belleğin iki ayrı büyüklüğü var ve bu ürünün en pahalı hatası ikisini aynı
-şey sanmaktı.
+Memory has two separate quantities, and this product's most expensive mistake
+was taking them for the same thing.
 
-| | **Rezerve** (taban) | **Tavan** (limit) |
+| | **Reserve** (floor) | **Ceiling** (limit) |
 |---|---|---|
-| Ne demek? | Motorun **açılışta gerçekten ayırdığı** bellek | `docker --memory`: aşılırsa çekirdek container'ı öldürür (OOM) |
-| Nereden gelir? | PostgreSQL `shared_buffers`, MariaDB `innodb_buffer_pool_size`, JVM motorlarında `-Xms` | Kontrol servisinin motora verdiği üst sınır |
-| Redis · MSSQL · MinIO · ClickHouse | **~0** — boş başlarlar, tavana doğru *büyürler* | Büyüyebilecekleri son nokta |
-| Toplamı | Dağıtılabilir belleği **asla** aşamaz | Dağıtılabiliri **aşabilir** (varsayılan sınır: 1,5 katı) |
+| What is it? | The memory the engine **really allocates at startup** | `docker --memory`: if it is exceeded the kernel kills the container (OOM) |
+| Where does it come from? | PostgreSQL `shared_buffers`, MariaDB `innodb_buffer_pool_size`, `-Xms` on JVM engines | The upper limit the controller gives the engine |
+| Redis · MSSQL · MinIO · ClickHouse | **~0** — they start empty and *grow* toward the ceiling | The last point they can grow to |
+| Their total | Can **never** exceed allocatable memory | **May** exceed allocatable (default limit: 1.5×) |
 
-**Dağıtılabilir bellek** = toplam RAM − işletim sistemi payı − çekirdek
-servislerin payı.
+**Allocatable memory** = total RAM − the operating system's share − the core
+services' share.
 
-#### Tavan toplamının RAM'i aşması normaldir
+#### It is normal for the ceiling total to exceed RAM
 
-16 GB'lık bir test sunucusunda ölçülen tablo:
+Measured on a 16 GB test server:
 
-| Container | Tavan | Gerçek kullanım |
+| Container | Ceiling | Actual usage |
 |---|---|---|
-| mariadb | 3196 MB | 243 MB (%7) |
-| mariadb-replica | 3196 MB | 213 MB (%6) |
-| postgresql | 2397 MB | 98 MB (%4) |
-| redis | 1278 MB | 5 MB (%0) |
+| mariadb | 3196 MB | 243 MB (7%) |
+| mariadb-replica | 3196 MB | 213 MB (6%) |
+| postgresql | 2397 MB | 98 MB (4%) |
+| redis | 1278 MB | 5 MB (0%) |
 
-Aynı makinede toplam RAM 15984 MB, tavanların toplamı 15087 MB, dağıtılabilir
-bellek ise 12340 MB (15984 − 3196 işletim sistemi − 448 çekirdek servisler).
-Yani tavan toplamı dağıtılabilirin **%122'si**. Buna karşılık:
+On the same machine total RAM is 15984 MB, the ceilings add up to 15087 MB, and
+allocatable memory is 12340 MB (15984 − 3196 operating system − 448 core
+services). So the ceiling total is **122% of allocatable**. Against that:
 
-- `free -m` → kullanılan **1508 MB**, available **13987 MB** (makine %91 boş),
+- `free -m` → used **1508 MB**, available **13987 MB** (the machine is 91% free),
 - `/proc/pressure/memory` → `some avg10=0.00 · avg60=0.00`, `full avg10=0.00`
-  (çekirdek tek bir görevi bile bellek için bekletmiyor),
-- motorların **gerçekten ayırdığı** toplam: **2516 MB** — dağıtılabilirin
-  %20'si.
+  (the kernel is not stalling even one task for memory),
+- the total the engines **really allocated**: **2516 MB** — 20% of allocatable.
 
-Tavanları toplayıp RAM ile kıyaslamak, yoldaki arabaların azami hızlarını
-toplayıp "yol kapasitesi aşıldı" demeye benzer. Ürün bir süre tam olarak bunu
-yapıyordu: panel **"AYRILAN BELLEK 15 GB / 12 GB · %122 aşım"** yazıyor ve
-kapalı motorların hepsinde "bellek yetmiyor" diyordu — boş bir makinede.
+Adding up ceilings and comparing them with RAM is like adding up the top speeds
+of the cars on a road and declaring "road capacity exceeded". The product did
+exactly this for a while: the panel said **"AYRILAN BELLEK 15 GB / 12 GB · %122
+aşım"** (allocated memory 15 GB / 12 GB · 122% over) and told you "not enough
+memory" on every engine that was off — on an idle machine.
 
-#### Bir motoru açmadan önceki üç kapı
+#### The three gates before an engine starts
 
-1. **Rezerve kapısı — sert.** `Σ rezerve + yeni motorun rezervesi ≤
-   dağıtılabilir`. Asla esnetilmez: rezerve, motorun ayıracağı **gerçek**
-   bellektir; sığmıyorsa açmak OOM'a davetiyedir.
-   Sığmayan istek önce küçültülür (daha küçük tavan → daha küçük rezerve);
-   asgari tavanda bile sığmıyorsa reddedilir.
-2. **Tavan kapısı — yumuşak.** `Σ tavan + yeni tavan ≤ dağıtılabilir × 1,5`.
-   Tavanların hepsi aynı anda dolmaz. Katsayı kontrol servisinin
-   `OVERCOMMIT_LIMIT` ortam değişkeniyle değişir; `1.0` yazmak aşırı taahhüdü
-   kapatır, yani yukarıdaki eski davranışa döner.
-3. **Çekirdek kemeri.** `/proc/meminfo`daki `MemAvailable` yeni rezerveyi +
-   emniyet payını karşılıyor mu; `/proc/pressure/memory` baskı bildiriyor mu?
-   **Defter ne derse desin çekirdeğin gerçeği bağlayıcıdır.** PSI'ı olmayan
-   eski çekirdeklerde baskı kapısı atlanır — ölçemediğimiz bir şeyi gerekçe
-   gösterip motor açtırmamak kullanıcıya yalan söylemek olurdu.
+1. **The reserve gate — hard.** `Σ reserve + the new engine's reserve ≤
+   allocatable`. It is never bent: the reserve is the **real** memory the engine
+   will allocate; starting it when it does not fit is an invitation to OOM.
+   A request that does not fit is shrunk first (smaller ceiling → smaller
+   reserve); if it does not fit even at the minimum ceiling, it is refused.
+2. **The ceiling gate — soft.** `Σ ceiling + the new ceiling ≤ allocatable ×
+   1.5`. The ceilings do not all fill up at the same time. The coefficient
+   changes with the controller's `OVERCOMMIT_LIMIT` environment variable;
+   writing `1.0` turns overcommit off, i.e. goes back to the old behaviour
+   above.
+3. **The kernel seatbelt.** Does `MemAvailable` in `/proc/meminfo` cover the new
+   reserve plus the safety margin; is `/proc/pressure/memory` reporting
+   pressure? **Whatever the ledger says, the kernel's reality is binding.** On
+   old kernels without PSI the pressure gate is skipped — refusing to start an
+   engine on the grounds of something we could not measure would be lying to the
+   user.
 
-Reddedilen aktivasyon **hangi kapıya** takıldığını yazar; hepsine birden
-"bellek yetmiyor" demez.
+A refused activation writes down **which gate** it hit; it does not say "not
+enough memory" to all of them at once.
 
-#### Yeniden dengeleme
+#### Rebalancing
 
-Tavan toplamı politika sınırını geçtiğinde (bir motor elle büyütüldü,
-sunucudan RAM eksildi, ya da `OVERCOMMIT_LIMIT` düşürüldü) kontrol servisi
-bunu bildirir. **Yeniden dengeleme** — panelden ya da `POST /api/rebalance` —
-açık motorların tavanlarını yeniden hesaplar ve `docker update` ile **canlı**
-uygular:
+When the ceiling total passes the policy limit (an engine was enlarged by hand,
+RAM was removed from the server, or `OVERCOMMIT_LIMIT` was lowered) the
+controller reports it. **Rebalancing** — from the panel or `POST /api/rebalance`
+— recalculates the ceilings of the running engines and applies them **live**
+with `docker update`:
 
-- Container'lar **yeniden başlatılmaz.** Açık bağlantılar kopmaz, InnoDB
-  kurtarma çalışmaz, kesinti olmaz. (Kolay yol `compose up -d` ile motoru
-  yeniden yaratmak olurdu; o yol çalışan veritabanını kapatır.)
-- Yalnız **tavan** değişir. Motorun açılışta ayırdığı bellek çalışırken
-  küçültülemez — buffer pool'u geri veremezsiniz. Bu yüzden yeniden dengeleme
-  hiçbir tavanı motorun mevcut **rezervesinin altına** indirmez; o ayar ancak
-  motor yeniden başlatıldığında yeni tavana göre hesaplanır.
+- The containers are **not restarted.** Open connections are not dropped, InnoDB
+  recovery does not run, there is no downtime. (The easy way would have been to
+  recreate the engine with `compose up -d`; that way shuts down a running
+  database.)
+- Only the **ceiling** changes. The memory an engine allocated at startup cannot
+  be shrunk while it runs — you cannot give the buffer pool back. That is why
+  rebalancing never takes a ceiling **below the engine's current reserve**; that
+  setting is only recalculated against the new ceiling when the engine is
+  restarted.
 
-`./scripts/e2e/sizing.sh` bunu ölçüyor: aşırı taahhüt durumunu kendisi
-yaratıyor, yeniden dengelemeyi çağırıyor, tavanın gerçekten düştüğünü
-cgroup'tan okuyor ve `.State.StartedAt` ile hiçbir container'ın yeniden
-başlatılmadığını doğruluyor.
+`./scripts/e2e/sizing.sh` measures this: it creates the overcommit condition
+itself, calls rebalancing, reads from the cgroup that the ceiling really
+dropped, and verifies with `.State.StartedAt` that no container was restarted.
 
-Ayrıntı, formüller ve motor başına rezerve tablosu:
-[docs/BELLEK.md](docs/BELLEK.md)
+Details, formulas and the per-engine reserve table:
+[docs/BELLEK.en.md](docs/BELLEK.md)
 
-### Bunun neden önemli olduğu
+### Why this matters
 
-Aynı hesabın somut karşılığı — boş bir sunucuda, `./stack.sh plan` çıktısı:
+What the same arithmetic looks like in practice — `./stack.sh plan` output on an
+idle server:
 
-| Sunucu | MariaDB açılırsa | Elasticsearch açılırsa |
+| Server | If MariaDB starts | If Elasticsearch starts |
 |---|---|---|
-| 512 MB | **açılmaz** — 512 MB tavan + 320 MB panel/exporter dağıtılabilire sığmıyor | açılmaz |
-| 2 GB | tavan 512 MB · rezerve (buffer pool) 307 MB | açılmaz |
-| 4 GB | tavan 819 MB · rezerve 491 MB | tavan 1024 MB · rezerve (JVM heap) 512 MB |
-| 16 GB | tavan 3276 MB · rezerve 1965 MB | tavan 2949 MB · rezerve 1474 MB |
-| 128 GB | tavan 16 GB (tek motor sunucuyu yutmasın) · rezerve 9830 MB | tavan 16 GB · rezerve 8192 MB |
+| 512 MB | **does not start** — 512 MB ceiling + 320 MB panel/exporter does not fit into allocatable | does not start |
+| 2 GB | ceiling 512 MB · reserve (buffer pool) 307 MB | does not start |
+| 4 GB | ceiling 819 MB · reserve 491 MB | ceiling 1024 MB · reserve (JVM heap) 512 MB |
+| 16 GB | ceiling 3276 MB · reserve 1965 MB | ceiling 2949 MB · reserve 1474 MB |
+| 128 GB | ceiling 16 GB (so a single engine does not swallow the server) · reserve 9830 MB | ceiling 16 GB · reserve 8192 MB |
 
-4 GB'lık makinede 16 GB'lık veritabanı açılmaya çalışılmaz; 128 GB'lık makinede
-de varsayılan değerlerde kalınmaz. Kapılardan biri kapalıysa kart pasifleşir ve
-**hangi kapı** olduğunu yazar. Tavan kapısına takılan bir ret, ekranda boş
-belleği gördüğü için haklı olarak "ama yer var" diyen kullanıcıya şunu söyler:
-*"Bu bir TAVAN sıkışmasıdır, belleğin dolu olduğu anlamına GELMEZ"* — ve o
-andaki çekirdek boş bellek ölçümünü, baskı seviyesini, çözüm yollarını
-(yeniden dengele / bir motoru durdur / `OVERCOMMIT_LIMIT`'i yükselt) sıralar.
+A 4 GB machine does not try to start a 16 GB database; a 128 GB machine does not
+stay on the default values either. If one of the gates is closed the card goes
+inactive and writes down **which gate** it was. A refusal at the ceiling gate
+says this to the user who sees free memory on the screen and rightly objects
+"but there is room": *"This is a CEILING squeeze, it does NOT mean memory is
+full"* — and then lists the kernel's free-memory measurement at that moment, the
+pressure level, and the ways out (rebalance / stop an engine / raise
+`OVERCOMMIT_LIMIT`).
 
-Hesabı görmek için: `./stack.sh plan mongodb`
+To see the arithmetic: `./stack.sh plan mongodb`
 
 ---
 
-## İçindeki veritabanları
+## The databases inside
 
-Hepsi kapalı gelir; yalnız kullandıklarınız açılır.
+They all arrive turned off; only the ones you use are started.
 
-| | Veritabanı | Ne için | Panel |
+| | Database | What for | Panel |
 |---|---|---|---|
-| 🐬 | **MariaDB** | Klasik tablolu veri — kullanıcılar, siparişler, ürünler | phpMyAdmin |
-| 🐘 | **PostgreSQL** | Aynı iş + JSON, konum verisi, karmaşık sorgular | pgAdmin |
-| 🍃 | **MongoDB** | Sabit şeması olmayan kayıtlar | Mongo Express |
-| 🔴 | **Redis** | Önbellek, oturum, kuyruk (kalıcı depo değil) | RedisInsight |
-| 🟥 | **SQL Server** | .NET / Windows tabanlı kurumsal uygulamalar | Adminer |
-| 🌀 | **Cassandra** | Çok yüksek yazma hacmi, lineer ölçek | cqlsh |
-| 🔎 | **Elasticsearch** | Site içi arama, log analizi | Kibana |
-| 📨 | **Kafka** | Servisler arası olay akışı | Kafka UI |
-| 🐰 | **RabbitMQ** | Basit iş kuyruğu (Kafka'dan çok daha kolay) | Management UI |
-| 📊 | **ClickHouse** | Rapor ve analiz sorguları (OLAP) | Play UI |
-| 🕸️ | **Neo4j** | İlişki ağırlıklı veri, öneri motorları | Neo4j Browser |
-| 🪣 | **MinIO** | Dosya/görsel depolama (S3 uyumlu) | MinIO Console |
+| 🐬 | **MariaDB** | Classic tabular data — users, orders, products | phpMyAdmin |
+| 🐘 | **PostgreSQL** | The same job + JSON, geo data, complex queries | pgAdmin |
+| 🍃 | **MongoDB** | Records with no fixed schema | Mongo Express |
+| 🔴 | **Redis** | Cache, session, queue (not durable storage) | RedisInsight |
+| 🟥 | **SQL Server** | .NET / Windows based corporate applications | Adminer |
+| 🌀 | **Cassandra** | Very high write volume, linear scale | cqlsh |
+| 🔎 | **Elasticsearch** | On-site search, log analysis | Kibana |
+| 📨 | **Kafka** | Event streaming between services | Kafka UI |
+| 🐰 | **RabbitMQ** | Simple job queue (much easier than Kafka) | Management UI |
+| 📊 | **ClickHouse** | Reporting and analytics queries (OLAP) | Play UI |
+| 🕸️ | **Neo4j** | Relationship-heavy data, recommendation engines | Neo4j Browser |
+| 🪣 | **MinIO** | File/image storage (S3 compatible) | MinIO Console |
 
-> Ne seçeceğinizi bilmiyorsanız: **PostgreSQL** (verileriniz için) +
-> **Redis** (hız için) çoğu proje için doğru başlangıçtır.
+> If you don't know what to pick: **PostgreSQL** (for your data) +
+> **Redis** (for speed) is the right start for most projects.
 
 ---
 
-## Erişim
+## Access
 
-Tek giriş kapısı var; **hiçbir panelin portu doğrudan dışarı açılmaz.**
-Hepsi TLS + parola arkasından geçer.
+There is a single front door; **no panel's port is opened directly to the
+outside.** They all pass behind TLS + a password.
 
-| Adres | Ne |
+| Address | What |
 |---|---|
-| `https://<sunucu>/` | Yönetim paneli |
-| `https://<sunucu>/yedekler` | Yedekler ve geri yükleme |
-| `https://<sunucu>:8081…8091` | Veritabanı panelleri (kapalıysa "pasif" sayfası) |
-| `https://<sunucu>:9443/metrics/<motor>` | Prometheus metrikleri |
-| `<sunucu>:3306, 5432, 27017 …` | Uygulamanızın bağlanacağı veritabanı portları |
+| `https://<sunucu>/` | Management panel |
+| `https://<sunucu>/yedekler` | Backups and restore |
+| `https://<sunucu>:8081…8091` | Database panels (an "inactive" page if the engine is off) |
+| `https://<sunucu>:9443/metrics/<motor>` | Prometheus metrics |
+| `<sunucu>:3306, 5432, 27017 …` | The database ports your application connects to |
 
-Veritabanı portları da gateway üzerinden geçer. Bu iki şey sağlar: devirde
-bağlantı adresiniz değişmez, ve container'lar host'a doğrudan port açmaz.
+The database ports go through the gateway too. That gives two things: your
+connection address does not change during a failover, and containers do not open
+ports directly on the host.
 
-Bağlantı bilgisini panelden **Bağlantı bilgisi** düğmesiyle ya da
-`./stack.sh conn postgresql` ile kopyalayabilirsiniz.
+You can copy the connection info from the panel with the **Connection info
+("Bağlantı bilgisi")** button, or with `./stack.sh conn postgresql`.
 
 ---
 
-## Terminalden
+## From the terminal
 
-Panelin yaptığı her şeyi yapar; aynı otomatik boyutlandırma çalışır.
+Does everything the panel does; the same automatic sizing runs.
 
 ```bash
-./stack.sh list                  # motorlar, durumları, tahmini bellek
-./stack.sh enable postgresql     # aç
-./stack.sh plan elasticsearch    # açılsa ne kadar ayrılırdı?
-./stack.sh disable redis         # kapat (veri silinmez)
-./stack.sh conn mariadb          # bağlantı bilgisi
-./stack.sh replica on postgresql # yedek kopya kur
-./stack.sh backup                # aktif motorların hepsini yedekle
-./stack.sh app-user              # uygulama için kısıtlı kullanıcı
-./stack.sh doctor                # kurulum sağlık kontrolü
+./stack.sh list                  # engines, their states, estimated memory
+./stack.sh enable postgresql     # turn on
+./stack.sh plan elasticsearch    # how much would be allocated if it started?
+./stack.sh disable redis         # turn off (data is not deleted)
+./stack.sh conn mariadb          # connection info
+./stack.sh replica on postgresql # set up a replica
+./stack.sh backup                # back up every running engine
+./stack.sh app-user              # restricted user for the application
+./stack.sh doctor                # installation health check
 ```
 
 ---
 
-## Yedekleme
+## Backups
 
-Panelde **kendi sayfası** var: `https://<sunucu>/yedekler`. Panelin üstündeki
-**Araçlar** satırındaki *Yedekler* bağlantısından açılır; sayfanın başındaki
-**← Yönetim paneli** ile geri dönersiniz. Aynı parolanın, aynı kapının
-arkasındadır — panel neyse o.
+It has **its own page** in the panel: `https://<sunucu>/yedekler`. You open it
+from the *Backups ("Yedekler")* link in the **Tools ("Araçlar")** row at the top
+of the panel; you come back with **← Management panel ("← Yönetim paneli")** at
+the top of the page. It is behind the same password, the same door — whatever
+the panel is, this is too.
 
-Ayrı sayfa olmasının sebebi şu: yedek listesi motor başına dosya dosya
-büyüyen bir liste. Yönetim panelinin altına sıkıştırıldığında, "dün gece
-yedek alındı mı?" sorusunun cevabı on iki kartın altında, sayfanın
-görünmeyen kısmında kalıyordu.
+The reason it is a separate page is this: the backup list is a list that grows
+file by file, per engine. Squeezed under the management panel, the answer to
+"was a backup taken last night?" ended up under twelve cards, in the part of the
+page you cannot see.
 
-### Kurtarma provası — yedeğin tek dürüst güvencesi
+### The restore drill — the only honest assurance a backup has
 
-Bir yedeğin sağlam görünmesi, geri yüklenebileceği anlamına gelmez. Bu ürün
-o boşluğu kapatıyor: **prova**, yedeği tek kullanımlık bir container ve tek
-kullanımlık bir hacimde **gerçekten geri yükler**, süreyi ölçer, tablo/satır
-sayar ve üretimle karşılaştırır. Sonra kendini siler.
+A backup looking intact does not mean it can be restored. This product closes
+that gap: the **drill really restores** the backup in a single-use container and
+a single-use volume, measures how long it takes, counts tables/rows and compares
+them with production. Then it deletes itself.
 
 ```bash
-./scripts/restore-drill.sh mariadb        # en yeni yedekle prova
+./scripts/restore-drill.sh mariadb        # drill with the newest backup
 ```
 
-Üretime, üretim hacmine ve gateway'e dokunmaz — bu bir niyet beyanı değil,
-prova container'ı `--network none` ile ve ayrı bir hacimle açılıyor.
+It does not touch production, the production volume or the gateway — and that is
+not a statement of intent: the drill container is started with `--network none`
+and a separate volume.
 
-Ölçülmüş bir koşum:
+A measured run:
 
 ```
 [✓] Geri yükleme tamamlandı — ölçülen RTO: 13 sn
@@ -360,531 +383,579 @@ prova container'ı `--network none` ile ve ayrı bir hacimle açılıyor.
 {"engine":"mariadb","ok":true,"seconds":13,"match":true,"cleanup":true, …}
 ```
 
-Panelde *Yedekler* sayfasında motor satırında üç durumdan biri görünür:
+(Restore complete — measured RTO: 13 s; restored copy: 1 table / 1 row;
+production (mariadb-replica): 1 table / 1 row.)
 
-| Rozet | Anlamı |
+On the *Backups* page in the panel, one of three states shows up on the engine's
+row:
+
+| Badge | What it means |
 |---|---|
-| `prova geçti 2 saat önce · 13 sn` | Bu yedek gerçekten geri yüklendi, ölçülen süre bu |
-| `PROVA KALDI` | Elde **geri yüklenemeyen** bir yedek var — felaket gününden önce öğrenildi |
-| `prova yapılmadı` | Yedeğiniz var ama geri yüklenip yüklenmeyeceği **bilinmiyor** |
+| `prova geçti 2 saat önce · 13 sn` | Drill passed 2 hours ago: this backup really was restored, and this is the measured time |
+| `PROVA KALDI` | The drill failed — you are holding a backup that **cannot be restored**, and you learned it before the day of the disaster |
+| `prova yapılmadı` | No drill has been run: you have a backup, but whether it can be restored is **unknown** |
 
-Üçüncüsü bilerek görünür: bilmediğimiz bir şeyi sessizce boş bırakmak,
-olmayan bir güvence hissettirir. Gecelik yedeğin ardından haftada bir
-kendiliğinden koşar (`DRILL_EVERY_DAYS`), düşerse olay **kritik** seviyede
-kaydedilir ve webhook'a düşer.
+The third one is shown deliberately: leaving something we do not know silently
+blank makes you feel an assurance that does not exist. It runs by itself once a
+week after the nightly backup (`DRILL_EVERY_DAYS`); if it fails, the event is
+recorded at **critical** level and goes to the webhook.
 
-### Veri getirme — elinizdeki veriyi içeri alma
+### Importing — bringing in the data you already have
 
-Yeni bir veritabanı açmak kolay; asıl mesele verinin zaten başka yerde
-olması. `import.sh` bir dump dosyasını ya da uzaktaki canlı bir kaynağı
-içeri alır — ve **yanlış şeyi yapmayı reddeder**:
+Starting a new database is easy; the real problem is that the data is already
+somewhere else. `import.sh` brings in a dump file or a live remote source — and
+**refuses to do the wrong thing**:
 
 ```bash
-./scripts/import.sh mariadb dump.sql.gz              # yerel dosya
-./scripts/import.sh postgresql --kaynak postgres://…  # uzak canlı kaynak
-./scripts/import.sh mariadb dump.sql.gz --kuru        # ne olacağını göster, yazma
+./scripts/import.sh mariadb dump.sql.gz              # local file
+./scripts/import.sh postgresql --kaynak postgres://…  # live remote source
+./scripts/import.sh mariadb dump.sql.gz --kuru        # show what would happen, write nothing
 ```
 
-| Durum | Davranış |
+(`--kaynak` = source, `--kuru` = dry.)
+
+| Situation | Behaviour |
 |---|---|
-| Hedef boş değil | **Reddeder** ve ne bulduğunu söyler ("1 şema, 1 tablo, 16 KB") |
-| `--uzerine-yaz` verildi | Önce **güvenlik yedeği** alır, dosya adını yazar |
-| Dosya başka motorun dump'ı | **Reddeder** — biçimi tanır, doğru komutu yazar |
-| Motor kapalı | **Reddeder**, nasıl açılacağını söyler |
+| Target is not empty | **Refuses** and says what it found ("1 şema, 1 tablo, 16 KB" — 1 schema, 1 table, 16 KB) |
+| `--uzerine-yaz` was given | Takes a **safety backup** first, and writes down the file name (`--uzerine-yaz` = overwrite) |
+| The file is another engine's dump | **Refuses** — it recognises the format and writes down the right command |
+| The engine is off | **Refuses**, and says how to start it |
 
-Desteklenen biçimler: MariaDB/MySQL `.sql(.gz)`, PostgreSQL `.sql(.gz)` ve
-`-Fc` arşivi, MongoDB `.archive(.gz)`, Redis `.rdb(.gz)`, SQL Server `.bak`.
+Supported formats: MariaDB/MySQL `.sql(.gz)`, PostgreSQL `.sql(.gz)` and the
+`-Fc` archive, MongoDB `.archive(.gz)`, Redis `.rdb(.gz)`, SQL Server `.bak`.
 
-### Otomatik yedek
+### Automatic backups
 
-Günlük yedek saati ve saklama süresi bu sayfadan ayarlanır; açıp kapatmak tek
-düğme. Zamanlayıcı **controller'ın içinde** çalışır — host'ta root yetkisi,
-cron kurulumu ya da systemd birimi gerektirmez. Son koşumun sonucu
-(başarılıysa ne zaman, başarısızsa **sebebiyle birlikte**) ve sıradakinin
-zamanı aynı yerde yazar.
+The daily backup time and the retention period are set from this page; turning
+it on and off is one button. The scheduler runs **inside the controller** — it
+needs no root privileges on the host, no cron installation, no systemd unit. The
+result of the last run (when, if it succeeded; **together with the reason**, if
+it failed) and the time of the next one are written in the same place.
 
-> Bu, ölçülmüş bir arızanın sonucudur. Önceden `install.sh` yalnız
-> `state/crontab` dosyasını *üretiyor* ve "yüklemek için `crontab state/crontab`"
-> diyordu. Kimse yapmıyordu: test sunucusunda `crontab -l | grep backup` sıfır
-> satır, `backups/` altındaki klasörler boştu. Yani yedek alındığı sanılırken
-> hiç alınmıyordu — bir yedekleme sisteminin verebileceği en kötü sonuç.
-> `./stack.sh doctor` artık zamanlama kapalıysa bunu açıkça söylüyor.
+> This is the result of a measured failure. Previously `install.sh` only
+> *produced* the `state/crontab` file and said "to install it, `crontab
+> state/crontab`". Nobody did it: on the test server `crontab -l | grep backup`
+> returned zero lines, and the folders under `backups/` were empty. So while
+> everyone assumed backups were being taken, none were — the worst outcome a
+> backup system can produce. `./stack.sh doctor` now says so explicitly when
+> scheduling is off.
 
-Saklama süresinden eski yedekler temizlik turunda silinir, ama her motorun
-**en yeni birkaç kopyası yaşı ne olursa olsun korunur**: kapalı kalmış bir
-motorun yedeği yenilenmediği için tarih eşiğini geçiyor ve eski sürüm onun
-son kurtarma noktasını da siliyordu.
+Backups older than the retention period are deleted in the cleanup pass, but
+**the newest few copies of every engine are kept no matter how old they are**:
+the backup of an engine that stayed off is never refreshed, so it crosses the
+date threshold — and the old version deleted its last recovery point along with
+it.
 
-### Elle yedek
+### Manual backups
 
-Her motor satırında **Yedek al** düğmesi var (aynısı yönetim panelindeki
-kartlarda da duruyor). Elle alınan yedek gecelik turu iptal etmez, ek bir
-kurtarma noktası oluşturur. Motor kapalıyken düğme tıklanmaz: döküm araçları
-veritabanına bağlanır, kapalı motorda yapacakları bir şey yoktur.
+Every engine row has a **Back up ("Yedek al")** button (the same one sits on the
+cards in the management panel too). A manual backup does not cancel the nightly
+round, it creates an extra recovery point. The button is not clickable while the
+engine is off: the dump tools connect to the database, and they have nothing to
+do on an engine that is off.
 
-Listede her dosyanın tarihi, boyutu ve **kaynağı** yazar: `elle`, `zamanlı`
-ya da `dış` (host cron'u veya komut satırı). Kaynak dosya adından tahmin
-edilmez — controller kendi başlattığı koşumdan sonra oluşan dosyaları
-deftere yazar, deftere girmemiş dosya `dış`tır.
+The list writes down every file's date, size and **source**: `elle`, `zamanlı`
+or `dış` (the host's cron or the command line). The source is not guessed from
+the file name — the controller writes the files created after a run it started
+itself into the ledger, and a file that never entered the ledger is `dış`.
 
-### Geri yükleme
+### Restore
 
-**Artık panelden yapılabiliyor.** Motorun satırındaki **Son yedeğe dön**
-düğmesi en yeni kopyaya döner; belirli bir güne dönmek için **Yedekleri
-göster** ile dosya listesini açıp o satırdaki **Bu yedeğe dön** düğmesini
-kullanırsınız. "Son yedek" her zaman istenen yedek değildir — veriyi bozan
-işlem dün öğlen olmuşsa dönülecek yer ondan önceki kopyadır.
+**This can now be done from the panel.** The **Restore latest backup ("Son
+yedeğe dön")** button on the engine's row goes back to the newest copy; to go
+back to a particular day you open the file list with **Show backups ("Yedekleri
+göster")** and use the **Restore this backup ("Bu yedeğe dön")** button on that
+row. The "latest backup" is not always the backup you want — if the operation
+that corrupted the data happened yesterday at noon, the place to go back to is
+the copy before it.
 
-Düğme işi hemen başlatmaz. Açılan onay penceresi ne olacağını yazar —
-*mevcut veriler silinir, veritabanı o dosyadaki hâline döner, o tarihten
-sonra yazılan her şey kaybolur* — ve dönülecek dosyanın adını, tarihini,
-yaşını, boyutunu gösterir. Devam etmek için **motorun adını elinizle
-yazmanız** gerekir; **Geri Yükle** düğmesi doğru yazılana kadar kapalıdır.
-Terminalde `evet` yazarak verdiğiniz onayın panel karşılığı budur: yan yana
-duran düğmeler arasından yanlışına basarak yapılabilecek bir işlem değil.
+The button does not start the job right away. The confirmation dialog that opens
+writes down what will happen — *the current data is deleted, the database goes
+back to its state in that file, everything written after that date is lost* —
+and shows the name, date, age and size of the file you are going back to. To
+continue you have to **type the engine's name by hand**; the **Restore ("Geri
+Yükle")** button stays disabled until it is typed correctly. This is the panel's
+counterpart of the confirmation you give by typing `evet` ("yes") in the
+terminal: not an operation that can be performed by hitting the wrong one of
+several buttons standing side by side.
 
-Dosya, veriye dokunulmadan **önce** doğrulanır. Bozuk ya da yarım bir yedekle
-başlanan geri yükleme veriyi geri getirmez, yalnızca yok eder.
+The file is verified **before** the data is touched. A restore started with a
+corrupt or half-written backup does not bring the data back, it only destroys
+it.
 
-Otomatik geri yükleme beş motorda vardır: **MariaDB, PostgreSQL, MongoDB,
-Redis, SQL Server.** Diğerlerinin yedeği alınır ama geri dönüş motora özgü
-elle bir işlemdir; hangisinde ne yapılacağı [docs/BACKUP.md](docs/BACKUP.md)
-içinde yazıyor.
+Automatic restore exists on five engines: **MariaDB, PostgreSQL, MongoDB, Redis,
+SQL Server.** The others are backed up, but going back is a manual,
+engine-specific operation; what to do for which is written in
+[docs/BACKUP.en.md](docs/BACKUP.md).
 
-### Komut satırından
+### From the command line
 
-Panel ne yapıyorsa aynısı; ikisi de aynı `scripts/backup.sh`i çağırır.
+The same thing the panel does; both call the same `scripts/backup.sh`.
 
 ```bash
-./stack.sh backup                # aktif motorlar (kapalı olanlar atlanır)
-./stack.sh backup mariadb        # tek motor
-./scripts/backup.sh list         # yedekleri listele
+./stack.sh backup                # running engines (the ones that are off are skipped)
+./stack.sh backup mariadb        # a single engine
+./scripts/backup.sh list         # list the backups
 ./stack.sh restore mariadb backups/mariadb/full/mariadb_full_20260901.sql.gz
 ```
 
-> **Cron'dan koşuyorsanız izinlere dikkat.** `state/` ve `logs/` altına iki
-> ayrı kimlik yazar: controller container'ın içinde **root** olarak (docker
-> soketine erişmek zorunda), siz ve cron ise sunucudaki yönetici olarak. Kim
-> önce yazarsa dosya onun olur; root'un açtığı `0644/root:root` bir dosyaya
-> yönetici bir daha yazamaz. Sonucu **sessizdir**: gece işleri "Kilit dosyası
-> açılamadı" ile düşer, panel kendi yolundan çalışmayı sürdürdüğü için hata
-> görünmez. Kurulum bunu `state/` ve `logs/`'u setgid (2775) yaparak ve
-> `umask 0002` ile çözüyor. Eski bir kurulumda:
+> **If you run it from cron, watch the permissions.** Two separate identities
+> write under `state/` and `logs/`: the controller as **root** inside the
+> container (it has to reach the docker socket), and you and cron as the
+> administrator on the server. Whoever writes first owns the file; the
+> administrator cannot write again to a `0644/root:root` file that root created.
+> The result is **silent**: the night jobs fail with "Kilit dosyası açılamadı"
+> ("could not open the lock file"), and because the panel keeps working over its
+> own path, no error is visible. The installation solves this by making `state/`
+> and `logs/` setgid (2775) and with `umask 0002`. On an older installation:
 >
 > ```bash
-> ./stack.sh doctor            # yazamadığınız dosyaları sahibiyle listeler
+> ./stack.sh doctor            # lists the files you cannot write, with their owner
 > sudo ./stack.sh doctor --duzelt
 > ```
 >
-> `doctor` dosyanın **moduna** değil, gerçekten yazılabilir olup olmadığına
-> bakar — mod doğru görünüp grup üyeliği eksikken de yazamazsınız.
+> `doctor` looks not at the file's **mode** but at whether it is really
+> writable — the mode can look right while the group membership is missing, and
+> you still cannot write.
 
-Host cron'unu tercih ederseniz `state/crontab` hâlâ üretiliyor; ikisi birlikte
-koşarsa `backup.sh` kendi kilidiyle çakışmayı önler. Aynı kilit geri yüklemede
-de tutulur — 02:00 turu, yarım geri yüklenmiş bir veritabanını "geçerli yedek"
-diye döküp uzağa senkronlamasın diye.
+If you prefer the host's cron, `state/crontab` is still produced; if the two run
+together, `backup.sh` prevents the collision with its own lock. The same lock is
+held during a restore too — so that the 02:00 round does not dump a
+half-restored database as a "valid backup" and sync it to the remote.
 
-Ayrıntı ve motor başına yöntemler: [docs/BACKUP.md](docs/BACKUP.md).
-Uzak depo (Google Drive / S3 / SFTP): [docs/GOOGLE-DRIVE.md](docs/GOOGLE-DRIVE.md).
+Details and per-engine methods: [docs/BACKUP.en.md](docs/BACKUP.md).
+Remote storage (Google Drive / S3 / SFTP):
+[docs/GOOGLE-DRIVE.en.md](docs/GOOGLE-DRIVE.md).
 
 ---
 
-## Zaman noktasına dönüş (PITR)
+## Going back to a point in time (PITR)
 
-"Dünkü yedeğe dön" çoğu zaman istenen şey değildir: veriyi bozan `UPDATE`
-dün öğlen çalıştıysa, dönülecek yer **o andan bir dakika öncesidir**. Tam
-yedek + o andan sonraki WAL/binlog kayıtları bunu mümkün kılar.
+"Go back to yesterday's backup" is usually not what you want: if the `UPDATE`
+that corrupted the data ran yesterday at noon, the place to go back to is **one
+minute before that moment**. A full backup plus the WAL/binlog records after
+that moment make this possible.
 
 ```bash
-./scripts/pitr.sh durum                      # ne kadar geriye dönebilirim?
-./scripts/pitr.sh kur postgresql             # arşivlemeyi aç
-./scripts/pitr.sh taban postgresql           # taban yedeği al
+./scripts/pitr.sh durum                      # how far back can I go?
+./scripts/pitr.sh kur postgresql             # turn archiving on
+./scripts/pitr.sh taban postgresql           # take a base backup
 ./scripts/pitr.sh don mariadb "2026-09-02 15:30:00" --prova
 ```
 
-### Arşivleme zamanlanmalıdır — yoksa özellik sessizce ölüdür
+(`durum` = status, `kur` = set up, `taban` = base backup, `don` = go back;
+`--prova` = drill mode; it never touches production.)
 
-PostgreSQL WAL'ı `archive_command` ile **kendi** arşivler. MariaDB'de böyle
-bir mekanizma yoktur: binlog arşive yalnız `pitr.sh arsivle` çalışınca düşer.
-O satır olmadan `durum` yine bir pencere yazar, ama pencerenin **üst sınırı**
-en son elle arşivlenen ana çakılı kalır — ve bunu öğrendiğiniz gün, kurtarmaya
-muhtaç olduğunuz gündür.
+### Archiving must be scheduled — otherwise the feature is silently dead
 
-`scripts/crontab.template` (dolayısıyla `install.sh`'ın ürettiği
-`state/crontab`) bunu zamanlıyor:
+PostgreSQL archives the WAL **itself**, with `archive_command`. MariaDB has no
+such mechanism: the binlog only reaches the archive when `pitr.sh arsivle`
+("arsivle" = archive) runs. Without that line `durum` still writes a window, but
+the window's **upper bound** stays nailed to the last moment archived by hand —
+and the day you find that out is the day you need recovery.
+
+`scripts/crontab.template` (and therefore the `state/crontab` that `install.sh`
+produces) schedules this:
 
 ```cron
-*/15 * * * *  scripts/pitr.sh arsivle    # RPO üst sınırı: 15 dakika
-0    1 * * *  scripts/pitr.sh taban      # WAL tek başına veri değildir
-15   3 * * *  scripts/pitr.sh temizle    # arşiv sonsuza kadar büyümesin
+*/15 * * * *  scripts/pitr.sh arsivle    # RPO upper bound: 15 minutes
+0    1 * * *  scripts/pitr.sh taban      # a WAL alone is not data
+15   3 * * *  scripts/pitr.sh temizle    # so the archive does not grow forever
 ```
 
-Motor adı vermeden çağırınca PITR'li motorların hepsinde çalışır; kapalı
-motor **atlanır** (çıkış 3) ve alarm üretmez — her sabah alarm veren bir
-cron, bakılmayan bir crondur. Motorları crontab'a tek tek yazmamamızın
-sebebi de bu: yığına üçüncü bir PITR motoru eklendiği gün sessizce arşivsiz
-kalırdı.
+(`temizle` = clean up.)
 
-`--prova` üretime dokunmaz: tek kullanımlık bir kopyada dener. Pencere
-**tahmin edilmiyor, arşivden hesaplanıyor** — en eski kullanılabilir taban
-ile arşivdeki son kayıt arası; arşivde boşluk varsa üst sınır boşluktan
-öncesine çekiliyor. Aralık dışına dönme denemesi reddediliyor.
+Called without an engine name it runs on all engines that have PITR; an engine
+that is off is **SKIPPED** (exit 3) and raises no alarm — a cron that alarms
+every morning is a cron nobody looks at. This is also why we do not write the
+engines into the crontab one by one: the day a third PITR engine is added to the
+stack, it would be left silently without an archive.
 
-Ölçülmüş kanıt (sunucuda, gerçek MariaDB):
+`--prova` does not touch production: it tries on a single-use copy. The window
+is **not estimated, it is computed from the archive** — between the oldest
+usable base backup and the last record in the archive; if there is a gap in the
+archive the upper bound is pulled back to before the gap. An attempt to go back
+outside the range is refused.
+
+Measured proof (on the server, a real MariaDB):
 
 ```
 T1'de A satırı yazıldı · T2'de B satırı yazıldı · aradaki bir ana dönüldü
 [GEÇTİ] A-VAR-B-YOK — 15:30:00 anına dönüldü, kopyada yalnız A var (13 sn)
 ```
 
-PostgreSQL ve MariaDB destekleniyor. Diğerlerinde neden desteklenmediği
-yazılı: Redis'in AOF'unda zaman damgası yok ("14:32'ye dön" ifade edilemez),
-MSSQL işlem günlüğü yedeği ister, MongoDB oplog ile mümkün ama bu turda
-yapılmadı. Ayrıntı: [docs/PITR.md](docs/PITR.md).
+(Row A was written at T1 · row B was written at T2 · we went back to a moment in
+between. [PASSED] A-PRESENT-B-ABSENT — went back to 15:30:00, the copy holds
+only A (13 s).)
 
-## Şifreli yedek
+PostgreSQL and MariaDB are supported. Why the others are not is written down:
+Redis's AOF has no timestamps ("go back to 14:32" cannot be expressed), MSSQL
+wants a transaction log backup, MongoDB is possible with the oplog but was not
+done in this round. Details: [docs/PITR.en.md](docs/PITR.md).
 
-Yedekler uzak depoya (Google Drive / S3 / SFTP) gönderiliyorsa şifresiz
-gitmemeli: o hesabı ele geçiren biri bütün veriyi okur. `.env`'de bir anahtar
-verirseniz yedekler `openssl aes-256-cbc` + PBKDF2 (600.000 tur) ile
-şifrelenir.
+## Encrypted backups
 
-> **Anahtarı kaybederseniz yedekler AÇILAMAZ.** Anahtar, yedeklerden ayrı bir
-> yerde saklanmalı — aynı diskte tutmak, kilidi kapının üstünde bırakmaktır.
+If backups are sent to remote storage (Google Drive / S3 / SFTP) they should not
+go unencrypted: whoever takes over that account reads all of the data. If you
+give a key in `.env`, backups are encrypted with `openssl aes-256-cbc` + PBKDF2
+(600,000 iterations).
 
-Geriye uyumlu: şifresiz eski yedekler çalışmaya devam eder, listeleme ve
-geri yükleme ikisini de tanır. Şifreleme açıkken uzak depoya şifresiz dosya
-gönderilmez. `openssl enc` bütünlük etiketi (AEAD) taşımaz — gizlilik sağlar,
-kurcalanmaya karşı imza sağlamaz; bu bilinerek seçildi ve
-[docs/BACKUP.md](docs/BACKUP.md)'de yazılı.
+> **If you lose the key the backups CANNOT BE OPENED.** The key must be kept
+> somewhere separate from the backups — keeping it on the same disk is leaving
+> the key in the lock.
 
-## Devir provası
+Backwards compatible: old unencrypted backups keep working, and both listing and
+restore recognise either kind. While encryption is on, no unencrypted file is
+sent to remote storage. `openssl enc` carries no integrity tag (AEAD) — it gives
+confidentiality, not a signature against tampering; this was chosen knowingly
+and is written down in [docs/BACKUP.en.md](docs/BACKUP.md).
 
-Kurtarma provasının ikizi. "Yüksek erişilebilirlik var" demek yerine
-**"geçen hafta 6 saniyede devrettik ve tek satır kaybetmedik"** demek:
+## Failover drill
+
+The twin of the restore drill. Instead of saying "we have high availability",
+saying **"we failed over in 6 seconds last week and did not lose a single
+row"**:
 
 ```bash
 ./scripts/failover-drill.sh mariadb --onayla
 ```
 
-Gerçek bir devir yapar ve **uygulamanın gördüğü adresten** yazma yeniden
-mümkün olana kadar geçen süreyi ölçer — container'ın içinden değil, gateway
-portundan. Devir öncesi commit edilen kanıt satırının kaybolmadığını
-doğrular. Panelden de başlatılabilir ama gövdede açık onay ister: gerçek bir
-kesinti oluşur, yanlışlıkla tıklanacak bir düğme olamaz.
+(`--onayla` = confirm.)
 
-## Bakım — tablo şişkinliği
+It performs a real failover and measures the time until writing is possible
+again **from the address the application sees** — from the gateway port, not
+from inside the container. It verifies that the proof row committed before the
+failover was not lost. It can be started from the panel too, but it wants an
+explicit confirmation in the body: a real downtime occurs, so this cannot be a
+button clicked by accident.
 
-Sil-yaz döngüsü tabloları şişirir: PostgreSQL'de autovacuum yetişemediğinde
-ölü satırlar birikir, InnoDB'de silinen satırların yeri geri verilmez. Disk
-sessizce dolar.
+## Maintenance — table bloat
 
-```bash
-./scripts/maintenance.sh durum               # ölç, hiçbir şey değiştirme
-./scripts/maintenance.sh bakim postgresql    # güvenli: tabloyu KİLİTLEMEZ
-./scripts/maintenance.sh bakim postgresql --agresif --onayla   # yeri geri verir, KİLİTLER
-```
-
-Agresif bakımın **kilit süresi tahmin ediliyor** ve tahmin kendi kendini
-kalibre ediyor: her bakımdan sonra gerçekleşen hız ölçülüp kaydediliyor
-(ölçülen: 47 MB/sn). Kullanıcı o sayıya bakıp kesintiyi kabul edip
-etmeyeceğine karar veriyor. Panel yalnız güvenli bakımı sunar.
-
-## Yavaş sorgu avcısı
-
-"Veritabanım yavaş" herkesin derdi ama kimse `EXPLAIN` okumak istemiyor. Bu
-araç en pahalı sorguları bulur ve mümkün olduğunda ne yapılacağını söyler:
+The delete-write cycle bloats tables: in PostgreSQL dead rows pile up when
+autovacuum cannot keep up, and in InnoDB the space of deleted rows is not given
+back. The disk fills up silently.
 
 ```bash
-./stack.sh sorgu kur postgresql     # ölçümü aç (yeniden başlatma gerekir, söyler)
-./stack.sh sorgu durum              # en pahalı sorgular
-./stack.sh sorgu oneri postgresql   # indeks / kullanılmayan indeks önerileri
+./scripts/maintenance.sh durum               # measure, change nothing
+./scripts/maintenance.sh bakim postgresql    # safe: does NOT LOCK the table
+./scripts/maintenance.sh bakim postgresql --agresif --onayla   # gives the space back, LOCKS
 ```
 
-**Sıralama toplam süreye göre, ortalamaya göre değil** — ve bu karar ölçülerek
-verildi. Gerçek koşumdan:
+(`bakim` = maintenance, `--agresif` = aggressive.)
 
-| sorgu | çağrı | toplam | ortalama | sıra |
+The **lock time of aggressive maintenance is estimated**, and the estimate
+calibrates itself: after every maintenance run the achieved speed is measured
+and recorded (measured: 47 MB/s). You look at that number and decide whether to
+accept the downtime. The panel offers only the safe maintenance.
+
+## Slow query hunter
+
+"My database is slow" is everyone's problem, but nobody wants to read `EXPLAIN`.
+This tool finds the most expensive queries and, where possible, says what to do:
+
+```bash
+./stack.sh sorgu kur postgresql     # turn measurement on (a restart is needed; it says so)
+./stack.sh sorgu durum              # the most expensive queries
+./stack.sh sorgu oneri postgresql   # index / unused index suggestions
+```
+
+(`sorgu` = query, `oneri` = suggestion.)
+
+**Ranking is by total time, not by average** — and that decision was made by
+measuring. From a real run:
+
+| query | calls | total | average | rank |
 |---|---|---|---|---|
-| sık çağrılan | 400 | **56.7 ms** | 0.142 ms | **2** |
-| nadir ama ağır | 2 | 14.2 ms | **7.1 ms** | 3 |
+| frequently called | 400 | **56.7 ms** | 0.142 ms | **2** |
+| rare but heavy | 2 | 14.2 ms | **7.1 ms** | 3 |
 
-Ortalamaya göre sıralansaydı ikinci sorgu 50 kat üstte çıkardı; oysa sunucunun
-CPU'sundan 4 kat fazlasını yiyen birincisi. Yanlış sorguyu optimize etmek,
-hiçbir şey yapmamaktan pahalıdır.
+Ranked by average, the second query would have come out 50 times higher; yet it
+is the first one that eats four times more of the server's CPU. Optimising the
+wrong query costs more than doing nothing.
 
-Öneriler **uygulanmaz, gösterilir**: indeks eklemek yazma yolunu yavaşlatır ve
-bu kararı veritabanının sahibi vermeli. Gizlilik: sorgu metinleri veri
-içerebilir; PostgreSQL parametreleri zaten maskeler, MariaDB slow log ham
-sorgu yazdığı için araç sabitleri maskeler ve bunu söyler.
-Ayrıntı: [docs/SLOWLOG.md](docs/SLOWLOG.md).
+Suggestions are **not applied, they are shown**: adding an index slows the write
+path down, and that decision belongs to the owner of the database. Privacy:
+query texts can contain data; PostgreSQL already masks the parameters, and
+because the MariaDB slow query log writes the raw query, the tool masks the
+literals and says so. Details: [docs/SLOWLOG.en.md](docs/SLOWLOG.md).
 
-## İzleme
+## Monitoring
 
-Açtığınız veritabanlarının nasıl çalıştığını grafiklerle gösterir. Kurulum ya
-da yapılandırma gerektirmez:
+Shows with graphs how the databases you turned on are running. It needs no
+installation and no configuration:
 
 ```bash
-./stack.sh enable monitoring     # ya da panelden "İzleme" kartındaki Aktif Et
-./stack.sh panel monitoring      # adresi yazar
+./stack.sh enable monitoring     # or Activate on the "İzleme" (Monitoring) card in the panel
+./stack.sh panel monitoring      # writes the address
 ```
 
-Motor başına hazır panolar gelir: kaç bağlantı var, saniyede kaç işlem
-düşüyor, önbellek işe yarıyor mu, yedek kopya geride mi. Her panelin altında
-**ne anlama geldiği ve ne zaman endişelenmeniz gerektiği** yazar — veritabanı
-yönetmeyi bilmeden de okunabilsin diye.
+Ready-made dashboards arrive per engine: how many connections there are, how
+many operations per second, whether the cache is doing its job, whether the
+replica is behind. Under every panel it says **what it means and when you should
+worry** — so that it can be read without knowing how to administer a database.
 
-Genel Bakış panosu bu ürün için ayrıca önemli: yığın belleği otomatik
-hesaplayıp dağıtıyor, bu panoda her container'ın *gerçekte* ne kadar
-kullandığını ayrılan limitle yan yana görürsünüz — yani hesabın doğru olup
-olmadığını gözünüzle doğrularsınız.
+The Overview dashboard ("Genel Bakış") matters especially for this product: the
+stack calculates and hands out memory automatically, and on this dashboard you
+see how much each container *really* uses side by side with the limit it was
+given — that is, you verify with your own eyes whether the arithmetic is right.
 
-Hedef listesi elle yazılmaz: bir motoru açıp kapattığınızda liste kendiliğinden
-güncellenir. Kapalı motor listede olmadığı için "erişilemiyor" uyarısı da
-yağmaz — kapalı olmak arıza değildir.
+The target list is not written by hand: when you turn an engine on or off the
+list updates itself. Because an engine that is off is not in the list, no
+"unreachable" warnings rain down either — being off is not a failure.
 
-Kapalıyken hiçbir container çalışmaz. Açıkken ~830 MB RAM ister; sunucuda yer
-yoksa diğer motorlar gibi **açılmaz ve sebebini söyler**.
+While off, no container runs. While on it wants ~830 MB of RAM; if there is no
+room on the server it, like the other engines, **does not start and says why**.
 
-Ayrıntı: [docs/MONITORING.md](docs/MONITORING.md).
+Details: [docs/MONITORING.en.md](docs/MONITORING.md).
 
 ---
 
-## Yedek kopya (master-slave)
+## Replica (master-slave)
 
-Panelde ilgili kartın altındaki **Replika kur** düğmesi, ya da:
+The **Set up replica ("Replika kur")** button under the relevant card in the
+panel, or:
 
 ```bash
 ./stack.sh replica on postgresql
 ```
 
-| Motor | Yöntem | Kesinti |
+| Engine | Method | Downtime |
 |---|---|---|
-| PostgreSQL | streaming replication (`pg_basebackup`) | yok |
-| MariaDB | GTID tabanlı asenkron replikasyon | yok |
-| Redis | `replicaof` | yok |
-| MongoDB | replica set (rs0) | **var** — primary yeniden başlar |
-| Cassandra / Kafka / Elasticsearch | motorun kendi kümeleme mantığı | — |
+| PostgreSQL | streaming replication (`pg_basebackup`) | none |
+| MariaDB | GTID-based asynchronous replication | none |
+| Redis | `replicaof` | none |
+| MongoDB | replica set (rs0) | **yes** — the primary restarts |
+| Cassandra / Kafka / Elasticsearch | the engine's own clustering logic | — |
 
-Ayrıntı: [docs/REPLICATION.md](docs/REPLICATION.md)
+Details: [docs/REPLICATION.en.md](docs/REPLICATION.md)
 
 ---
 
-## Otomatik devir (failover)
+## Automatic failover
 
-Yedek kopyayı kurduktan sonra tek bir düğme daha:
+After setting up the replica, one more button:
 
 ```bash
 ./stack.sh failover on postgresql
 ```
 
-Sistem ana kopyayı 10 saniyede bir yoklar. Üst üste 3 kez yanıt alamazsa:
+The system probes the primary every 10 seconds. If it gets no answer 3 times in
+a row:
 
-1. **Eski ana kopyayı durdurur** — iki kopyanın aynı anda yazı kabul edip
-   verilerin ayrışmasını (split-brain) önlemek için zorunlu adım
-2. **Yedeği ana kopya yapar** (yazmaya açar)
-3. **Yönlendirmeyi günceller** — uygulamanız aynı adrese bağlanmaya devam eder
-4. **Olayı kaydeder** ve tanımlıysa webhook bildirimi gönderir
+1. **Stops the old primary** — a mandatory step to keep the two copies from
+   accepting writes at the same time and letting the data diverge (split-brain)
+2. **Makes the replica the primary** (opens it for writes)
+3. **Updates the routing** — your application keeps connecting to the same
+   address
+4. **Records the event** and, if one is defined, sends a webhook notification
 
-Bunun çalışabilmesi için tüm veritabanı portları gateway üzerinden geçer:
+For this to work, all database ports go through the gateway:
 
 ```
-uygulama → gateway:5432 → (o an ana kopya olan neyse)
+application → gateway:5432 → (whichever copy is the primary at that moment)
 ```
 
-Uygulamanız doğrudan container'a bağlansaydı, devirden sonra ölü sunucuya
-bağlanmaya devam ederdi — yani devir otomatik olmazdı.
+If your application connected directly to the container, after a failover it
+would keep connecting to the dead server — that is, the failover would not be
+automatic.
 
 ```bash
-./stack.sh failover status        # durum ve devir geçmişi
-./stack.sh failover now <motor>   # elle devir (bakım/test)
-./stack.sh failover rebuild <m>   # eski kopyayı yedek olarak geri al
-./stack.sh events                 # olay akışı
+./stack.sh failover status        # state and failover history
+./stack.sh failover now <motor>   # manual failover (maintenance/test)
+./stack.sh failover rebuild <m>   # take the old copy back as a replica
+./stack.sh events                 # event feed
 ```
 
-| Motor | Devir yöntemi |
+| Engine | Failover method |
 |---|---|
 | PostgreSQL | `pg_ctl promote` |
-| MariaDB | relay log boşaltılır → `RESET SLAVE ALL` → yazmaya açılır |
+| MariaDB | the relay log is drained → `RESET SLAVE ALL` → opened for writes |
 | Redis | `REPLICAOF NO ONE` |
-| MongoDB | replica set kendi seçimini yapar (arbiter ile 3 oy) |
+| MongoDB | the replica set holds its own election (3 votes, with an arbiter) |
 
-Ayrıntı, test yöntemi ve sınırlar: [docs/FAILOVER.md](docs/FAILOVER.md)
+Details, how it is tested and the limits:
+[docs/FAILOVER.en.md](docs/FAILOVER.md)
 
 ---
 
 ## Kubernetes
 
-Aynı ürün, aynı mantık: **"aktif et" = StatefulSet'i 0'dan 1 replikaya
-ölçeklemek.** Manifestler katalogdan üretilir, elle yazılmaz.
+The same product, the same logic: **"activate" = scaling the StatefulSet from 0
+to 1 replica.** The manifests are generated from the catalog, not written by
+hand.
 
 ```bash
 python3 scripts/gen-k8s.py --with-secrets
 kubectl apply -k k8s/base
 ```
 
-Kontrol servisinin K8s'teki tek yetkisi StatefulSet'leri okumak ve
-ölçeklemek/boyutlandırmaktır — Docker kurulumundaki docker soketi erişiminden
-(host'ta tam yetki) belirgin şekilde dardır.
+The controller's only authority in K8s is to read StatefulSets and to
+scale/size them — noticeably narrower than the docker socket access in the
+Docker installation (full authority on the host).
 
-Ayrıntı: [docs/KUBERNETES.md](docs/KUBERNETES.md)
+Details: [docs/KUBERNETES.en.md](docs/KUBERNETES.md)
 
 ---
 
-## Yapı
+## Structure
 
 ```
 databases-stack/
-├── install.sh              Tek komutluk kurulum
-├── stack.sh                Günlük kullanım CLI'ı
-├── catalog.json            ⭐ Motor kataloğu — TEK YETKİ KAYNAĞI
-├── docker-compose.yml      Tüm motorlar, profil tabanlı
-├── controller/             Kontrol düzlemi (aktivasyon + boyutlandırma)
+├── install.sh              One-command installation
+├── stack.sh                Day-to-day CLI
+├── catalog.json            ⭐ Engine catalog — THE SINGLE SOURCE OF TRUTH
+├── docker-compose.yml      All engines, profile based
+├── controller/             Control plane (activation + sizing)
 ├── gateway/                nginx: TLS, auth, reverse proxy, dashboard
-├── config/                 Motor konfigürasyonları (my.cnf vb.)
-├── scripts/                backup, sync, kullanıcı, sertifika, replikasyon, devir
-├── overrides/              Duruma göre yüklenen compose parçaları
-├── k8s/                    Üretilmiş Kubernetes manifestleri
-└── docs/                   Ayrıntılı belgeler
+├── config/                 Engine configurations (my.cnf etc.)
+├── scripts/                backup, sync, users, certificates, replication, failover
+├── overrides/              Compose fragments loaded as needed
+├── k8s/                    Generated Kubernetes manifests
+└── docs/                   Detailed documentation
 ```
 
-**Yeni bir veritabanı eklemek** = `catalog.json`a bir kayıt + `docker-compose.yml`e
-aynı profile sahip servisler. `./scripts/check-catalog.sh` ikisinin ayrışmadığını
-doğrular; `./stack.sh doctor` bunu otomatik çağırır.
+**Adding a new database** = one record in `catalog.json` + services with the
+same profile in `docker-compose.yml`. `./scripts/check-catalog.sh` verifies that
+the two have not diverged; `./stack.sh doctor` calls it automatically.
 
 ---
 
-## Güvenlik
+## Security
 
-- Panel portları host'a açılmaz; tek giriş kapısı TLS + basic auth arkasındadır
-- Her motorun **ayrı** parolası vardır (tek sızıntı 12 motoru açmaz)
-- Kontrol servisinin portu yoktur; yalnız gateway'den, paylaşılan token ile erişilir
-- Parolalar hiçbir betikte komut satırına yazılmaz (`ps` çıktısında görünmez)
-- `./stack.sh app-user` ile uygulamanız için `DROP` yetkisi olmayan kullanıcı
+- Panel ports are not opened on the host; the single front door is behind TLS + basic auth
+- Every engine has a **separate** password (one leak does not open 12 engines)
+- The controller has no port; it is reached only from the gateway, with a shared token
+- Passwords are never written on the command line in any script (they do not show up in `ps` output)
+- `./stack.sh app-user` gives your application a user with no `DROP` privilege
 
-> ⚠️ Bu ürün **iç ağ / VPN arkası** kullanım için tasarlandı. Veritabanı
-> portlarını internete açmayın.
+> ⚠️ This product was designed for use **on an internal network / behind a
+> VPN**. Do not open the database ports to the internet.
 
-Ayrıntı ve sertleştirme adımları: [docs/SECURITY.md](docs/SECURITY.md)
+Details and hardening steps: [docs/SECURITY.en.md](docs/SECURITY.md)
 
 ---
 
-## Nasıl doğrulanıyor
+## How it is verified
 
-Bu ürünün iddiaları ölçülüyor. Depoda iki katman var:
+This product's claims are measured. There are two layers in the repository:
 
 ```bash
-./stack.sh selftest    # docker gerektirmez — boyutlandırma, API, nginx, betikler
-./stack.sh e2e         # ÇALIŞAN kuruluma karşı — on dört paket
-./stack.sh e2e --hepsi # Kubernetes dahil
+./stack.sh selftest    # needs no docker — sizing, API, nginx, scripts
+./stack.sh e2e         # against a RUNNING installation — fourteen suites
+./stack.sh e2e --hepsi # including Kubernetes
 ```
 
-`selftest` docker'ı taklit eder; hızlıdır ve mantık hatalarını yakalar. Ama
-taklit edilen bir docker, gerçek bir container'ın yapmadığını yapmaz. Bu
-yüzden ikinci katman var ve **çalışan sisteme** soruyor: veri yazılıp geri
-okunuyor mu, ana kopya öldürülünce uygulama **aynı adrese** yazmaya devam
-ediyor mu, alınan yedek gerçekten geri yükleniyor mu, her panonun her sorgusu
-veri döndürüyor mu.
+(`--hepsi` = all.)
 
-| Paket | Ne kanıtlar |
+`selftest` fakes docker; it is fast and it catches logic errors. But a faked
+docker never does what a real container does not do. That is why there is a
+second layer, and it asks the **running system**: is data written and read back,
+does the application keep writing to the **same address** when the primary is
+killed, is the backup that was taken really restored, does every query of every
+dashboard return data.
+
+| Suite | What it proves |
 |---|---|
-| `security` | Panel/API/metrik parolası, tek oturum, çapraz-site koruması |
-| `sizing` | Hesaplanan limit gerçekten uygulanmış mı, bütçe dolunca reddediyor mu |
-| `replication` | Replika akıyor, salt-okunur, kapatınca kalıntı bırakmıyor |
-| `failover` | Ölüm → devir → **aynı adresten yazma** → veri kaybı yok |
-| `backup` | Yedek al → **veriyi sil** → geri yükle → veri geri geldi |
-| `monitoring` | Hedefler, metrikler, **her panonun her sorgusu** |
-| `lifecycle` | Aç/kapat/aç — kapatınca veri silinmiyor |
-| `k8s` | Ayarlar pod içinde uygulanıyor mu (k3s açar ve sonunda kapatır) |
+| `security` | Panel/API/metrics password, single session, cross-site protection |
+| `sizing` | Whether the calculated limit is really applied, whether it refuses when the budget is full |
+| `replication` | The replica is streaming, read-only, and leaves no leftovers when turned off |
+| `failover` | Death → failover → **writing from the same address** → no data loss |
+| `backup` | Back up → **delete the data** → restore → the data came back |
+| `monitoring` | Targets, metrics, **every query of every dashboard** |
+| `lifecycle` | On/off/on — turning it off does not delete data |
+| `k8s` | Whether the settings are applied inside the pod (brings up k3s and takes it down at the end) |
 
-**Sonuç türü üç değil dört:**
+**There are four result types, not three:**
 
-| | Anlamı | Çıkış koduna etkisi |
+| | What it means | Effect on the exit code |
 |---|---|---|
-| `GEÇTİ` / `BAŞARISIZ` | Ölçtük | — / 1 |
-| `ATLANDI` | Ön koşul yok (motor kapalı) — meşru | yok |
-| `ÖLÇÜLEMEDİ` | Sorgu düştü, docker cevap vermedi | **1** |
+| `GEÇTİ` / `BAŞARISIZ` (PASSED / FAILED) | We measured | — / 1 |
+| `ATLANDI` (SKIPPED) | No precondition (the engine is off) — legitimate | none |
+| `ÖLÇÜLEMEDİ` (NOT MEASURED) | The query fell over, docker did not answer | **1** |
 
-Son satır kasıtlı: *"bilmeyi başaramadık" ile "iyi durumda" aynı şey değildir.*
-Aynı sebeple **hiçbir kontrol çalışmadıysa çıkış 2**, ölçülenden çok atlama
-varsa **çıkış 3** — "0/0 geçti" diyerek yeşil görünen bir test, hiç olmayan
-testten kötüdür.
+The last row is deliberate: *"we could not manage to know" and "in good shape"
+are not the same thing.* For the same reason, **if no check ran at all, exit
+2**, and if there are more skips than measurements, **exit 3** — a test that
+looks green by saying "0/0 passed" is worse than a test that never existed.
 
-Bu paket yazıldığı gün ürünün kendisinde altı gerçek hata buldu; dördü ancak
-sıfırdan kurulmuş, gerçekten çalışan bir sistemde görülebilirdi. Her biri için
-teste kalıcı bir koruma eklendi ve **korumanın bozuk hâli gerçekten yakaladığı**
-ayrıca sınandı.
-
----
-
-## Kapsam — dürüstçe
-
-Otomatik devir **süreç düzeyindeki** arızaları karşılar: veritabanının çökmesi,
-kilitlenmesi, OOM ile öldürülmesi, veri dosyasının bozulması. Bunlar pratikte
-en sık yaşanan arızalardır ve sistem bunları ~30 saniyede kendisi kapatır.
-
-Aynı ürün, ikinci bir makine eklendiğinde **host arızasını** da karşılar:
-yedek kopyayı uzak bir Docker host'unda ya da Kubernetes'te node
-anti-affinity ile çalıştırın (bkz. [docs/FAILOVER.md](docs/FAILOVER.md)).
-Tek makinede çalıştırdığınız sürece, makinenin tamamı düşerse iki kopya da
-düşer — bu bir eksiklik değil, tek makine olmanın tanımıdır.
-
-Bilmeniz gerekenler:
-
-- **Replikasyon asenkrondur.** Devirde, ana kopyanın göndermeye yetişemediği
-  son işlemler kaybolabilir (tipik olarak milisaniyeler). Sıfır kayıp için
-  senkron replikasyon nasıl açılır: [docs/FAILOVER.md](docs/FAILOVER.md)
-- **Devir yedeğin yerini tutmaz.** Yanlışlıkla silinen veri replikaya da
-  anında yansır. Düzenli yedek şart → [docs/BACKUP.md](docs/BACKUP.md)
-- Veritabanı portları gateway üzerinden geçtiği için motorlar istemcinin
-  gerçek IP'sini değil gateway'in IP'sini görür — host tabanlı yetkilendirme
-  (`user@'192.168.1.5'`) kullanıyorsanız buna göre ayarlayın.
-- Neo4j Community'de çevrimiçi yedek yoktur — yedek almak veritabanını durdurur.
-- Kafka yedeklenmez (log'dur, veritabanı değil); `replication.factor` kullanın.
-- MongoDB replica set açmak ana kopyayı yeniden başlatır (kısa kesinti).
+The day this suite was written it found six real bugs in the product itself;
+four of them could only be seen on a freshly installed, genuinely running
+system. A permanent guard was added to the tests for each of them, and it was
+separately checked that **the guard really catches the broken case**.
 
 ---
 
-## Lisanslar
+## Scope — honestly
 
-Bu proje MIT'tir ve motorları **yeniden dağıtmaz** — resmi kayıt defterlerinden
-çeker. Yani her motorun lisansı doğrudan sizinle motorun sahibi arasındadır.
-Panelde her kartın altında lisans görünür, kısıtlı olanlarda aktivasyon
-onayında uyarı çıkar.
+Automatic failover covers **process-level** failures: the database crashing,
+hanging, being killed by OOM, the data file getting corrupted. In practice these
+are the most common failures, and the system closes them itself in ~30 seconds.
+
+The same product covers a **host failure** too, once a second machine is added:
+run the replica on a remote Docker host, or with node anti-affinity on
+Kubernetes (see [docs/FAILOVER.en.md](docs/FAILOVER.md)). As long as you run
+it on a single machine, if the whole machine goes down both copies go down —
+this is not a shortcoming, it is the definition of being on a single machine.
+
+What you need to know:
+
+- **Replication is asynchronous.** During a failover, the last transactions the
+  primary could not manage to send may be lost (typically milliseconds). How to
+  turn on synchronous replication for zero loss:
+  [docs/FAILOVER.en.md](docs/FAILOVER.md)
+- **Failover is no substitute for a backup.** Data deleted by accident is
+  reflected on the replica instantly too. Regular backups are essential →
+  [docs/BACKUP.en.md](docs/BACKUP.md)
+- Because the database ports go through the gateway, engines see the gateway's
+  IP and not the client's real IP — if you use host-based authorisation
+  (`user@'192.168.1.5'`), set it up accordingly.
+- Neo4j Community has no online backup — taking a backup stops the database.
+- Kafka is not backed up (it is a log, not a database); use
+  `replication.factor`.
+- Turning on a MongoDB replica set restarts the primary (short downtime).
+
+---
+
+## Licenses
+
+This project is MIT and it **does not redistribute** the engines — it pulls them
+from the official registries. So each engine's license is directly between you
+and that engine's owner. The license is shown under every card in the panel, and
+for the restricted ones a warning appears in the activation confirmation.
 
 ```bash
 ./stack.sh licenses
 ```
 
-Çoğu motor iç kullanımda sorunsuzdur. İki başlık dikkat ister:
+Most engines are trouble-free for internal use. Two headings need attention:
 
-- **SQL Server** varsayılan olarak **ücretsiz Express** sürümüyle gelir ve
-  üretimde de kullanılabilir; sınırı veritabanı başına 10 GB ve ~1.4 GB tampon
-  havuzudur. Tüm özellikler gerekiyorsa `MSSQL_PID=Developer` ücretsizdir ama
-  **yalnız geliştirme/test** içindir; üretimde Standard/Enterprise lisansı ister.
-- **MongoDB (SSPL), Elasticsearch (ELv2/SSPL), Redis, Neo4j, MinIO (AGPL)**
-  copyleft lisanslıdır. Kendi uygulamanız için kullanmak serbesttir; bu
-  motorları üçüncü taraflara **yönetilen servis olarak satarsanız** kaynak açma
-  yükümlülüğü doğabilir.
+- **SQL Server** comes by default with the **free Express** edition and can be
+  used in production too; its limits are 10 GB per database and a ~1.4 GB buffer
+  pool. If you need all the features, `MSSQL_PID=Developer` is free but is **for
+  development/test only**; in production it wants a Standard/Enterprise license.
+- **MongoDB (SSPL), Elasticsearch (ELv2/SSPL), Redis, Neo4j, MinIO (AGPL)** are
+  copyleft licensed. Using them for your own application is free; if you **sell
+  these engines to third parties as a managed service**, an obligation to open
+  your source may arise.
 
-İzleme modülü için: **Prometheus ve node-exporter Apache-2.0**
-(kısıtsız), **Grafana OSS ise AGPL-3.0**'dır. Grafana'yı olduğu gibi
-çalıştırmak serbesttir; AGPL yükümlülüğü ancak Grafana'yı DEĞİŞTİRİP ağ
-üzerinden üçüncü taraflara sunarsanız doğar. İç ağda kendi panolarınızı
-kullanmak bu kapsama girmez.
+For the monitoring module: **Prometheus and node-exporter are Apache-2.0**
+(unrestricted), while **Grafana OSS is AGPL-3.0**. Running Grafana as it is, is
+free; the AGPL obligation arises only if you MODIFY Grafana and serve it to
+third parties over a network. Using your own dashboards on an internal network
+does not fall into that scope.
 
-Copyleft istemiyorsanız imajlar değiştirilebilir — Redis yerine BSD-3 lisanslı
-**Valkey** birebir geçer:
+If you do not want copyleft the images can be changed — BSD-3 licensed
+**Valkey** is a drop-in replacement for Redis:
 
 ```bash
 REDIS_IMAGE=valkey/valkey:8-alpine    # .env
 ```
 
-Aynı mekanizma kapalı ağda kendi registry aynanız için de kullanılır.
-Ayrıntı: [docs/LICENSING.md](docs/LICENSING.md)
+The same mechanism is also used for your own registry mirror on a closed
+network. Details: [docs/LICENSING.en.md](docs/LICENSING.md)
 
 ---
 
-## Lisans
+## License
 
 MIT — [LICENSE](LICENSE)

@@ -1,55 +1,55 @@
-# 🔗 GOOGLE DRIVE BAĞLANTI KILAVUZU
+# 🔗 GOOGLE DRIVE CONNECTION GUIDE
 
-***Türkçe** · [English](GOOGLE-DRIVE.en.md)*
+*[Türkçe](GOOGLE-DRIVE.tr.md) · **English***
 
-## 📋 GEREKSINIMLER
+## 📋 REQUIREMENTS
 
-### 1. Teknik Gereksinimler:
-- ✅ Linux sunucu (Ubuntu, Debian, CentOS, vb.)
-- ✅ Root veya sudo yetkisi
-- ✅ İnternet bağlantısı
-- ✅ Minimum 100MB boş alan (rclone için)
-- ✅ Tarayıcı erişimi (yapılandırma için)
+### 1. Technical Requirements:
+- ✅ Linux server (Ubuntu, Debian, CentOS, etc.)
+- ✅ Root or sudo privileges
+- ✅ Internet connection
+- ✅ Minimum 100MB free space (for rclone)
+- ✅ Browser access (for configuration)
 
-### 2. Google Hesabı:
-- ✅ Gmail hesabı (ücretsiz)
-- ✅ Google Drive aktif olmalı
-- ✅ 2FA (2 Faktörlü Doğrulama) YOKSA daha kolay
-- ✅ "Daha az güvenli uygulama" ayarı opsiyonel
+### 2. Google Account:
+- ✅ Gmail account (free)
+- ✅ Google Drive must be active
+- ✅ Easier if you DON'T have 2FA (Two-Factor Authentication)
+- ✅ "Less secure app" setting optional
 
 ---
 
-## 🚀 ADIM ADIM KURULUM
+## 🚀 STEP-BY-STEP SETUP
 
-### ADIM 1: rclone Kurulumu (2 dakika)
+### STEP 1: Installing rclone (2 minutes)
 
-Linux sunucunuzda:
+On your Linux server:
 
 ```bash
-# rclone'u otomatik kur
+# Install rclone automatically
 curl https://rclone.org/install.sh | sudo bash
 
-# Kurulumu doğrula
+# Verify the installation
 rclone version
 
-# Çıktı benzeri:
+# Sample output:
 # rclone v1.64.2
 # - os/version: ubuntu 22.04
 # - arch: amd64
 # - go: go1.21
 ```
 
-**Alternatif kurulum yöntemleri:**
+**Alternative installation methods:**
 
 ```bash
-# Debian/Ubuntu için APT ile
+# With APT for Debian/Ubuntu
 sudo apt update
 sudo apt install rclone -y
 
-# CentOS/RHEL için YUM ile
+# With YUM for CentOS/RHEL
 sudo yum install rclone -y
 
-# Manuel indirme (internet problemi varsa)
+# Manual download (if you have internet problems)
 cd /tmp
 wget https://downloads.rclone.org/rclone-current-linux-amd64.zip
 unzip rclone-current-linux-amd64.zip
@@ -61,15 +61,15 @@ sudo chmod 755 /usr/bin/rclone
 
 ---
 
-### ADIM 2: Google Drive Yapılandırması (5-7 dakika)
+### STEP 2: Google Drive Configuration (5-7 minutes)
 
-#### 2.1. rclone Config Başlat
+#### 2.1. Start rclone Config
 
 ```bash
 rclone config
 ```
 
-#### 2.2. Yeni Remote Oluştur
+#### 2.2. Create a New Remote
 
 ```
 Current remotes:
@@ -86,24 +86,24 @@ s) Set configuration password
 q) Quit config
 ```
 
-**Seçim:** `n` (New remote) yazıp Enter
+**Selection:** type `n` (New remote) and press Enter
 
 ---
 
-#### 2.3. Remote İsmi
+#### 2.3. Remote Name
 
 ```
 Enter name for new remote.
 name>
 ```
 
-**Yazın:** `gdrive` (veya istediğiniz isim, örn: `backup-drive`, `my-drive`)
+**Type:** `gdrive` (or any name you like, e.g. `backup-drive`, `my-drive`)
 
-**ÖNEMLİ:** Bu ismi scripts/sync-remote.sh'ta kullanacaksınız!
+**IMPORTANT:** You will use this name in scripts/sync-remote.sh!
 
 ---
 
-#### 2.4. Storage Type Seçimi
+#### 2.4. Storage Type Selection
 
 ```
 Option Storage.
@@ -122,9 +122,9 @@ Choose a number from below, or type in your own value.
 Storage>
 ```
 
-**Yazın:** `15` (veya kaç numarada "drive" yazıyorsa)
+**Type:** `15` (or whatever number "drive" is on)
 
-**Alternatif:** Direkt `drive` yazabilirsiniz
+**Alternative:** You can type `drive` directly
 
 ---
 
@@ -140,9 +140,9 @@ Enter a value. Press Enter to leave empty.
 client_id>
 ```
 
-**ÖNERİ:** Boş bırakın (sadece Enter)
+**RECOMMENDATION:** Leave it blank (just press Enter)
 
-**Not:** İleride performans sorunu olursa kendi Client ID'nizi oluşturabilirsiniz.
+**Note:** If you hit a performance problem later, you can create your own Client ID.
 
 ---
 
@@ -156,11 +156,11 @@ Enter a value. Press Enter to leave empty.
 client_secret>
 ```
 
-**Yazın:** Boş bırakın (sadece Enter)
+**Type:** Leave it blank (just press Enter)
 
 ---
 
-#### 2.7. Scope (Yetki Seviyesi)
+#### 2.7. Scope (Permission Level)
 
 ```
 Option scope.
@@ -177,7 +177,7 @@ Press Enter for the default (full access).
 scope>
 ```
 
-**Yazın:** `1` (Full access - backup için gerekli)
+**Type:** `1` (Full access - required for backup)
 
 ---
 
@@ -191,7 +191,7 @@ Enter a value. Press Enter to leave empty.
 root_folder_id>
 ```
 
-**Yazın:** Boş bırakın (sadece Enter)
+**Type:** Leave it blank (just press Enter)
 
 ---
 
@@ -205,7 +205,7 @@ Enter a value. Press Enter to leave empty.
 service_account_file>
 ```
 
-**Yazın:** Boş bırakın (sadece Enter)
+**Type:** Leave it blank (just press Enter)
 
 ---
 
@@ -218,11 +218,11 @@ n) No (default)
 y/n>
 ```
 
-**Yazın:** `n` (No)
+**Type:** `n` (No)
 
 ---
 
-#### 2.11. Auto Config - ÇOOOK ÖNEMLİ! ⚠️
+#### 2.11. Auto Config - VEEERY IMPORTANT! ⚠️
 
 ```
 Use auto config?
@@ -234,18 +234,18 @@ n) No
 y/n>
 ```
 
-**ÖNEMLİ:** Sunucunuzun durumuna göre:
+**IMPORTANT:** It depends on your server's situation:
 
-**DURUM A:** Masaüstü Linux / Grafiksel arayüz var → `y` yazın
-**DURUM B:** Uzak sunucu / SSH ile bağlı / Headless → `n` yazın
+**CASE A:** Desktop Linux / graphical interface available → type `y`
+**CASE B:** Remote server / connected over SSH / headless → type `n`
 
-**Çoğu zaman:** `n` yazacaksınız (SSH ile bağlandığınız için)
+**Most of the time:** you will type `n` (because you are connected over SSH)
 
 ---
 
-#### 2.12. UZAK SUNUCU DURUMU (n seçtiyseniz)
+#### 2.12. REMOTE SERVER CASE (if you chose n)
 
-Bu adımda ekrana bir LINK çıkacak:
+At this step a LINK will appear on the screen:
 
 ```
 Option config_token.
@@ -263,51 +263,51 @@ Then paste the result below:
 result>
 ```
 
-**ŞİMDİ NE YAPACAKSINIZ:**
+**WHAT YOU DO NOW:**
 
-1. **Bu linki KOPYALAYIN:**
+1. **COPY this link:**
    ```bash
    rclone authorize "drive" "eyJzY29wZSI6ImRyaXZlIn0"
    ```
 
-2. **Windows BİLGİSAYARINIZDA (şu anda kullandığınız):**
+2. **ON YOUR Windows COMPUTER (the one you are using right now):**
 
-   **PowerShell açın ve çalıştırın:**
+   **Open PowerShell and run it:**
    
-   Önce rclone'u Windows'a kurun:
+   First install rclone on Windows:
    ```powershell
-   # PowerShell'de (Yönetici olarak)
+   # In PowerShell (as Administrator)
    choco install rclone
-   # VEYA
-   # https://rclone.org/downloads/ adresinden Windows .exe indirin
+   # OR
+   # download the Windows .exe from https://rclone.org/downloads/
    ```
 
-   Sonra komutu çalıştırın:
+   Then run the command:
    ```powershell
    rclone authorize "drive" "eyJzY29wZSI6ImRyaXZlIn0"
    ```
 
-3. **TARAYICI AÇILACAK:**
-   - Google hesabınızı seçin
-   - "rclone wants to access your Google Account" görünecek
-   - **Allow** (İzin Ver) tıklayın
+3. **A BROWSER WILL OPEN:**
+   - Choose your Google account
+   - "rclone wants to access your Google Account" will appear
+   - Click **Allow**
 
-4. **BAŞARILI MESAJI:**
+4. **SUCCESS MESSAGE:**
    ```
    Success!
    All done. Please go back to rclone.
    ```
 
-5. **PowerShell'de UZUN BİR KOD göreceksiniz:**
+5. **YOU WILL SEE A LONG CODE in PowerShell:**
    ```json
    {"access_token":"ya29.a0AfH6SMBx...","token_type":"Bearer",...}
    ```
 
-6. **BU KODU TAMAMEN KOPYALAYIN** (Ctrl+C)
+6. **COPY THIS CODE IN FULL** (Ctrl+C)
 
-7. **LINUX SUNUCUSUNA DÖNERESİNİZ** (SSH terminalinize)
+7. **YOU GO BACK TO THE LINUX SERVER** (to your SSH terminal)
 
-8. **KODU YAPIŞTIRIN** ve Enter
+8. **PASTE THE CODE** and press Enter
 
 ```
 result> {"access_token":"ya29.a0AfH6SMBx...","token_type":"Bearer",...}
@@ -325,11 +325,11 @@ n) No (default)
 y/n>
 ```
 
-**Yazın:** `n` (kişisel kullanım için)
+**Type:** `n` (for personal use)
 
 ---
 
-#### 2.14. Configuration Onayı
+#### 2.14. Configuration Confirmation
 
 ```
 Configuration complete.
@@ -345,11 +345,11 @@ d) Delete this remote
 y/e/d>
 ```
 
-**Yazın:** `y` (Yes)
+**Type:** `y` (Yes)
 
 ---
 
-#### 2.15. Çıkış
+#### 2.15. Exit
 
 ```
 Current remotes:
@@ -368,262 +368,263 @@ q) Quit config
 e/n/d/r/c/s/q>
 ```
 
-**Yazın:** `q` (Quit)
+**Type:** `q` (Quit)
 
 ---
 
-### ADIM 3: Test Etme (1 dakika)
+### STEP 3: Testing (1 minute)
 
-#### 3.1. Bağlantıyı Test Et
+#### 3.1. Test the Connection
 
 ```bash
-# Google Drive'ınızı listele
+# List your Google Drive
 rclone lsd gdrive:
 
-# Çıktı benzeri:
+# Sample output:
 #           -1 2023-01-15 10:23:45        -1 My Drive
 #           -1 2023-01-15 10:23:45        -1 Shared with me
 ```
 
-✅ Liste göründüyse BAŞARILI!
+✅ If the list showed up, SUCCESS!
 
-#### 3.2. Test Klasörü Oluştur
+#### 3.2. Create a Test Folder
 
 ```bash
-# DatabaseBackups klasörü oluştur
+# Create the DatabaseBackups folder
 rclone mkdir gdrive:/DatabaseBackups
 
-# Kontrol et
+# Check
 rclone lsd gdrive:
 ```
 
-#### 3.3. Test Dosyası Gönder
+#### 3.3. Send a Test File
 
 ```bash
-# Test dosyası oluştur
+# Create a test file
 echo "Test backup file" > /tmp/test-backup.txt
 
-# Google Drive'a gönder
+# Send it to Google Drive
 rclone copy /tmp/test-backup.txt gdrive:/DatabaseBackups/
 
-# Kontrol et
+# Check
 rclone ls gdrive:/DatabaseBackups/
 ```
 
-Çıktı:
+Output:
 ```
        18 test-backup.txt
 ```
 
-✅ Dosya göründüyse TAM BAŞARILI!
+✅ If the file showed up, COMPLETE SUCCESS!
 
 ---
 
-### ADIM 4: Senkronizasyonu Aç (30 saniye)
+### STEP 4: Turn On Synchronization (30 seconds)
 
 ```bash
 cd /opt/databases
 
-# Ayarlar artık .env dosyasındadır — betiği DÜZENLEMEYİN.
+# The settings now live in the .env file — do NOT EDIT the script.
 sed -i 's/^REMOTE_SYNC_ENABLED=.*/REMOTE_SYNC_ENABLED=true/' .env
 sed -i 's/^RCLONE_REMOTE_NAME=.*/RCLONE_REMOTE_NAME=gdrive/' .env
 
-# Test et
+# Test it
 ./scripts/sync-remote.sh
 ```
 
 ---
 
-## 🔒 GÜVENLİK ÖNERİLERİ
+## 🔒 SECURITY RECOMMENDATIONS
 
-### 1. rclone Config Şifreleme (Opsiyonel ama Önerilen)
+### 1. Encrypting the rclone Config (Optional but Recommended)
 
 ```bash
 rclone config
 
-# Menüden seç:
+# Choose from the menu:
 s) Set configuration password
 
-# Şifre belirle
-# Her rclone kullanımında bu şifreyi gireceksiniz
+# Set a password
+# You will enter this password every time you use rclone
 ```
 
-### 2. Token Yenileme
+### 2. Token Renewal
 
-Google token'ları periyodik olarak yenilenir, otomatik.  
-Sorun çıkarsa:
+Google tokens are renewed periodically, automatically.  
+If something goes wrong:
 
 ```bash
 rclone config reconnect gdrive:
 ```
 
-### 3. İki Faktörlü Doğrulama (2FA)
+### 3. Two-Factor Authentication (2FA)
 
-Google hesabınızda 2FA varsa:
-- rclone authorize sırasında doğrulama kodu isteyecek
-- Telefonunuzdaki kodu girin
-
----
-
-## 🌐 WEB'DEN KONTROL
-
-1. https://drive.google.com adresine gidin
-2. Sol menüde "My Drive" tıklayın
-3. "DatabaseBackups" klasörünü görmelisiniz
-4. İçinde backup dosyaları olacak
+If your Google account has 2FA:
+- rclone authorize will ask for a verification code
+- Enter the code from your phone
 
 ---
 
-## ⚠️ MUHTEMEL SORUNLAR VE ÇÖZÜMLER
+## 🌐 CHECKING FROM THE WEB
 
-### Sorun 1: "rclone: command not found"
+1. Go to https://drive.google.com
+2. Click "My Drive" in the left menu
+3. You should see the "DatabaseBackups" folder
+4. The backup files will be inside it
+
+---
+
+## ⚠️ POSSIBLE PROBLEMS AND SOLUTIONS
+
+### Problem 1: "rclone: command not found"
 
 ```bash
-# rclone'u tekrar kur
+# Install rclone again
 curl https://rclone.org/install.sh | sudo bash
 
-# PATH kontrolü
+# PATH check
 which rclone
-# Çıktı: /usr/bin/rclone
+# Output: /usr/bin/rclone
 ```
 
 ---
 
-### Sorun 2: "Failed to authorize"
+### Problem 2: "Failed to authorize"
 
-**Sebep:** Tarayıcı erişimi yok veya token kopyalama hatası
+**Cause:** No browser access, or the token was copied wrong
 
-**Çözüm 1:** Windows'ta rclone kur ve authorize et
+**Solution 1:** Install rclone on Windows and authorize there
 ```powershell
 # Windows PowerShell
 choco install rclone
 rclone authorize "drive" "SUNUCUDAN_GELEN_KOD"
 ```
+(SUNUCUDAN_GELEN_KOD = the code that came from the server)
 
-**Çözüm 2:** Başka bir bilgisayarda rclone kur ve authorize et
+**Solution 2:** Install rclone on another computer and authorize there
 
 ---
 
-### Sorun 3: "Token expired"
+### Problem 3: "Token expired"
 
 ```bash
-# Token'ı yenile
+# Renew the token
 rclone config reconnect gdrive:
 
-# Veya remote'u sil ve yeniden yapılandır
+# Or delete the remote and configure it again
 rclone config delete gdrive
-rclone config  # Yeniden başlat
+rclone config  # Start over
 ```
 
 ---
 
-### Sorun 4: "403 Forbidden" veya "Rate limit exceeded"
+### Problem 4: "403 Forbidden" or "Rate limit exceeded"
 
-**Sebep:** Google API limitleri
+**Cause:** Google API limits
 
-**Çözüm:** Kendi Client ID'nizi oluşturun
+**Solution:** Create your own Client ID
 
-1. https://console.cloud.google.com/ gidin
-2. Yeni proje oluşturun
-3. Google Drive API'yi aktive edin
-4. OAuth 2.0 Credentials oluşturun
-5. Client ID ve Secret'i rclone config'e girin
+1. Go to https://console.cloud.google.com/
+2. Create a new project
+3. Enable the Google Drive API
+4. Create OAuth 2.0 Credentials
+5. Enter the Client ID and Secret into rclone config
 
 ---
 
-### Sorun 5: "Permission denied" upload sırasında
+### Problem 5: "Permission denied" during upload
 
 ```bash
-# rclone test et
+# Test rclone
 rclone lsd gdrive:
 
-# Scope'u kontrol et (Full access olmalı)
+# Check the scope (it must be Full access)
 rclone config show gdrive
 
-# Yeniden authorize et
+# Authorize again
 rclone config reconnect gdrive:
 ```
 
 ---
 
-## 📊 GOOGLE DRIVE LİMİTLERİ
+## 📊 GOOGLE DRIVE LIMITS
 
-| Limit | Değer |
+| Limit | Value |
 |-------|-------|
-| **Upload (günlük)** | 750 GB/gün |
-| **Download (günlük)** | 10 TB/gün |
-| **API request** | 20,000/100 saniye |
-| **Dosya boyutu** | 5 TB/dosya |
-| **Ücretsiz alan** | 15 GB |
+| **Upload (daily)** | 750 GB/day |
+| **Download (daily)** | 10 TB/day |
+| **API request** | 20,000/100 seconds |
+| **File size** | 5 TB/file |
+| **Free space** | 15 GB |
 
-**Sizin durumunuzda:**
-- Günlük upload: ~620MB × 1 = 620MB
-- Aylık: ~18GB
+**In your case:**
+- Daily upload: ~620MB × 1 = 620MB
+- Monthly: ~18GB
 
-**Sonuç:** Limitler içindesiniz ✅
+**Result:** You are within the limits ✅
 
 ---
 
-## 💰 GOOGLE DRIVE PLANLARI
+## 💰 GOOGLE DRIVE PLANS
 
-| Plan | Alan | Ücret (Aylık) |
+| Plan | Space | Price (Monthly) |
 |------|------|---------------|
-| **Ücretsiz** | 15 GB | ÜCRETSİZ |
+| **Free** | 15 GB | FREE |
 | **Google One Basic** | 100 GB | $1.99 (~₺60) |
 | **Google One Standard** | 200 GB | $2.99 (~₺90) |
 | **Google One Premium** | 2 TB | $9.99 (~₺300) |
 
-**Öneriniz için:** 100 GB plan ($1.99/ay) ✅
+**Our suggestion for you:** the 100 GB plan ($1.99/month) ✅
 
 ---
 
-## 🎯 ÖZET KONTROL LİSTESİ
+## 🎯 SUMMARY CHECKLIST
 
-Başarılı kurulum için kontrol edin:
+Check these for a successful setup:
 
-- [ ] rclone kurulu (`rclone version` çalışıyor)
-- [ ] `rclone config` tamamlandı
-- [ ] Remote adı: `gdrive` (veya tercih ettiğiniz)
+- [ ] rclone is installed (`rclone version` works)
+- [ ] `rclone config` completed
+- [ ] Remote name: `gdrive` (or the one you preferred)
 - [ ] Scope: `drive` (Full access)
-- [ ] Token alındı ve yapıştırıldı
-- [ ] `rclone lsd gdrive:` çalışıyor
-- [ ] Test dosyası gönderildi ve görünüyor
-- [ ] Web'de drive.google.com'da dosya var
-- [ ] scripts/sync-remote.sh çalıştırılabilir
+- [ ] Token obtained and pasted
+- [ ] `rclone lsd gdrive:` works
+- [ ] Test file was sent and shows up
+- [ ] The file is there on the web at drive.google.com
+- [ ] scripts/sync-remote.sh is executable
 - [ ] REMOTE_SYNC_ENABLED="true"
 
-**Hepsi ✅ ise HAZIR!**
+**If all of them are ✅, YOU ARE READY!**
 
 ---
 
-## 🚀 SONRAKI ADIM
+## 🚀 NEXT STEP
 
-Şimdi ilk gerçek sync'i yapın:
+Now do the first real sync:
 
 ```bash
 cd /opt/databases
 ./scripts/sync-remote.sh
 
-# Log'u izle
+# Watch the log
 tail -f logs/remote_sync.log
 
-# Google Drive'da kontrol et
+# Check on Google Drive
 rclone ls gdrive:/DatabaseBackups/
 ```
 
 ---
 
-## 📞 YARDIM KAYNAKLARI
+## 📞 HELP RESOURCES
 
-- **rclone dokümantasyonu:** https://rclone.org/drive/
-- **Video tutorial:** YouTube'da "rclone google drive"
-- **Sorun giderme:** https://rclone.org/drive/#troubleshooting
+- **rclone documentation:** https://rclone.org/drive/
+- **Video tutorial:** search YouTube for "rclone google drive"
+- **Troubleshooting:** https://rclone.org/drive/#troubleshooting
 - **Forum:** https://forum.rclone.org/
 
 ---
 
-**Kurulum Süresi:** 10-15 dakika  
-**Zorluk:** ⭐⭐☆☆☆ (Kolay)  
-**Maliyet:** ÜCRETSİZ (15GB) / $2/ay (100GB)  
+**Setup Time:** 10-15 minutes  
+**Difficulty:** ⭐⭐☆☆☆ (Easy)  
+**Cost:** FREE (15GB) / $2/month (100GB)  
 
-**HAYDİ BAŞLAYALIM!** 🚀
+**LET'S GET STARTED!** 🚀

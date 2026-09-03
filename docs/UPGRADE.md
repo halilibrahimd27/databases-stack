@@ -1,74 +1,78 @@
-# Sürüm yükseltme
+# Version upgrade
 
-***Türkçe** · [English](UPGRADE.en.md)*
+*[Türkçe](UPGRADE.tr.md) · **English***
 
-Bu stack'teki tüm imaj sürümleri `.env` içinde **sabitlenmiştir** (`latest` yok).
-Sürpriz güncelleme gelmez; yükseltme bilinçli bir karardır.
+Every image version in this stack is **pinned** in `.env` (there is no `latest`).
+No surprise update arrives; an upgrade is a deliberate decision.
 
-## Neden dikkat gerekiyor?
+## Why does this need care?
 
-Bir veritabanının MAJOR sürümü değiştiğinde diskteki veri biçimi de değişir.
-Yeni sürüm eski veriyi tanımazsa container açılmaz — **veri kaybolmaz** ama
-servis çalışmaz. `install.sh` bu yüzden mevcut volume'ları algılayıp uyumlu
-sürümü otomatik sabitler:
+When a database's MAJOR version changes, the data format on disk changes too.
+If the new version does not recognize the old data, the container does not start —
+**no data is lost** but the service does not run. That is why `install.sh` detects
+the existing volumes and automatically pins a compatible version:
 
-| Motor | Mevcut veri varsa sabitlenen | Neden |
+| Engine | Pinned if data already exists | Why |
 |---|---|---|
-| MongoDB | `4.4` | 4.4 → 7.0 doğrudan atlanamaz (5.0 → 6.0 → 7.0 sırası gerekir) |
-| PostgreSQL | `15` | major geçiş `pg_upgrade` ya da dump/restore ister |
+| MongoDB | `4.4` | 4.4 → 7.0 cannot be jumped directly (the 5.0 → 6.0 → 7.0 order is required) |
+| PostgreSQL | `15` | a major transition requires `pg_upgrade` or dump/restore |
 
-Diğer motorlarda (MariaDB, Redis, ClickHouse, Cassandra…) aynı major içinde
-yükseltme sorunsuzdur.
+On the other engines (MariaDB, Redis, ClickHouse, Cassandra…) an upgrade within the
+same major is trouble-free.
 
 ---
 
 ## PostgreSQL 15 → 16
 
-En güvenli yol dump/restore. Küçük-orta veri setlerinde dakikalar sürer.
+The safest path is dump/restore. On small-to-medium data sets it takes minutes.
 
 ```bash
-# 1. Yedek al ve DOĞRULA (yedeksiz yükseltme yapmayın)
+# 1. Take a backup and VERIFY it (never upgrade without one)
 ./stack.sh backup postgresql
 ./scripts/backup.sh verify backups/postgresql/full/postgresql_full_*.sql.gz
 
 # 2. Motoru durdur
 ./stack.sh disable postgresql
 
-# 3. Eski veriyi kenara al (silmeyin — geri dönüş yolunuz bu)
+# 3. Move the old data aside (do not delete it — this is your way back)
 docker volume create databases-stack_postgresql_data_v15_yedek
 docker run --rm -v databases-stack_postgresql_data:/eski \
                 -v databases-stack_postgresql_data_v15_yedek:/yeni \
                 alpine sh -c 'cp -a /eski/. /yeni/'
 docker volume rm databases-stack_postgresql_data
 
-# 4. Sürümü yükselt ve boş bir cluster ile başlat
+# 4. Raise the version and start with an empty cluster
 sed -i 's/^POSTGRES_VERSION=.*/POSTGRES_VERSION=16/' .env
 ./stack.sh enable postgresql
 
-# 5. Yedeği geri yükle
+# 5. Restore the backup
 ./stack.sh restore postgresql backups/postgresql/full/postgresql_full_*.sql.gz
 ```
 
-Sorun çıkarsa: `POSTGRES_VERSION=15` yapıp `databases-stack_postgresql_data_v15_yedek`
-volume'unu `databases-stack_postgresql_data` adıyla geri kopyalayın.
+(The comments in the block, step by step: 1 — take a backup and VERIFY it (do not upgrade
+without a backup); 2 — stop the engine; 3 — set the old data aside (do not delete it — this
+is your way back); 4 — raise the version and start with an empty cluster; 5 — restore the backup.)
+
+If something goes wrong: set `POSTGRES_VERSION=15` and copy the `databases-stack_postgresql_data_v15_yedek`
+volume back under the name `databases-stack_postgresql_data`.
 
 ---
 
 ## MongoDB 4.4 → 7.0
 
-MongoDB ara sürümleri **atlamaya izin vermez**. Her adımda
-`featureCompatibilityVersion` (FCV) yükseltilmelidir.
+MongoDB **does not allow skipping** intermediate versions. At every step
+`featureCompatibilityVersion` (FCV) must be raised.
 
 ```bash
 ./stack.sh backup mongodb          # önce yedek
 
 for v in 5.0 6.0 7.0; do
   prev=$(grep ^MONGO_VERSION= .env | cut -d= -f2)
-  # Bir önceki sürümde FCV'yi yükselt
+  # Raise the FCV while still on the previous version
   docker exec mongodb mongosh --quiet -u root -p "$(grep ^MONGO_PASSWORD= .env | cut -d= -f2)" \
     --authenticationDatabase admin \
     --eval "db.adminCommand({setFeatureCompatibilityVersion:'${prev}', confirm:true})"
-  # Sonra imajı değiştir
+  # Then switch the image
   sed -i "s/^MONGO_VERSION=.*/MONGO_VERSION=$v/" .env
   [ "$v" != "4.4" ] && sed -i "s/^MONGO_SHELL=.*/MONGO_SHELL=mongosh/" .env
   ./stack.sh disable mongodb && ./stack.sh enable mongodb
@@ -76,21 +80,24 @@ for v in 5.0 6.0 7.0; do
 done
 ```
 
-> 4.4'te `mongosh` yoktur; ilk adımda `MONGO_SHELL=mongo` olmalıdır — `install.sh`
-> mevcut veri bulursa bunu zaten ayarlar.
+(The comments in the block: `# önce yedek` = back up first; `# Bir önceki sürümde FCV'yi yükselt`
+= raise FCV on the previous version; `# Sonra imajı değiştir` = then change the image.)
+
+> 4.4 has no `mongosh`; in the first step `MONGO_SHELL=mongo` is required — if `install.sh`
+> finds existing data it already sets this.
 
 ---
 
-## Stack'in kendisini güncellemek
+## Updating the stack itself
 
-> **v1.0 öncesinden geçiyorsanız gateway'i BİR KEZ yeniden yaratın:**
+> **If you are coming from before v1.0, recreate the gateway ONCE:**
 > ```bash
 > docker compose --env-file .env -p databases-stack up -d --force-recreate gateway
 > ```
-> Yönlendirme tablosu gateway'e tek dosya olarak bağlanır ve Docker dosya
-> mount'unu inode'a bağlar. Eski sürüm bu dosyayı rename ile değiştiriyor,
-> mount'u koparıyordu; container güncel tabloyu göremiyordu. Yeni sürüm
-> yerinde yazıyor ama var olan container hâlâ eski inode'a bağlıdır.
+> The routing table is mounted into the gateway as a single file, and Docker binds a file
+> mount to the inode. The old version replaced that file with a rename and broke the
+> mount; the container could not see the current table. The new version writes in place,
+> but an existing container is still bound to the old inode.
 
 
 ```bash
@@ -100,5 +107,7 @@ git pull
 ./stack.sh doctor
 ```
 
-`install.sh` idempotenttir: mevcut parolaları, CA sertifikasını ve veri
-volume'larını korur. Yalnız eksik olanları üretir.
+(The comment on `./install.sh`: it does NOT touch the existing `.env` or the passwords; it fills in what is missing.)
+
+`install.sh` is idempotent: it preserves the existing passwords, the CA certificate and the
+data volumes. It generates only what is missing.

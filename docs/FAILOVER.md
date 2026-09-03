@@ -1,120 +1,127 @@
-# Otomatik devir (failover)
+# Automatic failover
 
-***Türkçe** · [English](FAILOVER.en.md)*
+*[Türkçe](FAILOVER.tr.md) · **English***
 
-Ana kopya çökerse sistem yedek kopyayı **kendisi** devreye alır ve
-uygulamalarınızın bağlantısını oraya yönlendirir. Uygulama tarafında hiçbir
-değişiklik gerekmez.
+If the primary crashes, the system brings the replica online **by itself** and
+routes your applications' connections there. Nothing has to change on the
+application side.
 
 ```bash
 ./stack.sh replica on postgresql     # 1. önce yedek kopya
 ./stack.sh failover on postgresql    # 2. sonra otomatik devir
 ```
 
-Panelde: kartın altındaki **Replika kur** → **Otomatik devri aç**.
+(`# 1. önce yedek kopya` = the replica first; `# 2. sonra otomatik devir` =
+then automatic failover.)
+
+In the panel: **Set up replica** ("Replika kur") under the card → **Turn on
+automatic failover** ("Otomatik devri aç").
 
 ---
 
-## Nasıl çalışıyor?
+## How does it work?
 
-### Yönlendirici — bu olmadan failover işe yaramaz
+### The router — without it, failover is useless
 
-Uygulamanız veritabanına **doğrudan** bağlansaydı, ana kopya öldüğünde
-bağlantı adresini elle değiştirmeniz gerekirdi; yani devir "otomatik" olmazdı.
-Bu yüzden tüm veritabanı portları gateway'den geçer:
-
-```
-uygulama → gateway:5432 → (o an ana kopya olan neyse)
-```
-
-Devirde yalnız gateway'in yönlendirme tablosu değişir. **Uygulamanızın
-bağlantı adresi hiç değişmez.**
-
-`nginx -s reload` mevcut bağlantıları koparmaz; eski işçi süreçler boşalana
-kadar çalışmaya devam eder.
-
-### Devir sırası
+If your application connected to the database **directly**, you would have to
+change the connection address by hand when the primary died; that is, the
+failover would not be "automatic". This is why every database port goes
+through the gateway:
 
 ```
-Ana kopya 3 kez üst üste yanıt vermiyor
-        ↓
-1. FENCE   — eski ana kopya DURDURULUR
-        ↓
-2. PROMOTE — yedek kopya ana kopya yapılır (yazmaya açılır)
-        ↓
-3. REROUTE — yönlendirme tablosu yeniden yazılır, nginx tazelenir
-        ↓
-4. KAYIT   — olay kaydedilir, webhook varsa bildirim gider
+application → gateway:5432 → (whichever is the primary at that moment)
 ```
 
-**1. adım atlanamaz.** Eski ana kopya çalışmaya devam ederse iki kopya da yazı
-kabul eder, veriler ayrışır ve birleştirilemez (split-brain). `docker stop`
-aynı zamanda yeniden başlatma politikasını da bastırır — eski kopya
-kendiliğinden geri gelmez.
+In a failover only the gateway's routing table changes. **Your application's
+connection address never changes.**
 
-### Neden 3 kez üst üste?
+`nginx -s reload` does not cut existing connections; the old worker processes
+keep running until they drain.
 
-Tek bir başarısız sağlık kontrolü geçici olabilir: anlık yük artışı, kısa bir
-GC duraklaması, yavaş bir disk. Gereksiz devir gereksiz kesinti demektir.
-Varsayılan `FAILOVER_STRIKES=3` ve `FAILOVER_INTERVAL=10` ile karar ~30
-saniyede verilir. `.env` üzerinden değiştirilebilir.
+### Failover sequence
 
-### Yeniden başlatmaya dayanıklılık
+```
+The primary fails to answer 3 times in a row
+        ↓
+1. FENCE   — the old primary is STOPPED
+        ↓
+2. PROMOTE — the replica is made primary (opened for writes)
+        ↓
+3. REROUTE — the routing table is rewritten, nginx is reloaded
+        ↓
+4. RECORD  — the event is recorded, a webhook notification goes out if set
+```
 
-Yükseltilmiş düğüm yeniden başlarsa, komut satırındaki yedek-kopya bayrakları
-(`--read-only`, `--replicaof`) geri gelir ve tekrar salt-okunur olur.
-Denetleyici bunu fark edip ana kopya rolünü yeniden uygular — yükseltme
-betikleri bu yüzden **idempotent** yazılmıştır.
+**Step 1 cannot be skipped.** If the old primary keeps running, both copies
+accept writes, the data diverges and cannot be merged again (split-brain).
+`docker stop` also suppresses the restart policy — the old copy does not come
+back on its own.
+
+### Why 3 times in a row?
+
+A single failed health check can be temporary: a momentary load spike, a short
+GC pause, a slow disk. An unnecessary failover means unnecessary downtime.
+With the defaults `FAILOVER_STRIKES=3` and `FAILOVER_INTERVAL=10` the decision
+is made in ~30 seconds. It can be changed through `.env`.
+
+### Resilience to restarts
+
+If the promoted node restarts, the replica flags on its command line
+(`--read-only`, `--replicaof`) come back and it becomes read-only again. The
+controller notices this and reapplies the primary role — this is why the
+promotion scripts are written to be **idempotent**.
 
 ---
 
-## Motor bazında
+## Per engine
 
-| Motor | Devir | Nasıl |
+| Engine | Failover | How |
 |---|---|---|
-| **PostgreSQL** | ✅ denetlenen | `pg_ctl promote` — standby recovery'den çıkar |
-| **MariaDB** | ✅ denetlenen | Relay log boşaltılır, `RESET SLAVE ALL`, `read_only=OFF` |
-| **Redis** | ✅ denetlenen | `REPLICAOF NO ONE` |
-| **MongoDB** | ✅ kendi seçimi | Replica set oy çokluğuyla seçer (arbiter dahil 3 üye) |
-| Diğerleri | ✖ | Kümeleme mantıkları farklı — aşağıya bakın |
+| **PostgreSQL** | ✅ controller-driven | `pg_ctl promote` — leaves standby recovery |
+| **MariaDB** | ✅ controller-driven | Relay log is drained, `RESET SLAVE ALL`, `read_only=OFF` |
+| **Redis** | ✅ controller-driven | `REPLICAOF NO ONE` |
+| **MongoDB** | ✅ self-elected | The replica set elects by majority vote (3 members, arbiter included) |
+| Others | ✖ | Their clustering models differ — see below |
 
-### MongoDB neden farklı?
+### Why is MongoDB different?
 
-MongoDB kendi seçimini yapar; controller müdahale etmez. Ama seçim için
-**çoğunluk** gerekir: iki üyeyle biri düşünce 1/2 kalır, çoğunluk sağlanamaz
-ve kalan üye `SECONDARY`de kilitlenir. Bu yüzden replika kurulduğunda üçüncü
-oy olarak bir **arbiter** de eklenir (veri tutmaz, ~64 MB).
+MongoDB runs its own election; the controller does not intervene. But an
+election needs a **majority**: with two members, when one goes down you are
+left with 1/2, no majority can be reached, and the surviving member is stuck
+in `SECONDARY`. This is why an **arbiter** is added as a third vote when the
+replica is set up (it holds no data, ~64 MB).
 
-> ⚠️ P-S-A (primary + secondary + arbiter) topolojisinde secondary düşerse
-> `w:"majority"` ile yapılan yazmalar bekler. Varsayılan `w:1` kullanan
-> uygulamalar etkilenmez.
+> ⚠️ In a P-S-A (primary + secondary + arbiter) topology, if the secondary
+> goes down, writes made with `w:"majority"` wait. Applications using the
+> default `w:1` are not affected.
 
-### Devir desteklenmeyen motorlar
+### Engines where failover is not supported
 
-- **SQL Server** — Always On AG ayrı node'lar ve cluster ister
-- **Cassandra** — ana kopya kavramı yoktur, tüm node'lar eşittir
-- **Elasticsearch / Kafka** — shard/partition lideri küme içinde otomatik seçilir
-- **RabbitMQ** — quorum queue + cluster gerekir
-- **ClickHouse** — ReplicatedMergeTree + Keeper gerekir
-- **Neo4j / MinIO** — sırasıyla Enterprise ve çok diskli kurulum gerekir
+- **SQL Server** — Always On AG wants separate nodes and a cluster
+- **Cassandra** — there is no primary concept, all nodes are equal
+- **Elasticsearch / Kafka** — the shard/partition leader is elected automatically inside the cluster
+- **RabbitMQ** — quorum queue + cluster required
+- **ClickHouse** — ReplicatedMergeTree + Keeper required
+- **Neo4j / MinIO** — Enterprise and a multi-disk setup required, respectively
 
 ---
 
-## Devir sonrası
+## After a failover
 
-Devir olduğunda kartta uyarı çıkar ve olay akışına kritik bir kayıt düşer.
-Eski ana kopya durmuş durumdadır. Onu yeni ana kopyanın **yedeği** olarak geri
-almak için:
+When a failover happens a warning appears on the card and a critical entry
+lands in the event feed. The old primary is stopped. To bring it back as a
+**replica** of the new primary:
 
 ```bash
 ./stack.sh failover rebuild postgresql
 ```
 
-Bu işlem **eski kopyadaki verileri siler** ve yeni ana kopyadan baştan
-kopyalar. Bilinçlidir: iki kopyanın geçmişi devir anında ayrışmıştır; eskiyi
-korumak tutarsızlık üretir.
+This operation **deletes the data on the old copy** and copies it again from
+the new primary from scratch. That is deliberate: the histories of the two
+copies diverged at the moment of failover; keeping the old one produces
+inconsistency.
 
-Durumu görmek için:
+To see the state:
 
 ```bash
 ./stack.sh failover status
@@ -123,96 +130,110 @@ Durumu görmek için:
 
 ---
 
-## Devirden sonra dikkat edilecekler
+## Things to watch for after a failover
 
-**PostgreSQL'de sıra (sequence) numaralarında atlama olur.** Devirden sonra
-`id` gibi otomatik artan alanlar bir sıçrama gösterebilir (ör. 3'ten 36'ya).
-Bu bir hata değildir: PostgreSQL performans için sıra numaralarını 32'lik
-bloklar hâlinde önceden ayırır ve bu ayırma WAL'a yazılmaz. Devirde
-kullanılmamış blok kaybolur. Numaralar benzersiz kalır, sadece boşluk oluşur.
-Uygulamanız `id`'lerin ardışık olduğunu VARSAYMAMALI.
+**In PostgreSQL, sequence numbers jump.** After a failover, auto-incrementing
+fields like `id` may show a jump (e.g. from 3 to 36). This is not a bug: for
+performance PostgreSQL preallocates sequence numbers in blocks of 32, and that
+allocation is not written to the WAL. On failover the unused block is lost.
+The numbers stay unique, only a gap appears. Your application MUST NOT ASSUME
+that `id`s are consecutive.
 
-**Yedekleme otomatik olarak yeni ana kopyayı hedefler.** Betikler container
-adını sabit kullanmaz, `state/topology.json`'dan o anki ana kopyayı çözer.
+**Backups automatically target the new primary.** The scripts do not use a
+fixed container name; they resolve the current primary from
+`state/topology.json`.
 
-## Ne kadar veri kaybedebilirim?
+## How much data can I lose?
 
-Replikasyon **asenkrondur**. Ana kopyanın ölmeden hemen önce yedeğe
-göndermeye yetişemediği işlemler kaybolur — tipik olarak milisaniyeler,
-yoğun yazma altında saniyeler.
+Replication is **asynchronous**. Transactions the primary did not manage to
+send to the replica just before it died are lost — typically milliseconds,
+seconds under heavy writes.
 
-Senkron replikasyon (sıfır kayıp) her yazmayı yedeğin de onaylamasını
-bekletir; yedek yavaşlarsa ana kopya da yavaşlar. Tek makinelik bir kurulum
-için bu takas genellikle doğru değildir, bu yüzden asenkron seçildi.
+Synchronous replication (zero loss) makes every write wait for the replica to
+acknowledge it as well; if the replica slows down, so does the primary. For a
+single-machine setup this trade-off is usually not the right one, which is why
+asynchronous was chosen.
 
-**Sıfır veri kaybı gerekiyorsa** yedeği ikinci bir makinede çalıştırın ve
-PostgreSQL'de `synchronous_commit=remote_apply` / MariaDB'de semi-sync
-replikasyonu açın.
-
----
-
-## Neyi korur, neyi korumaz
-
-**Korur:**
-- Veritabanı sürecinin çökmesi, kilitlenmesi, OOM ile öldürülmesi
-- Veri dosyalarının bozulması (yedek kopya sağlam kalır)
-- Bir motorun bakıma alınması (`./stack.sh failover now`)
-
-**Korumaz — dürüstçe:**
-- **Host'un tamamının düşmesi.** İki kopya aynı makinededir; makine ölürse
-  ikisi de ölür. Bunun için yedeği **ikinci bir makinede** çalıştırın:
-  `.env` içindeki replika servisini uzak bir docker host'una yönlendirin ya da
-  Kubernetes dağıtımını node anti-affinity ile kullanın.
-- **Yanlışlıkla silinen veri.** Replikaya da anında yansır. Bunun çaresi
-  yedektir → [BACKUP.md](BACKUP.md)
-- **Denetleyicinin kendisi.** Controller çökerse devir yapılmaz. Küçük bir
-  servistir ve `restart: unless-stopped` ile geri gelir; olayları izleyin.
+**If you need zero data loss**, run the replica on a second machine and turn
+on `synchronous_commit=remote_apply` in PostgreSQL / semi-sync replication in
+MariaDB.
 
 ---
 
-## Test etmek
+## What it protects against, what it does not
 
-Üretime almadan önce devri **mutlaka** deneyin:
+**Protects against:**
+- The database process crashing, hanging, being killed by the OOM killer
+- Corruption of the data files (the replica stays intact)
+- Taking an engine down for maintenance (`./stack.sh failover now`)
+
+**Does not protect — honestly:**
+- **The whole host going down.** Both copies are on the same machine; if the
+  machine dies, both die. For that, run the replica **on a second machine**:
+  point the replica service in `.env` at a remote docker host, or use the
+  Kubernetes deployment with node anti-affinity.
+- **Data deleted by accident.** It is reflected on the replica instantly too.
+  The remedy for that is a backup → [BACKUP.en.md](BACKUP.md)
+- **The controller itself.** If the controller crashes, no failover is done.
+  It is a small service and comes back with `restart: unless-stopped`; watch
+  the events.
+
+---
+
+## Testing
+
+Before you go to production, **you must** try a failover:
 
 ```bash
 ./stack.sh replica on postgresql
 ./stack.sh failover on postgresql
 
-# Ana kopyayı öldür ve izle
+# Kill the primary and watch
 docker stop postgresql
 watch -n2 './stack.sh failover status'
 
-# ~30 saniye içinde devir olmalı. Uygulamanız kesintiden sonra
-# HİÇBİR ayar değişikliği olmadan yazmaya devam edebilmeli.
+# Failover should happen within ~30 seconds. Your application must be able
+# to keep writing after the outage with NO configuration change at all.
 psql -h <sunucu> -p 5432 -U root -d defaultdb -c "SELECT pg_is_in_recovery();"
-#  → f  (yani yazılabilir ana kopya)
+#  -> f  (that is, a writable primary)
 
-# Eski kopyayı yedek olarak geri al (verisi silinip baştan kopyalanır)
+# Bring the old copy back as the replica (its data is wiped and re-cloned)
 ./stack.sh failover rebuild postgresql
 
-# Doğrula: replikasyon artık ters yönde akmalı
+# Verify: replication should now flow in the opposite direction
 docker exec postgresql-replica psql -U root -d postgres   -c "SELECT application_name, state FROM pg_stat_replication;"
 #  → walreceiver | streaming
 ```
 
-Gerçek bir sunucuda ölçülen süreler (16 GB, 8 çekirdek):
+(The comments, in order: `# Ana kopyayı öldür ve izle` = kill the primary and
+watch; `# ~30 saniye içinde devir olmalı…` = the failover should happen within
+~30 seconds, and after the outage your application should be able to keep
+writing with NO configuration change; `#  → f  (yani yazılabilir ana kopya)` =
+f, that is, a writable primary; `# Eski kopyayı yedek olarak geri al…` = bring
+the old copy back as a replica, its data is deleted and recopied from scratch;
+`# Doğrula: replikasyon artık ters yönde akmalı` = verify, replication should
+now flow in the opposite direction. `<sunucu>` = your server.)
 
-| Adım | Süre |
+Times measured on a real server (16 GB, 8 cores):
+
+| Step | Time |
 |---|---|
-| Arızanın tespiti (3 kontrol × 10 sn) | ~30 sn |
-| Fence + yükseltme + yönlendirme | 1-2 sn |
-| **Toplam kesinti** | **~30 sn** |
-| Eski kopyayı yedek olarak geri alma | 1-2 dk (veri boyutuna bağlı) |
+| Detecting the failure (3 checks × 10 s) | ~30 s |
+| Fence + promotion + rerouting | 1-2 s |
+| **Total downtime** | **~30 s** |
+| Bringing the old copy back as a replica | 1-2 min (depends on data size) |
 
 ---
 
-## Bildirimler
+## Notifications
 
-Kritik olaylar (devir, yükseltme hatası) `.env` içindeki `NOTIFY_WEBHOOK`
-adresine POST edilir. Slack, Teams, Discord ve çoğu araç uyumludur:
+Critical events (failover, promotion error) are POSTed to the
+`NOTIFY_WEBHOOK` address in `.env`. Slack, Teams, Discord and most tools are
+compatible:
 
 ```bash
 NOTIFY_WEBHOOK=https://hooks.slack.com/services/...
 ```
 
-Gönderilen gövde hem düz `text` hem yapılandırılmış `event` alanı içerir.
+The body that is sent contains both a plain `text` field and a structured
+`event` field.

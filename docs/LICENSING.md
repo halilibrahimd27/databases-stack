@@ -1,165 +1,182 @@
-# Lisanslar
+# Licenses
 
-***Türkçe** · [English](LICENSING.en.md)*
+*[Türkçe](LICENSING.tr.md) · **English***
 
-> Bu sayfa bilgi amaçlıdır, hukuki tavsiye değildir. Şüphede kalırsanız hukuk
-> biriminize danışın.
+> This page is for information only, not legal advice. If you are in doubt, ask
+> your legal department.
 
-Bu yığın **varsayılan ayarlarıyla** üretimde ücretsiz kullanılabilir; SQL Server
-dahil (Express sürümüyle gelir). **Dikkat gerektiren iki durum** vardır:
+This stack can be used in production free of charge **with its default settings**,
+SQL Server included (it ships with the Express edition). There are **two cases
+that need attention**:
 
-1. **`MSSQL_PID`'i `Developer` yaparsanız o kurulum üretimde kullanılamaz** —
-   bu bir hukuki yükümlülüktür, teknik bir sınır değil. Varsayılan `Express`
-   olduğu için bu ancak bilerek değiştirilirse geçerlidir.
-2. **SSPL / AGPL lisanslı motorları üçüncü taraflara *servis olarak* sunmak**
-   kaynak açma yükümlülüğü doğurabilir. Kendi uygulamanız için kullanmak
-   serbesttir.
+1. **If you set `MSSQL_PID` to `Developer`, that installation cannot be used in
+   production** — this is a legal obligation, not a technical limit. The default
+   is `Express`, so it only applies if you deliberately change it.
+2. **Offering SSPL / AGPL licensed engines to third parties *as a service*** can
+   create an obligation to open your source. Using them for your own application
+   is free.
 
 ---
 
-## Motor bazında
+## Per engine
 
-| Motor | Lisans | Üretimde ücretsiz? |
+| Engine | License | Free in production? |
 |---|---|---|
-| **PostgreSQL** | PostgreSQL License | ✅ Kısıtlama yok |
-| **MariaDB** | GPL-2.0 | ✅ Kısıtlama yok |
-| **Cassandra** | Apache-2.0 | ✅ Kısıtlama yok |
-| **Kafka** | Apache-2.0 | ✅ Kısıtlama yok |
-| **ClickHouse** | Apache-2.0 | ✅ Kısıtlama yok |
-| **RabbitMQ** | MPL-2.0 | ✅ Pratikte kısıtlama yok |
-| **MongoDB** | SSPL-1.0 | ⚠️ Copyleft — aşağıya bakın |
-| **Redis** | AGPL-3.0 / RSALv2 / SSPL | ⚠️ Copyleft — Valkey alternatifi var |
+| **PostgreSQL** | PostgreSQL License | ✅ No restrictions |
+| **MariaDB** | GPL-2.0 | ✅ No restrictions |
+| **Cassandra** | Apache-2.0 | ✅ No restrictions |
+| **Kafka** | Apache-2.0 | ✅ No restrictions |
+| **ClickHouse** | Apache-2.0 | ✅ No restrictions |
+| **RabbitMQ** | MPL-2.0 | ✅ No restrictions in practice |
+| **MongoDB** | SSPL-1.0 | ⚠️ Copyleft — see below |
+| **Redis** | AGPL-3.0 / RSALv2 / SSPL | ⚠️ Copyleft — Valkey is an alternative |
 | **Elasticsearch** | Elastic License 2.0 / SSPL | ⚠️ Copyleft |
-| **Neo4j Community** | GPL-3.0 | ⚠️ Copyleft; kümeleme Enterprise'da |
+| **Neo4j Community** | GPL-3.0 | ⚠️ Copyleft; clustering is in Enterprise |
 | **MinIO** | AGPL-3.0 | ⚠️ Copyleft |
-| **SQL Server** | Express Edition (varsayılan) | ✅ Ücretsiz — DB başına 10 GB sınırı |
+| **SQL Server** | Express Edition (default) | ✅ Free — 10 GB limit per DB |
 
-Panelde her kartın altında lisansı görürsünüz; kısıtlı olanlar işaretlenir ve
-aktivasyon onayında uyarı çıkar.
+In the panel you see the license under every card; the restricted ones are
+marked, and a warning appears in the activation confirmation.
 
 ```bash
 ./stack.sh licenses     # terminalden aynı özet
 ```
 
+(`# terminalden aynı özet` = the same summary from the terminal.)
+
 ---
 
-## SQL Server — hangi sürüm gelir?
+## SQL Server — which edition ships?
 
-Varsayılan **`MSSQL_PID=Express`**: ücretsizdir ve **üretimde kullanılabilir**.
-Bu yığının hedefi minimum lisans yüküyle çalışan bir kurulum olduğu için
-varsayılan bilerek Express seçildi.
+The default is **`MSSQL_PID=Express`**: it is free and **can be used in
+production**. This stack aims at an installation that runs with the minimum
+licensing burden, so Express was deliberately chosen as the default.
 
-Express'in sınırları:
+Express's limits:
 
-| Sınır | Değer |
+| Limit | Value |
 |---|---|
-| Veritabanı başına veri | 10 GB |
-| Tampon havuzu (buffer pool) | ~1.4 GB |
-| Kullanılan çekirdek | en fazla 4 |
+| Data per database | 10 GB |
+| Buffer pool | ~1.4 GB |
+| Cores used | 4 at most |
 
-Bu yüzden panel SQL Server'a en fazla ~3 GB ayırır: Express bundan fazlasını
-zaten kullanamaz, ayırmak diğer motorlardan çalmak olurdu.
+That is why the panel gives SQL Server ~3 GB at most: Express cannot use more
+than that anyway, and allocating it would be stealing from the other engines.
 
-Diğer seçenekler:
+Other options:
 
 ```bash
-# Tüm özellikler açık, ücretsiz — ama YALNIZ geliştirme/test
+# All features on, free of charge — but for development/testing ONLY
 MSSQL_PID=Developer
 
-# Satın alınmış lisans
+# Purchased license
 MSSQL_PID=Standard      # ya da Enterprise
 ```
 
-`.env` içinde değiştirip `./stack.sh disable mssql && ./stack.sh enable mssql`.
+(`# Tüm özellikler açık, ücretsiz — ama YALNIZ geliştirme/test` = all features
+on, free — but for development/testing ONLY; `# Satın alınmış lisans` = a
+purchased license; `# ya da Enterprise` = or Enterprise.)
+
+Change it in `.env`, then `./stack.sh disable mssql && ./stack.sh enable mssql`.
 
 ---
 
-## ⚠️ Copyleft motorlar — ne anlama geliyor?
+## ⚠️ Copyleft engines — what does that mean?
 
-**Kendi uygulamanız için kullanıyorsanız hiçbir yükümlülük doğmaz.** Şirketinizin
-CRM'i PostgreSQL yerine MongoDB kullanıyor olabilir, sorun yok.
+**If you are using one for your own application, no obligation arises at all.**
+Your company's CRM may be using MongoDB instead of PostgreSQL; that is fine.
 
-Yükümlülük, bu motoru **başkalarına yönetilen servis olarak sunduğunuzda**
-doğar — "MongoDB hosting satıyorum", "arama API'si olarak Elasticsearch'ü
-müşteriye açıyorum" gibi. SSPL bu durumda hizmeti çalıştıran tüm yazılım
-yığınının açılmasını ister; AGPL ise değiştirdiğiniz kaynağı.
+The obligation arises when you **offer the engine to other people as a managed
+service** — "I sell MongoDB hosting", "I expose Elasticsearch to the customer as
+a search API", that kind of thing. In that case SSPL asks for the whole software
+stack running the service to be opened; AGPL asks for the source you modified.
 
-### Redis → Valkey (birebir geçiş)
+### Redis → Valkey (drop-in replacement)
 
-Redis 7.4 ile RSALv2/SSPL'e geçti; 8.0 ile AGPL-3.0 seçeneği eklendi. Copyleft
-istemiyorsanız **Valkey** Linux Foundation altında BSD-3 lisanslı bir çataldır
-ve protokol/komut düzeyinde birebir uyumludur:
+Redis moved to RSALv2/SSPL with 7.4; with 8.0 an AGPL-3.0 option was added. If
+you do not want copyleft, **Valkey** is a BSD-3 licensed fork under the Linux
+Foundation and matches it one for one at the protocol/command level:
 
 ```bash
 # .env
 REDIS_IMAGE=valkey/valkey:8-alpine
 ```
 
-Yığındaki her şey (RedisInsight, exporter, yedekleme, replikasyon, devir)
-değişiklik gerektirmeden çalışır.
+Everything in the stack (RedisInsight, the exporter, backups, replication,
+failover) works without requiring any change.
 
-### Elasticsearch → OpenSearch (birebir değil)
+### Elasticsearch → OpenSearch (not a drop-in)
 
-OpenSearch Apache-2.0'dır ama **doğrudan yerine geçmez**: Kibana yerine
-OpenSearch Dashboards gerekir ve istemci kütüphaneleri farklıdır. Geçmek
-isterseniz `ELASTIC_IMAGE` ile motoru değiştirip Kibana servisini kendi
-Dashboards'unuzla değiştirmeniz gerekir.
+OpenSearch is Apache-2.0, but **it is not a direct replacement**: you need
+OpenSearch Dashboards instead of Kibana, and the client libraries are different.
+If you want to switch, you have to change the engine with `ELASTIC_IMAGE` and
+replace the Kibana service with your own Dashboards.
 
 ### MongoDB → FerretDB
 
-FerretDB (Apache-2.0) MongoDB tel protokolünü PostgreSQL üzerinde konuşur.
-Basit CRUD iş yüklerinde çalışır; aggregation pipeline ve transaction
-desteğinde farklar vardır. Geçmeden önce kendi sorgularınızla deneyin.
+FerretDB (Apache-2.0) speaks the MongoDB wire protocol on top of PostgreSQL. It
+works for simple CRUD workloads; there are differences in aggregation pipeline
+and transaction support. Try it with your own queries before you switch.
 
-### MinIO — durum tam olarak ne?
+### MinIO — what exactly is the situation?
 
-MinIO **ücretli değildir**, AGPL-3.0'dır ve öyle kalmıştır. Değişen şey:
-2025'te community sürümünün web konsolundaki **yönetim özellikleri** ticari
-AIStor ürününe taşındı; community konsolunda temel nesne tarayıcı kaldı.
+MinIO **is not paid software**, it is AGPL-3.0 and it has stayed that way. What
+changed: in 2025 the **management features** in the community edition's web
+console were moved into the commercial AIStor product; what is left in the
+community console is the basic object browser.
 
-Bu yüzden sürüm bilerek o değişiklikten **önceye sabitlendi**:
+That is why the version is deliberately pinned to **before** that change:
 
 ```bash
 MINIO_VERSION=RELEASE.2024-10-13T13-34-11Z
 ```
 
-Böylece paneldeki MinIO Console tam çalışır. Daha yeni sürüme geçmek isterseniz
-sunucu tarafı sorunsuz güncellenir; yalnız konsolun yönetim ekranları kaybolur
-(kova/kullanıcı yönetimini `mc` komut satırıyla yaparsınız).
+This way the MinIO Console in the panel works fully. If you want to move to a
+newer version, the server side updates without trouble; only the console's
+management screens disappear (you do bucket/user management with the `mc`
+command line).
 
-> **`bitnami/minio` kullanmayın.** Bitnami de 2025'te kataloğunu ücretli
-> "Bitnami Secure Images"a taşıdı; ücretsiz kalan `bitnamilegacy/*` imajları
-> donduruldu ve **güvenlik yaması almıyor**. Eski bir imajı lisans kaygısıyla
-> seçmek, yamasız bir imajı üretime koymak demektir — kötü bir takas.
+> **Do not use `bitnami/minio`.** Bitnami moved its catalog into the paid
+> "Bitnami Secure Images" in 2025 as well; the `bitnamilegacy/*` images that
+> stayed free were frozen and **get no security patches**. Choosing an old image
+> out of licensing concern means putting an unpatched image into production — a
+> bad trade-off.
 
-Tamamen copyleft'siz bir S3 alternatifi isterseniz: **SeaweedFS** (Apache-2.0).
+If you want an S3 alternative with no copyleft at all: **SeaweedFS**
+(Apache-2.0).
 
 ---
 
-## Kendi imajınızı kullanmak
+## Using your own image
 
-Her motorun imajı `<MOTOR>_IMAGE` ile tamamen değiştirilebilir. Bu üç işe yarar:
+Every engine's image can be replaced entirely with `<MOTOR>_IMAGE`. This is good
+for three things:
 
 ```bash
 # 1. Lisans alternatifi
 REDIS_IMAGE=valkey/valkey:8-alpine
 
-# 2. Kapalı ağda kendi registry aynanız
+# 2. Your own registry mirror on an air-gapped network
 MARIADB_IMAGE=registry.sirket.local/mariadb:11.4
 POSTGRES_IMAGE=registry.sirket.local/postgres:16
 
-# 3. Kurum içi sertleştirilmiş imaj
+# 3. In-house hardened image
 POSTGRES_IMAGE=registry.sirket.local/hardened/postgres:16-fips
 ```
 
-Değişkenler: `MARIADB_IMAGE`, `POSTGRES_IMAGE`, `MONGO_IMAGE`, `REDIS_IMAGE`,
+(`# 1. Lisans alternatifi` = a licensing alternative; `# 2. Kapalı ağda kendi
+registry aynanız` = your own registry mirror on a closed network; `# 3. Kurum içi
+sertleştirilmiş imaj` = an in-house hardened image.)
+
+The variables: `MARIADB_IMAGE`, `POSTGRES_IMAGE`, `MONGO_IMAGE`, `REDIS_IMAGE`,
 `MSSQL_IMAGE`, `CASSANDRA_IMAGE`, `ELASTIC_IMAGE`, `KAFKA_IMAGE`,
 `RABBITMQ_IMAGE`, `CLICKHOUSE_IMAGE`, `NEO4J_IMAGE`, `MINIO_IMAGE`.
 
 ---
 
-## Bu projenin kendi lisansı
+## This project's own license
 
-`databases-stack` MIT lisanslıdır ([LICENSE](../LICENSE)). Proje motorları
-**yeniden dağıtmaz**; Docker Hub / resmi kayıt defterlerinden çeker. Yani her
-motorun lisansı doğrudan sizinle o motorun sahibi arasındadır.
+`databases-stack` is MIT licensed ([LICENSE](../LICENSE)). The project **does not
+redistribute** the engines; it pulls them from Docker Hub / the official
+registries. So each engine's license is directly between you and that engine's
+owner.

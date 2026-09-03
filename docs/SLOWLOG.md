@@ -1,11 +1,11 @@
-# Yavaş sorgu ölçümü
+# Slow query measurement
 
-***Türkçe** · [English](SLOWLOG.en.md)*
+*[Türkçe](SLOWLOG.tr.md) · **English***
 
-"Veritabanım yavaş" cümlesinin cevabı neredeyse her zaman ölçülebilir bir
-yerde durur: motor, hangi sorguya ne kadar zaman harcadığını **zaten
-sayıyor**. Eksik olan tek şey o sayacın açılması ve okunabilir hâle
-getirilmesidir. `scripts/slowlog.sh` bunu yapar.
+The answer to the sentence "my database is slow" almost always sits somewhere
+measurable: the engine is **already counting** how much time it spends on
+which query. The only thing missing is turning that counter on and making it
+readable. `scripts/slowlog.sh` does that.
 
 ```bash
 ./scripts/slowlog.sh kur postgresql      # ölçümü aç (kalıcı ayar)
@@ -14,44 +14,50 @@ getirilmesidir. `scripts/slowlog.sh` bunu yapar.
 ./scripts/slowlog.sh sifirla postgresql  # sayaçları sıfırla
 ```
 
+(`kur` = set up, `durum` = status, `oneri` = suggest, `sifirla` = reset. The
+comments read: turn measurement on (persistent setting) · the most expensive
+first N queries · index/setting suggestions · reset the counters)
+
 ---
 
-## Sıralama neden TOPLAM süreye göre
+## Why the ranking is by TOTAL time
 
-Bu, aracın en önemli kararı. İnsanlar yavaşlık ararken içgüdüsel olarak
-**ortalamaya** bakar ve yanılır:
+This is the tool's most important decision. When people look for slowness they
+instinctively look at the **average** — and get it wrong:
 
-> 0.5 ms süren ama saniyede 2000 kez çağrılan bir sorgu, sunucudan saniyede
-> **1000 ms** alır. 3 saniye süren ama günde bir koşan bir rapor günde
-> **3000 ms** alır. Birincisi üç saniyede ikincisinin **günlük** maliyetini
-> geçer.
+> A query that takes 0.5 ms but is called 2000 times a second takes **1000 ms**
+> of the server every second. A report that takes 3 seconds but runs once a day
+> takes **3000 ms** a day. In three seconds the first one passes the second
+> one's **daily** cost.
 
-Ortalamaya göre sıralayan bir liste birinciyi hiç göstermez — ve sunucuyu
-gerçekten dolduran odur. Bu yüzden hem ekran hem JSON toplam süreye göre
-sıralıdır; *ortalama* sütunu yalnızca "tek koşum ne kadar sürüyor" sorusu
-için vardır.
+A list sorted by average never shows the first one — and that is the one
+actually filling the server. That is why both the screen and the JSON are
+sorted by total time; the *average* column exists only for the question "how
+long does a single run take".
 
-Bu karar tahmin değil, **ölçülmüş**. `scripts/e2e/slowlog.sh` bilerek ters
-düşen iki sorgu koşturur ve listedeki sıralarına bakar. Gerçek bir koşumdan:
+This decision is not a guess, it is **measured**. `scripts/e2e/slowlog.sh`
+deliberately runs two queries that fall on opposite sides and looks at their
+positions in the list. From a real run:
 
-| sorgu | çağrı | toplam | ortalama | listedeki sıra |
+| query | calls | total | average | position in list |
 |---|---|---|---|---|
 | `sik`   | 400 | **56.7 ms** | 0.142 ms | **2** |
 | `nadir` |   2 | 14.2 ms | **7.123 ms** | 3 |
 
-Ortalamaya göre sıralansaydı `nadir` 50 kat üstte çıkardı. Oysa sunucunun
-CPU'sundan `sik` **4 kat fazlasını** almış. Liste doğru olanı gösteriyor.
+Sorted by average, `nadir` would have come out 50 times higher. Yet `sik` took
+**4 times more** of the server's CPU. The list shows the right one.
 
 ---
 
-## Ölçüm kapalıysa boş liste basılmaz
+## If measurement is off, no empty list is printed
 
-Ölçüm açık değilken bu betik **çıkış kodu 4** ile durur ve ölçümü açan
-komutu ekrana yazar.
+When measurement is not on, this script stops with **exit code 4** and prints
+the command that turns measurement on.
 
-Sebep somut: boş bir liste "yavaş sorgun yok" diye okunur. Ölçüm hiç
-yapılmamışken bunu söylemek, bu aracın verebileceği en pahalı yanlış
-cevaptır — kullanıcı asıl sorunu bambaşka bir yerde aramaya gider.
+The reason is concrete: an empty list reads as "you have no slow queries".
+Saying that when no measurement was ever taken is the most expensive wrong
+answer this tool can give — the user goes off looking for the real problem
+somewhere else entirely.
 
 ```
 [!] ÖLÇÜM KAPALI — postgresql
@@ -60,98 +66,108 @@ cevaptır — kullanıcı asıl sorunu bambaşka bir yerde aramaya gider.
 [bilgi]   Açmak için:  ./scripts/slowlog.sh kur postgresql
 ```
 
+(MEASUREMENT OFF — postgresql · pg_stat_statements is NOT PRELOADED —
+PostgreSQL is not counting the duration of any query. · info: To turn it on:)
+
 ---
 
-## Kapsam — ve neden yalnız iki motor
+## Scope — and why only two engines
 
-| Motor | Ölçüm | Kaynak |
+| Engine | Measurement | Source |
 |---|---|---|
 | **postgresql** | ✅ | `pg_stat_statements` |
-| **mariadb** | ✅ | `performance_schema` digest'i, yoksa yavaş sorgu günlüğü |
-| mongodb | ❌ | profiler ile **mümkün**, bu turda **yapılmadı** |
-| mssql | ❌ | Query Store ile **mümkün**, bu turda **yapılmadı** |
-| elasticsearch | ❌ | kendi slow log'u var; ayrı bir biçim, ayrı bir yorum |
-| diğerleri | ❌ | sorgu başına süre biriktiren bir sayaç yığında yok |
+| **mariadb** | ✅ | the `performance_schema` digest, or the slow query log if absent |
+| mongodb | ❌ | **possible** with the profiler, **not done** in this round |
+| mssql | ❌ | **possible** with Query Store, **not done** in this round |
+| elasticsearch | ❌ | it has its own slow log; a different format, a different interpretation |
+| the others | ❌ | no counter in the stack accumulates time per query |
 
-Kapsam dışı motorda çıkış kodu **2**'dir; hata (1) ve ölçülemedi (3)
-kodlarıyla karışmaz.
+For an out-of-scope engine the exit code is **2**; it does not get mixed up
+with the error (1) and could-not-measure (3) codes.
 
-"Mümkün ama yapılmadı" satırları bilerek böyle yazıldı: "yapılabilir" ile
-"yapıldı ve ölçüldü" arasındaki farkı gizlemek, ihtiyaç duyulduğu gün
-öğrenilecek en pahalı şeydir.
+The "possible but not done" rows are written that way deliberately: hiding the
+difference between "can be done" and "was done and measured" is the most
+expensive thing to learn on the day you need it.
 
 ---
 
-## PostgreSQL: kurulum **yeniden başlatma ister**
+## PostgreSQL: setup **requires a restart**
 
-`pg_stat_statements` bir **shared preload** kütüphanesidir: postmaster
-başlarken belleğe alınır, sonradan yüklenemez. `reload` (SIGHUP) yetmez,
-`SELECT` ile değiştirilemez.
+`pg_stat_statements` is a **shared preload** library: it is taken into memory
+as the postmaster starts and cannot be loaded afterwards. A `reload` (SIGHUP)
+is not enough, and it cannot be changed with a `SELECT`.
 
 ```bash
 ./scripts/slowlog.sh kur postgresql
 ```
 
-Bu komut:
+This command:
 
-1. `config/postgresql/slowlog.conf` dosyasını `postgresql.conf`'a bir
-   `include_if_exists` satırıyla bağlar,
-2. eklentiyi yaratır (`CREATE EXTENSION pg_stat_statements`),
-3. **ölçümün henüz başlamadığını** söyler ve yeniden başlatma komutunu
-   yazar.
+1. links `config/postgresql/slowlog.conf` into `postgresql.conf` with an
+   `include_if_exists` line,
+2. creates the extension (`CREATE EXTENSION pg_stat_statements`),
+3. says that **measurement has not started yet** and prints the restart
+   command.
 
 ```bash
 docker compose up -d postgresql        # kesintiyi SİZ seçiyorsunuz
 ./scripts/slowlog.sh durum postgresql
 ```
 
-Betik sunucuyu **kendiliğinden yeniden başlatmaz**. O an ne koştuğunu
-bilmiyor; üretim veritabanını kapatma kararı kullanıcınındır. JSON çıktısı
-bu ara hâli ayrı bir alanla söyler: `"enabled": false,
-"pending_restart": true`. Panel bunu "açık" gösterseydi, kullanıcı ertesi
-gün boş listeye bakıp aracın bozulduğunu düşünürdü.
+(the comment reads: YOU choose the downtime)
 
-### `include_if_exists`, `include` değil
+The script **does not restart the server by itself**. It does not know what is
+running at that moment; the decision to shut down a production database
+belongs to the user. The JSON output states this in-between state in a
+separate field: `"enabled": false, "pending_restart": true`. If the panel
+showed this as "on", the user would look at an empty list the next day and
+think the tool was broken.
 
-Ayar dosyası host'tan bind-mount ile geliyor. Depo taşınır, mount kaybolur
-ya da dosya silinir; `include` o hâlde PostgreSQL'i **açılışta düşürür**.
-Bir ölçüm aracının ayar dosyası, veritabanının açılmasını engelleyemez —
-kaybolduğunda olması gereken tek şey ölçümün kapanması ve `durum`un bunu
-söylemesidir.
+### `include_if_exists`, not `include`
 
-### `config/postgresql/slowlog.conf` içindeki kararlar
+The config file comes from the host via a bind mount. The repo gets moved, the
+mount disappears or the file is deleted; in that case `include` **brings
+PostgreSQL down at startup**. A measurement tool's config file must not be
+able to stop the database from coming up — when it disappears, the only thing
+that should happen is that measurement turns off and `durum` says so.
 
-| Ayar | Değer | Neden |
+### The decisions inside `config/postgresql/slowlog.conf`
+
+| Setting | Value | Why |
 |---|---|---|
-| `shared_preload_libraries` | `pg_stat_statements` | ölçümün kendisi |
-| `pg_stat_statements.track` | `top` | `all` olsaydı fonksiyon içindeki cümleler ayrıca sayılır, **aynı süre iki kez** görünür ve toplam-süre sıralaması bozulurdu |
-| `pg_stat_statements.track_utility` | `off` | **gizlilik**: utility cümleleri normalleştirilmez, `CREATE ROLE … PASSWORD '…'` metniyle saklanır ve `durum` onu ekrana basardı |
-| `pg_stat_statements.save` | `on` | kapalı olsaydı her yeniden başlatma ölçümü sıfırlar, "haftanın en pahalı sorgusu" diye bir şey ölçülemezdi |
-| `compute_query_id` | `on` | `pg_stat_activity.query_id` de dolar: "şu an asılı duran sorgu, listedeki hangi satır" ancak öyle cevaplanır |
+| `shared_preload_libraries` | `pg_stat_statements` | the measurement itself |
+| `pg_stat_statements.track` | `top` | with `all`, statements inside functions would be counted separately, **the same time would appear twice** and the total-time ranking would break |
+| `pg_stat_statements.track_utility` | `off` | **privacy**: utility statements are not normalized, they are stored with their `CREATE ROLE … PASSWORD '…'` text and `durum` would print that on screen |
+| `pg_stat_statements.save` | `on` | with it off, every restart would reset the measurement and there would be no such thing as "the most expensive query of the week" |
+| `compute_query_id` | `on` | `pg_stat_activity.query_id` gets filled in too: "the query hanging right now, which row in the list is it" can only be answered that way |
 
 ---
 
-## MariaDB: yeniden başlatma **gerekmez**
+## MariaDB: a restart is **not needed**
 
 ```bash
 ./scripts/slowlog.sh kur mariadb --esik 0.5
 ```
 
-İki kaynak var ve araç hangisini kullandığını ekranda yazar:
+(`--esik` = the threshold flag, in seconds)
 
-**1. `performance_schema` digest'i** — tercih edilen. Sorguyu
-normalleştirir (`?`), **eşik tanımaz**, `TRUNCATE` ile sıfırlanır.
+There are two sources, and the tool prints on screen which one it used:
 
-**2. Yavaş sorgu günlüğü** — `long_query_time`'dan uzun süren sorguları
-**ham metinle** dosyaya yazar. İki sınırı var:
+**1. The `performance_schema` digest** — the preferred one. It normalizes the
+query (`?`), **knows no threshold**, and is reset with `TRUNCATE`.
 
-* **EŞİK.** Bu aracın aradığı asıl sınıf — kısa ama çok çağrılan sorgu —
-  eşiğin altında kalır ve dosyaya **hiç düşmez**. Yani "yavaş sorgu günlüğü
-  boş" demek "yavaş sorgu yok" demek değildir.
-* **GİZLİLİK.** `WHERE tcno = '12345678901'` dosyada aynen yazılıdır.
+**2. The slow query log** — writes queries that take longer than
+`long_query_time` to a file **in raw text**. It has two limits:
 
-`performance_schema` bu yığında varsayılan olarak **kapalıdır**; açmak
-yeniden başlatma ister:
+* **THRESHOLD.** The very class this tool is looking for — a short but heavily
+  called query — stays under the threshold and lands in the file **not at
+  all**. So "the slow query log is empty" does not mean "there are no slow
+  queries".
+* **PRIVACY.** `WHERE tcno = '12345678901'` is written in the file exactly as
+  is.
+
+`performance_schema` is **off** by default in this stack; turning it on
+requires a restart:
 
 ```ini
 # config/mariadb/my.cnf → [mysqld]
@@ -162,113 +178,122 @@ performance_schema = ON
 docker compose up -d mariadb
 ```
 
-`kur mariadb` `SET GLOBAL` kullanır, yani ayarlar **yeniden başlatmada
-kaybolur**. Kalıcı olması için `my.cnf`'teki satırları siz eklersiniz —
-betik motorun ayar dosyasına yazmaz. Sebep: `my.cnf` motorun bellek
-ayarlarını da taşıyor; bir ölçüm aracının oraya yazması, o dosyayı kimin
-düzenlediğini bir daha kimsenin bilememesi demek.
+`kur mariadb` uses `SET GLOBAL`, so the settings are **lost on restart**. To
+make them permanent you add the lines in `my.cnf` yourself — the script does
+not write into the engine's config file. The reason: `my.cnf` also carries the
+engine's memory settings; a measurement tool writing there means nobody can
+ever know again who edited that file.
 
 ---
 
-## Gizlilik: sorgu metni veri taşıyabilir
+## Privacy: query text can carry data
 
-| Kaynak | Metin | Araç ne yapar |
+| Source | Text | What the tool does |
 |---|---|---|
-| `pg_stat_statements` | normalleştirilmiş (`$1`) | olduğu gibi gösterir |
-| `performance_schema` digest'i | normalleştirilmiş (`?`) | olduğu gibi gösterir |
-| MariaDB yavaş sorgu günlüğü | **HAM** | dizgi sabitlerini ve sayıları `?` yapar **ve ekranda söyler** |
+| `pg_stat_statements` | normalized (`$1`) | shows it as is |
+| the `performance_schema` digest | normalized (`?`) | shows it as is |
+| MariaDB slow query log | **RAW** | turns string literals and numbers into `?` **and says so on screen** |
 
-Maskeleme sessiz yapılsaydı kullanıcı gördüğü metnin ham olmadığını bilemez,
-dolayısıyla **diskteki günlük dosyasını da güvenli sanırdı** — oysa orada
-ham hâli duruyor. JSON çıktısında `"masked": true` alanı aynı şeyi panele
-söyler.
+If the masking were done silently, the user could not know that the text they
+see is not raw, and would therefore **think the log file on disk was safe
+too** — while the raw version is sitting right there. In the JSON output the
+`"masked": true` field says the same thing to the panel.
 
 ---
 
-## `oneri` — ölçülebilen üç şey, uydurma yok
+## `oneri` — three measurable things, nothing invented
 
 ```bash
 ./scripts/slowlog.sh oneri postgresql
 ```
 
-| Tür | Nasıl ölçülüyor |
+| Type | How it is measured |
 |---|---|
-| `indeks` | `EXPLAIN` planında ardışık tarama + eşitlik süzgeci (aşağıda) |
+| `indeks` | sequential scan + equality filter in the `EXPLAIN` plan (below) |
 | `ardisik-tarama` | `pg_stat_user_tables.seq_tup_read` |
 | `kullanilmayan-indeks` | PostgreSQL `idx_scan = 0`, MariaDB `COUNT_FETCH = 0` |
-| `tarama-orani` | taranan / dönen satır oranı |
+| `tarama-orani` | ratio of examined / returned rows |
 
-**`indeks`** — en pahalı sorguların planına gerçekten bakılır. PostgreSQL
-16'nın `EXPLAIN (GENERIC_PLAN)` seçeneği `$1` parametrelerini gerçek değer
-olmadan planlatır; tam bu iş için var. Planda `Seq Scan … Filter:
-(sütun = $1)` görülüyorsa o sütun okunuyor demektir. Sütun adı ayrıca
-`pg_attribute`'ta doğrulanır ve tablo yeterince büyük değilse öneri
-**verilmez** — küçük bir tabloda ardışık tarama zaten doğru plandır.
-Yalnız **eşitlik** süzgeçleri önerilir: `<`, `LIKE '%…%'` ya da işlev
-çağrısı içeren bir süzgeç için sıradan bir B-tree indeksi çoğu zaman işe
-yaramaz ve "indeks ekledim, hiçbir şey değişmedi" sonucunu üretirdi.
-PostgreSQL 16'dan eski sürümlerde bu adım **atlanır ve atlandığı söylenir**.
+**`indeks`** — the plans of the most expensive queries are actually looked at.
+PostgreSQL 16's `EXPLAIN (GENERIC_PLAN)` option plans `$1` parameters without
+real values; it exists for exactly this job. If the plan shows `Seq Scan …
+Filter: (sütun = $1)`, that column is being read. The column name is also
+verified in `pg_attribute`, and if the table is not big enough the suggestion
+is **not given** — on a small table a sequential scan is already the right
+plan. Only **equality** filters are suggested: for a filter containing `<`,
+`LIKE '%…%'` or a function call an ordinary B-tree index usually does not help
+and would produce the "I added an index and nothing changed" outcome. On
+versions older than PostgreSQL 16 this step is **skipped, and the skip is
+stated**.
 
-**`ardisik-tarama`** — sıralama tarama *sayısına* göre değil, o taramalarda
-**okunan satır** sayısına göre. 40 satırlık bir tabloyu bir milyon kez
-taramak ucuzdur; 10 milyon satırlık bir tabloyu on kez taramak değildir.
+**`ardisik-tarama`** — the ranking is not by the *number* of scans but by the
+number of **rows read** in those scans. Scanning a 40-row table a million
+times is cheap; scanning a 10-million-row table ten times is not.
 
-**`kullanilmayan-indeks`** — MariaDB'de ölçüt `COUNT_FETCH`, `COUNT_STAR`
-değil. `COUNT_STAR` okumaları ve **yazmaları birlikte** sayar; sürekli
-yazılan bir tablodaki hiç okunmayan indeks orada sıfırdan büyük görünür ve
-listeye hiç girmezdi — oysa tam olarak aradığımız indeks odur.
+**`kullanilmayan-indeks`** — on MariaDB the criterion is `COUNT_FETCH`, not
+`COUNT_STAR`. `COUNT_STAR` counts reads **and writes together**; an index that
+is never read on a constantly written table shows up there as greater than
+zero and would never enter the list — yet that is exactly the index we are
+looking for.
 
-**`tarama-orani`** — 2 milyon satır tarayıp 10 satır döndüren bir sorgu,
-işini yapmak için tablonun tamamını okuyordur.
+**`tarama-orani`** — a query that examines 2 million rows and returns 10 is
+reading the whole table to do its job.
 
-### Öneri **uygulanmaz**, yalnız yazılır
+### A suggestion is **not applied**, it is only written out
 
-İndeks eklemek okuma yolunu hızlandırır ama **her `INSERT`/`UPDATE`'i
-yavaşlatır** ve diskte yer tutar; indeks silmek geri alması dakikalar süren
-bir iştir. Bu takası ancak uygulamayı bilen kişi yapabilir. Bu yüzden
-`oneri` yalnız `SELECT`/`EXPLAIN` çalıştırır ve komutları ekrana basar;
-`EXPLAIN`'e `ANALYZE` verilmez, yani sorgu **çalıştırılmaz**.
+Adding an index speeds up the read path but **slows down every
+`INSERT`/`UPDATE`** and takes space on disk; dropping an index is a job that
+takes minutes to undo. Only someone who knows the application can make that
+trade-off. That is why `oneri` runs only `SELECT`/`EXPLAIN` and prints the
+commands on screen; `ANALYZE` is not given to `EXPLAIN`, so the query is
+**not run**.
 
-E2E paketi bu sözü indeks sayısını önce ve sonra sayarak doğrular.
+The e2e suite verifies this promise by counting the number of indexes before
+and after.
 
-### Dışarıda bırakılanlar ve sebepleri
+### What is left out, and why
 
-"Kullanılmıyor" görünen her indeks silinemez:
+Not every index that looks "unused" can be dropped:
 
-* **PRIMARY / UNIQUE / dışlama kısıtı** — indeksi değil **kuralı** kaldırır.
-* **`indisreplident`** — mantıksal çoğaltma satırı bu indeksle tanır.
-* **Yabancı anahtar indeksi (MariaDB)** — motor silmeyi zaten reddeder;
-  önerseydik çalışmayacak bir komut vermiş olurduk.
+* **PRIMARY / UNIQUE / exclusion constraint** — dropping it removes not the
+  index but **the rule**.
+* **`indisreplident`** — logical replication identifies the row with this
+  index.
+* **Foreign key index (MariaDB)** — the engine already refuses the drop; had
+  we suggested it, we would have handed out a command that will not work.
 
-### `idx_scan = 0` her zaman "hiç kullanılmadı" demek değil
+### `idx_scan = 0` does not always mean "never used"
 
-"Sayaç **sıfırlandığından beri** kullanılmadı" demektir. Bu yüzden her
-`oneri` çıktısında **gözlem penceresi** yazar. Ayrıca sayaçlar düğüm
-başınadır: ana kopyada kullanılmayan bir indeks replikada kullanılıyor
-olabilir.
+It means "not used **since the counter was reset**". That is why every `oneri`
+output prints the **observation window**. The counters are also per node: an
+index unused on the primary may be in use on the replica.
 
 ---
 
-## `sifirla` — ve `--vt`'nin PostgreSQL'e özel anlamı
+## `sifirla` — and what `--vt` means specifically on PostgreSQL
 
 ```bash
 ./scripts/slowlog.sh sifirla postgresql --vt uygulama   # yalnız o veritabanı
 ./scripts/slowlog.sh sifirla postgresql                 # KÜME GENELİ
 ```
 
-PostgreSQL'de `pg_stat_statements_reset(userid, dbid, queryid)` tam bunun
-için var. MariaDB'de sayaçlar veritabanı bazında sıfırlanamaz
-(`performance_schema` tabloları yalnız `TRUNCATE` kabul eder); orada
-`--vt` **yok sayılır ve bu söylenir**. Sessizce sunucu genelini
-sıfırlasaydık, kullanıcı yalnız kendi veritabanını temizlediğini sanırdı.
+(`--vt` = the database flag; `uygulama` is a database name here. The comments
+read: only that database · CLUSTER-WIDE)
 
-Biriken ölçüm geri gelmez.
+On PostgreSQL, `pg_stat_statements_reset(userid, dbid, queryid)` exists for
+exactly this. On MariaDB the counters cannot be reset per database
+(`performance_schema` tables accept only `TRUNCATE`); there `--vt` is
+**ignored, and that is stated**. Had we silently reset the whole server, the
+user would have thought they cleared only their own database.
+
+Accumulated measurement does not come back.
 
 ---
 
-## JSON çıktısı
+## JSON output
 
-Son satır her zaman tek satır JSON'dur; panel ve controller bunu okur.
+The last line is always a single line of JSON; the panel and the controller
+read it.
 
 ```json
 {"engine":"postgresql","command":"durum","source":"pg_stat_statements",
@@ -281,59 +306,66 @@ Son satır her zaman tek satır JSON'dur; panel ve controller bunu okur.
  "detail":"ölçüldü: 1 motor, 4 sorgu listelendi, toplam 199.5 ms"}
 ```
 
-**Alan adları her motorda aynı, dolu olmaları değil.** MariaDB'de
-`"blocks"` JSON `null`'dur, `0` değil — InnoDB sorgu başına okunan blok diye
-bir sayaç tutmuyor. `0` yazsaydık panel "hiç disk okumamış, sorun burada
-değil" derdi; oysa doğru cevap "bu motorda böyle bir ölçü yok".
+(`detail` reads: measured: 1 engine, 4 queries listed, 199.5 ms in total)
 
-`"rows"` motora göre farklı şey sayar, bu yüzden yanında `rows_kind` var:
+**The field names are the same on every engine; their being filled in is
+not.** On MariaDB `"blocks"` is JSON `null`, not `0` — InnoDB does not keep a
+counter for blocks read per query. Had we written `0`, the panel would say "it
+read no disk at all, the problem is not here"; whereas the right answer is
+"there is no such measure on this engine".
 
-| Motor | `rows_kind` | Anlamı |
+`"rows"` counts a different thing depending on the engine, which is why
+`rows_kind` sits next to it:
+
+| Engine | `rows_kind` | Meaning |
 |---|---|---|
-| postgresql | `returned` | **dönen** satır |
-| mariadb | `examined` | **taranan** satır |
+| postgresql | `returned` | **returned** rows |
+| mariadb | `examined` | **examined** rows |
 
-Farkı yazmasaydık "10 satır döndüren sorgu neden yavaş" sorusunun cevabı
-kaybolurdu — MariaDB'deki o sayı 2 milyon satır tarandığını söylüyor olabilir
-ve asıl bulgu tam olarak budur.
+Had we not written the difference down, the answer to "why is a query that
+returns 10 rows slow" would be lost — that number on MariaDB may be saying 2
+million rows were examined, and that is exactly the real finding.
 
 ---
 
-## Çıkış kodları
+## Exit codes
 
-| Kod | Anlamı |
+| Code | Meaning |
 |---|---|
-| 0 | iş bitti |
-| 1 | **iş düştü** — ayar yazılamadı, sıfırlama başarısız |
-| 2 | **kapsam dışı** ya da kullanım hatası |
-| 3 | **ölçülemedi** — motor kapalı, docker yok, sorgu düştü |
-| 4 | **ÖLÇÜM KAPALI** — "yavaş sorgu bulunmadı" değil, "hiç bakılmadı" |
+| 0 | the job is done |
+| 1 | **the job failed** — the setting could not be written, the reset failed |
+| 2 | **out of scope** or a usage error |
+| 3 | **could not measure** — engine down, no docker, the query failed |
+| 4 | **MEASUREMENT OFF** — not "no slow queries found", but "nothing was ever looked at" |
 
-`0`, `3` ve `4` bilerek ayrı: "baktım, temiz", "bakamadım" ve "hiç
-bakılmadı" üç ayrı cevaptır ve üçü ayrı iş gerektirir.
+`0`, `3` and `4` are separate deliberately: "I looked, it is clean", "I could
+not look" and "nothing was ever looked at" are three different answers, and
+each of the three requires different work.
 
 ---
 
-## Ölçüm: `scripts/e2e/slowlog.sh`
+## Measurement: `scripts/e2e/slowlog.sh`
 
 ```bash
 ./scripts/e2e/slowlog.sh              # çalışan motorların hepsi
 ./scripts/e2e/slowlog.sh postgresql   # yalnız biri
 ```
 
-Paket bilinen maliyette dört sorgu koşturur ve aracın onları nasıl
-raporladığını sayıyla karşılaştırır: pahalı sorgu ilk N'de mi, çağrı sayısı
-doğru mu, sıralama gerçekten toplam süreye göre mi, ucuz sorgu listeyi
-dolduruyor mu, `sifirla` gerçekten sıfırlıyor mu, `oneri` hiçbir şey
-uyguluyor mu, `kur` sunucuyu sessizce yeniden başlatıyor mu.
+(the comments read: all running engines · only one of them)
 
-**Yan etkileri** paketin başında yazılı: geçici bir veritabanı yaratıp
-siler, sayaçları sıfırlar (MariaDB'de sunucu geneli), MariaDB'nin global
-yavaş sorgu ayarlarını değiştirip **geri yazar**.
+The suite runs four queries of known cost and compares, with numbers, how the
+tool reports them: is the expensive query in the first N, is the call count
+right, is the ranking really by total time, does the cheap query fill the
+list, does `sifirla` really reset, does `oneri` apply anything, does `kur`
+silently restart the server.
 
-PostgreSQL'de ölçüm kapalıysa asıl kontroller **atlanır** ve sebebi yazılır;
-paket üretim veritabanını kendiliğinden yeniden başlatmaz. Yeniden başlatma
-kabul edilebiliyorsa:
+**Its side effects** are written at the top of the suite: it creates and
+deletes a temporary database, resets the counters (server-wide on MariaDB),
+and changes MariaDB's global slow query settings and **writes them back**.
+
+On PostgreSQL, if measurement is off the actual checks are **skipped** and the
+reason is printed; the suite does not restart a production database by itself.
+If a restart is acceptable:
 
 ```bash
 E2E_SLOWLOG_YENIDEN_BASLAT=1 ./scripts/e2e/slowlog.sh postgresql

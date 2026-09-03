@@ -1,83 +1,83 @@
-# Yedek kopya (replikasyon)
+# Replica (replication)
 
-***Türkçe** · [English](REPLICATION.en.md)*
+*[Türkçe](REPLICATION.tr.md) · **English***
 
-Replika, ana veritabanının sürekli güncellenen ikinci bir kopyasıdır. İki işe yarar:
+A replica is a second, continuously updated copy of the primary database. It is good for two things:
 
-- **Yedeklilik** — ana kopya bozulursa veri ikinci kopyada durur
-- **Okuma ölçekleme** — raporlar/analizler replikadan okunur, ana kopya rahatlar
+- **Redundancy** — if the primary is corrupted, the data is still sitting in the second copy
+- **Read scaling** — reports/analytics read from the replica, and the primary gets some relief
 
-> ⚠️ Replika **yedeğin yerini tutmaz.** Yanlışlıkla silinen bir tablo replikaya da
-> anında silinerek yansır. Replika + düzenli yedek birlikte kullanılır.
+> ⚠️ A replica **is no substitute for a backup.** A table deleted by accident is
+> reflected on the replica just as instantly, deleted there too. A replica and regular backups are used together.
 
-## Kurma
+## Setting up
 
-Panelde ilgili kartın altındaki **Replika kur**, ya da:
+**Set up replica** ("Replika kur") under the relevant card in the panel, or:
 
 ```bash
 ./stack.sh replica on postgresql
 ./stack.sh replica off postgresql
 ```
 
-Sistem replika için de bellek bütçesini kontrol eder; yer yoksa kurmaz.
+The system checks the memory budget for the replica too; if there is no room, it does not set one up.
 
-## Motor bazında
+## Per engine
 
-| Motor | Yöntem | Kesinti | Replika portu |
+| Engine | Method | Downtime | Replica port |
 |---|---|---|---|
-| **PostgreSQL** | streaming replication | yok | 5433 |
-| **MariaDB** | GTID asenkron replikasyon | yok | 3307 |
-| **Redis** | `replicaof` | yok | 6380 |
-| **MongoDB** | replica set (rs0) | **var** | 27018 |
+| **PostgreSQL** | streaming replication | none | 5433 |
+| **MariaDB** | GTID asynchronous replication | none | 3307 |
+| **Redis** | `replicaof` | none | 6380 |
+| **MongoDB** | replica set (rs0) | **yes** | 27018 |
 
 ### PostgreSQL
-Replika `pg_basebackup` ile ana kopyanın tam klonunu çeker, sonra WAL akışına
-bağlanır. Replika **okunabilir** (hot standby) — raporları oraya yönlendirebilirsiniz.
-Yazma denemeleri hata verir, bu beklenen davranıştır.
+The replica pulls a full clone of the primary with `pg_basebackup`, then attaches to the
+WAL stream. The replica is **readable** (hot standby) — you can point your reports at it.
+Write attempts return an error; that is the expected behavior.
 
-Kontrol: `docker exec postgresql psql -U root -c "SELECT * FROM pg_stat_replication;"`
+Check: `docker exec postgresql psql -U root -c "SELECT * FROM pg_stat_replication;"`
 
 ### MariaDB
-Ana kopyadan `--gtid` ile tutarlı bir dump alınıp replikaya basılır, ardından
-`CHANGE MASTER ... MASTER_USE_GTID=slave_pos` ile akış başlar. GTID sayesinde
-replika tam olarak doğru noktadan devam eder — veri atlanmaz veya tekrarlanmaz.
+A consistent dump is taken from the primary with `--gtid` and loaded into the replica, then
+the stream starts with `CHANGE MASTER ... MASTER_USE_GTID=slave_pos`. Thanks to GTID the
+replica resumes from exactly the right point — no data is skipped or repeated.
 
-Binlog'un açık olması şarttır; `config/mariadb/my.cnf` içinde açıktır.
+The binlog must be enabled; it is enabled in `config/mariadb/my.cnf`.
 
-Kontrol: `docker exec mariadb-replica mariadb -u root -e "SHOW SLAVE STATUS\G"`
+Check: `docker exec mariadb-replica mariadb -u root -e "SHOW SLAVE STATUS\G"`
 → `Slave_IO_Running: Yes`, `Slave_SQL_Running: Yes`, `Seconds_Behind_Master: 0`
 
 ### Redis
-En basiti — replika `replicaof redis 6379` ile açılır ve anında senkronize olur.
-Kesinti yoktur, replika salt okunurdur.
+The simplest one — the replica is brought up with `replicaof redis 6379` and synchronizes
+immediately. There is no downtime, and the replica is read-only.
 
-### MongoDB — kesintiye dikkat
-MongoDB'de replikasyon açmak, **ana kopyanın da** `--replSet` parametresiyle
-yeniden başlatılmasını gerektirir. Bu birkaç saniyelik bir kesinti demektir.
-Panel bunu onay penceresinde açıkça söyler.
+### MongoDB — mind the downtime
+Turning replication on in MongoDB requires restarting **the primary as well** with the
+`--replSet` parameter. That means a few seconds of downtime.
+The panel says this plainly in the confirmation dialog.
 
-Ayrıca üyeler birbirini paylaşılan bir anahtar dosyasıyla doğrular
-(`state/mongo-keyfile`); `install.sh` bunu üretir ve izinlerini ayarlar.
+The members also verify each other with a shared key file
+(`state/mongo-keyfile`); `install.sh` generates it and sets its permissions.
 
-## Kümelenerek ölçeklenen motorlar
+## Engines that scale by clustering
 
-Cassandra, Elasticsearch ve Kafka'da "primary/replica" kavramı yoktur; bunlar
-node ekleyerek ölçeklenir:
+Cassandra, Elasticsearch and Kafka have no "primary/replica" concept; these scale by
+adding nodes:
 
-- **Cassandra** — keyspace başına `replication_factor`, sonra node ekleme
-- **Elasticsearch** — index başına `number_of_replicas` (tek node'da atanamaz;
-  `yellow` sağlık durumu bu yüzden normaldir)
-- **Kafka** — topic başına `replication.factor` (tek broker'da en fazla 1)
+- **Cassandra** — `replication_factor` per keyspace, then adding nodes
+- **Elasticsearch** — `number_of_replicas` per index (cannot be assigned on a single node;
+  that is why the `yellow` health status is normal)
+- **Kafka** — `replication.factor` per topic (at most 1 on a single broker)
 
-Bunlar için gerçek kümeleme, tek makine kapsamını aşar.
+Real clustering for these is beyond the scope of a single machine.
 
 ## Failover
 
-Bu ürün **otomatik failover yapmaz** — bilinçli bir karardır. Otomatik failover
-düzgün çalışmak için quorum (en az 3 node) ister; tek makinede "split-brain"
-riskini artırmaktan başka işe yaramaz.
+This product **does not do automatic failover** — a deliberate choice. To work properly,
+automatic failover wants a quorum (at least 3 nodes); on a single machine it does nothing
+but increase the risk of "split-brain".
 
-Ana kopya kaybedilirse yükseltme elle yapılır:
+If the primary is lost, promotion is done manually:
 
 ```bash
 # PostgreSQL
@@ -89,4 +89,4 @@ docker exec mariadb-replica mariadb -u root -e "STOP SLAVE; RESET SLAVE ALL; SET
 # Redis
 docker exec redis-replica redis-cli REPLICAOF NO ONE
 ```
-Ardından uygulamanızın bağlantı adresini replika portuna çevirin.
+Then point your application's connection address at the replica port.
