@@ -1755,8 +1755,13 @@ _arch_dal = _bk.split("*.archive.gz)")[1].split("*.gz)")[0]
 # regresyon sanmak olurdu; ama gevşetmiyoruz da: okuyucunun akışı SONUNA
 # kadar açtığını ve iki tarafın çıkış kodunu da denetlediğini ayrıca
 # sınıyoruz — "zarf yarım mı" sorusunun cevabı orada.
-_oku_i = _bk.find("oku_akis() {")
-_oku = _bk[_oku_i:_oku_i + 400] if _oku_i >= 0 else ""
+# Okuyucu artık common.sh'ta: restore-drill.sh yalnız onu source ediyor ve
+# şifreli yedeği düz gzip ile açmaya çalışıyordu. Kontrolün kaynağı da oraya
+# taşındı — yerini değiştirmek özelliği kaybetmek demek değil, ama testin
+# ESKİ YERE bakmaya devam etmesi tam olarak öyle olurdu.
+_oku_kaynak = io.open("scripts/lib/common.sh", encoding="utf-8").read()
+_oku_i = _oku_kaynak.find("oku_akis() {")
+_oku = _oku_kaynak[_oku_i:_oku_i + 400] if _oku_i >= 0 else ""
 ck("MongoDB arşivi ortak akış okuyucusundan geçiyor (şifreli de olabilir)",
    "oku_akis" in _arch_dal)
 ck("ortak okuyucu akışı sonuna kadar açıyor (zarf yarım mı)",
@@ -3304,6 +3309,59 @@ for _f in _glob.glob("scripts/*.sh") + _glob.glob("scripts/*/*.sh"):
             _boru_hatasi.append(_f)
 ck("hiçbir betik veri borusunu 'python3 - <<EOF' ile birleştirmiyor",
    not _boru_hatasi, ", ".join(sorted(set(_boru_hatasi))) or "temiz")
+
+# --- Şifreli yedeği OKUMA yolu tek yerde olmalı ------------------------------
+# Ölçülen hata: restore-drill.sh şifreli yedekleri ADAY olarak seçiyordu
+# (kendi find deseninde '*.gz.enc' var, satır 374) ama onları düz `gzip -dc`
+# ile açmaya çalışıyordu (454/528/638/717) ve şifre çözme kodu HİÇ YOKTU
+# (dosyada sıfır 'openssl'). Yani şifreleme açık bir kurulumda haftalık
+# prova, SAPASAĞLAM bir yedeğe "geri yüklenemedi" damgası vuruyordu — ürünün
+# en çok güvendiği ölçüm, en çok güvendiği özelliği suçluyordu.
+_ortak2 = io.open("scripts/lib/common.sh", encoding="utf-8").read()
+_drill = io.open("scripts/restore-drill.sh", encoding="utf-8").read()
+_bk = io.open("scripts/backup.sh", encoding="utf-8").read()
+ck("şifre okuma yolu common.sh'ta (herkesin erişebildiği yer)",
+   "oku_akis()" in _ortak2 and "oku_ham()" in _ortak2 and "sifreli_mi()" in _ortak2)
+ck("backup.sh kendi kopyasını tutmuyor (tek uygulama)",
+   "oku_akis()" not in _bk and "ENC_SIHIR=" not in _bk)
+ck("kurtarma provası şifreli yedeği okuyabiliyor (düz gzip değil)",
+   'oku_akis "$f"' in _drill and 'gzip -dc "$f"' not in _drill)
+
+# Metin kontrolü yetmez: asıl soru şifreli bir dosyanın GERÇEKTEN okunup
+# okunmadığı. Sentetik bir şifreli yedek üretip common.sh üzerinden okuyoruz.
+_encdir = _tf.mkdtemp(prefix="dbstack-enc-")
+_duz = _os2.path.join(_encdir, "duz.sql.gz")
+with _gz.open(_duz, "wt", encoding="utf-8") as _fh:
+    _fh.write("CREATE TABLE t(id int);" + chr(10))
+_enc = _os2.path.join(_encdir, "s.sql.gz.enc")
+_ANAHTAR = "selftest-anahtari-123"
+try:
+    _basl = "DBSTACK-ENC1 aes-256-cbc pbkdf2 sha512 600000".ljust(64).encode()
+    _cip = subprocess.run(
+        ["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-md", "sha512",
+         "-iter", "600000", "-pass", "env:DBSTACK_ENC_PASS", "-in", _duz],
+        capture_output=True, env=dict(_os2.environ, DBSTACK_ENC_PASS=_ANAHTAR),
+        timeout=120)
+    with io.open(_enc, "wb") as _fh:
+        _fh.write(_basl + _cip.stdout)
+
+    def _oku(anahtar, dosya):
+        r = subprocess.run(
+            ["bash", "-c", "source scripts/lib/common.sh; oku_akis " + dosya],
+            capture_output=True, text=True, encoding="utf-8", timeout=180,
+            env=dict(_os2.environ, BACKUP_ENCRYPT_KEY=anahtar))
+        return r.returncode, r.stdout
+
+    _rc_ok, _out_ok = _oku(_ANAHTAR, _enc.replace(chr(92), "/"))
+    _rc_kotu, _ = _oku("yanlis-anahtar", _enc.replace(chr(92), "/"))
+except Exception as _e:
+    _rc_ok, _out_ok, _rc_kotu = -1, repr(_e), 0
+ck("şifreli yedek DOĞRU anahtarla okunuyor",
+   _rc_ok == 0 and "CREATE TABLE t" in _out_ok, "rc=%s %s" % (_rc_ok, _out_ok[:60]))
+# Yanlış anahtarla "okuyabildim" demek, çöp veriyi geri yüklemeye açar.
+ck("YANLIŞ anahtarla okuma BAŞARISIZ dönüyor (sessizce çöp üretmiyor)",
+   _rc_kotu != 0, "rc=%s" % _rc_kotu)
+_sh.rmtree(_encdir, ignore_errors=True)
 
 # =============================================================================
 print()

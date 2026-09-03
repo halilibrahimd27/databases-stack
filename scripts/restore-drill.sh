@@ -451,13 +451,13 @@ yukle_mariadb() {
     # Boru hattı, restore_mariadb'nin kullandığının AYNISI. Prova farklı bir
     # komutla yüklerse ürünün geri yükleme yolu hakkında hiçbir şey kanıtlamış
     # olmaz; kaçınılmaz tek fark hedefin BOŞ olmasıdır.
-    gzip -dc "$f" 2>>"$LOG_FILE" \
+    oku_akis "$f" 2>>"$LOG_FILE" \
         | ( export MYSQL_PWD="$(motor_parolasi mariadb)"
             zaman "$SURE_YUKLEME" docker exec -e MYSQL_PWD -i "$C" \
                 mariadb -u root ) >>"$LOG_FILE" 2>&1
     local ps=("${PIPESTATUS[@]}")
     if [ "${ps[0]}" -ne 0 ]; then
-        HATA="yedek dosyası sonuna kadar açılamadı (gzip rc=${ps[0]})"; return 1
+        HATA="yedek dosyası sonuna kadar OKUNAMADI (okuma rc=${ps[0]}) — şifreli bir yedekte bu, anahtarın eksik ya da yanlış olduğu anlamına da gelir"; return 1
     fi
     if [ "${ps[1]}" -ne 0 ]; then
         HATA="mariadb istemcisi geri yüklemeyi tamamlamadı (rc=${ps[1]}, $LOG_FILE)"
@@ -525,7 +525,7 @@ yukle_postgresql() {
     # veritabanını da düşürmeye çalışır, bu iki hata normaldir. Prova o
     # kararı DEĞİŞTİRMEZ, aynı süzgeci kullanır: farklı süzen bir prova,
     # ürünün geri yükleme yolunu değil kendi yolunu ölçmüş olurdu.
-    gzip -dc "$f" 2>>"$LOG_FILE" \
+    oku_akis "$f" 2>>"$LOG_FILE" \
         | ( export PGPASSWORD="$(motor_parolasi postgresql)"
             zaman "$SURE_YUKLEME" docker exec -e PGPASSWORD -i "$C" \
                 psql -U "${POSTGRES_USER:-root}" -d postgres ) \
@@ -533,7 +533,7 @@ yukle_postgresql() {
     local ps=("${PIPESTATUS[@]}")
     cat "$hatalar" >>"$LOG_FILE" 2>/dev/null
     if [ "${ps[0]}" -ne 0 ]; then
-        HATA="yedek dosyası sonuna kadar açılamadı (gzip rc=${ps[0]})"; return 1
+        HATA="yedek dosyası sonuna kadar OKUNAMADI (okuma rc=${ps[0]}) — şifreli bir yedekte bu, anahtarın eksik ya da yanlış olduğu anlamına da gelir"; return 1
     fi
     gercek="$(grep -E '^(psql:|ERROR|FATAL|HATA)' "$hatalar" 2>/dev/null \
         | grep -viE 'current user cannot be dropped|cannot drop the currently open database|role .* already exists|database .* already exists|is being accessed by other users' \
@@ -635,7 +635,7 @@ say_mongodb() {
 # geçici sunucu AOF KAPALI açılıyor — provanın sorusu "RDB okunuyor mu".
 hazirla_redis() {
     local f="$1"
-    gzip -dc "$f" 2>>"$LOG_FILE" \
+    oku_akis "$f" 2>>"$LOG_FILE" \
         | zaman "$SURE_YUKLEME" docker run -i --rm --network none \
             --memory "${MEM_MB}m" --memory-swap "${MEM_MB}m" \
             --label "$ETIKET=1" -v "$HACIM:/d" --entrypoint sh "$IMAJ" \
@@ -644,7 +644,7 @@ hazirla_redis() {
           >>"$LOG_FILE" 2>&1
     local ps=("${PIPESTATUS[@]}")
     if [ "${ps[0]}" -ne 0 ]; then
-        HATA="yedek dosyası sonuna kadar açılamadı (gzip rc=${ps[0]})"; return 1
+        HATA="yedek dosyası sonuna kadar OKUNAMADI (okuma rc=${ps[0]}) — şifreli bir yedekte bu, anahtarın eksik ya da yanlış olduğu anlamına da gelir"; return 1
     fi
     if [ "${ps[1]}" -ne 0 ]; then
         HATA="RDB geçici hacme yazılamadı (rc=${ps[1]}, $LOG_FILE)"; return 1
@@ -714,12 +714,12 @@ yukle_mssql() {
     docker exec "$C" sh -c \
         'mkdir -p /var/opt/mssql/backup && rm -f /var/opt/mssql/backup/*.bak' \
         >>"$LOG_FILE" 2>&1
-    gzip -dc "$f" 2>>"$LOG_FILE" \
+    oku_akis "$f" 2>>"$LOG_FILE" \
         | zaman "$SURE_YUKLEME" docker exec -i "$C" \
             tar -xf - -C /var/opt/mssql/backup >>"$LOG_FILE" 2>&1
     local ps=("${PIPESTATUS[@]}")
     if [ "${ps[0]}" -ne 0 ]; then
-        HATA="yedek dosyası sonuna kadar açılamadı (gzip rc=${ps[0]})"; return 1
+        HATA="yedek dosyası sonuna kadar OKUNAMADI (okuma rc=${ps[0]}) — şifreli bir yedekte bu, anahtarın eksik ya da yanlış olduğu anlamına da gelir"; return 1
     fi
     if [ "${ps[1]}" -ne 0 ]; then
         HATA="yedek arşivi açılamadı (tar rc=${ps[1]}, $LOG_FILE)"; return 1
