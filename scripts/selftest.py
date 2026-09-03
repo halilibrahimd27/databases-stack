@@ -4552,6 +4552,23 @@ ck("motor_parolasi yalnız common.sh'ta tanımlı", not _kopya,
 ck("common.sh motor_parolasi'nı sağlıyor",
    "motor_parolasi() {" in io.open("scripts/lib/common.sh", encoding="utf-8").read())
 
+# YALNIZ scripts/ ALTINDA DURAN ÖZELLİK KEŞFEDİLEMEZ. stack.sh'ın kendi
+# yorumu bunu söylüyor: kullanıcı "./stack.sh" yazıp yardım ekranına bakıyor,
+# oradan görünmeyen bir araç yazılmamış sayılır. ash.sh ve schema.sh tam bu
+# durumdaydı; bir daha olmasın diye denetliyoruz.
+_stack = io.open("stack.sh", encoding="utf-8").read()
+_kapisiz = []
+for _arac, _komut in (("scripts/ash.sh", "oturum"),
+                      ("scripts/schema.sh", "sema"),
+                      ("scripts/restore-drill.sh", "prova"),
+                      ("scripts/pitr.sh", "pitr"),
+                      ("scripts/maintenance.sh", "bakim"),
+                      ("scripts/slowlog.sh", "sorgu")):
+    if _arac not in _stack or ("./stack.sh %s" % _komut) not in _stack:
+        _kapisiz.append(_arac)
+ck("her araç stack.sh'tan çağrılabiliyor ve yardımda görünüyor", not _kapisiz,
+   ", ".join(_kapisiz) or "hepsi kapıda")
+
 
 # =============================================================================
 head("16. Kurtarma noktası seti — 'aynı an' diye satılmamalı")

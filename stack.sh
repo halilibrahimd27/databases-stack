@@ -690,6 +690,8 @@ ${BOLD}Bakım${NC}
   ./stack.sh pitr durum|don ...   Zaman noktasına dönüş (PostgreSQL, MariaDB)
   ./stack.sh bakim [durum|bakim]  Tablo şişkinliğini ölç / temizle
   ./stack.sh sorgu [durum|oneri]  En pahalı sorgular ve indeks önerileri
+  ./stack.sh oturum destek        Aktif oturum geçmişi — hangi motorlarda ölçülebiliyor
+  ./stack.sh sema <motor>         Şema parmak izi — 'bu dosya hangi şemayı getirir'
   ./stack.sh devir-provasi <motor>  Gerçek devir yapıp KESİNTİ SÜRESİNİ ölç
   ./stack.sh restore <motor> <dosya>
   ./stack.sh sync                 Yedekleri uzak depoya gönder
@@ -732,6 +734,8 @@ case "${1:-help}" in
     pitr)            shift; exec ./scripts/pitr.sh "$@" ;;
     bakim)           shift; exec ./scripts/maintenance.sh "${@:-durum}" ;;
     sorgu)           shift; exec ./scripts/slowlog.sh "${@:-durum}" ;;
+    oturum)          shift; exec ./scripts/ash.sh "$@" ;;
+    sema)            shift; exec ./scripts/schema.sh "$@" ;;
     devir-provasi)   shift; [ $# -ge 1 ] || die "Kullanım: ./stack.sh devir-provasi <motor> [--onayla]"
                      exec ./scripts/failover-drill.sh "$@" ;;
     app-user)        shift; exec ./scripts/setup-app-users.sh "$@" ;;

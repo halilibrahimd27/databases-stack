@@ -725,6 +725,8 @@ This tool finds the most expensive queries and, where possible, says what to do:
 
 ```bash
 ./stack.sh sorgu kur postgresql     # turn measurement on (a restart is needed; it says so)
+./stack.sh oturum destek       # active session history — where it can be measured
+./stack.sh sema postgresql     # schema fingerprint
 ./stack.sh sorgu durum              # the most expensive queries
 ./stack.sh sorgu oneri postgresql   # index / unused index suggestions
 ```

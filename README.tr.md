@@ -662,6 +662,8 @@ araç en pahalı sorguları bulur ve mümkün olduğunda ne yapılacağını sö
 
 ```bash
 ./stack.sh sorgu kur postgresql     # ölçümü aç (yeniden başlatma gerekir, söyler)
+./stack.sh oturum destek       # aktif oturum geçmişi — hangi motorlarda ölçülebiliyor
+./stack.sh sema postgresql     # şema parmak izi
 ./stack.sh sorgu durum              # en pahalı sorgular
 ./stack.sh sorgu oneri postgresql   # indeks / kullanılmayan indeks önerileri
 ```
