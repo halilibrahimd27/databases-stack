@@ -4356,6 +4356,27 @@ _dsrc = io.open("scripts/restore-drill.sh", encoding="utf-8").read()
 ck("önkoşul reddi (çıkış 5) betikte ve controller'da aynı anlamda",
    "bitir 5" in _dsrc and "if rc == 5:" in _appsrc)
 
+# --- PROVANIN ROZETİ ÖLÇMEDİĞİNİ İDDİA ETMEMELİ ------------------------------
+# Prova bugüne kadar yalnız tablo ve satır sayıyordu; indeks, kısıt, view,
+# trigger ve rutin kaybı bu ölçütten SESSİZCE geçiyordu. "Prova geçti" rozeti
+# böylece göremediği bir şeyi iddia ediyordu — bu üründe baş düşman sayılan
+# sessiz yeşilin ta kendisi. Sözleşmenin bu alanları taşıdığını denetliyoruz
+# ki bir sonraki düzenleme onları sessizce düşürmesin.
+for _alan in ("restored_schema", "prod_schema", "schema_match"):
+    ck("prova JSON sözleşmesinde %s var" % _alan, '"%s":' % _alan in _dsrc)
+ck("şema sayımı hem PostgreSQL hem MariaDB için yazılmış",
+   "sema_say_postgresql()" in _dsrc and "sema_say_mariadb()" in _dsrc)
+# Sayım SALT OKUNUR olmalı: yalnız katalog/şema görünümleri. Kullanıcı
+# tablosuna dokunan bir "ölçüm", ölçtüğü şeyi değiştirir.
+_sema_govde = _dsrc.split("sema_say_postgresql()")[1].split("sema_say_mariadb()")[0]     + _dsrc.split("sema_say_mariadb()")[1][:1600]
+ck("şema sayımı yalnız katalog/şema görünümlerini okuyor",
+   all(_x in _sema_govde for _x in ("information_schema", "pg_index"))
+   and " FROM defaultdb" not in _sema_govde)
+# 'Ölçemedim' ile 'sıfır' ayrı: eksik sayımı sıfır saymak, kaybı "hiç yoktu"
+# diye göstermek olurdu.
+ck("şema sayılamazsa JSON'da null yazılıyor (sıfır DEĞİL)",
+   "printf 'null'" in _dsrc.split("sema_json()")[1][:600])
+
 # --- VERİ DİZİNİ DEĞİŞİNCE PITR TABANI ---------------------------------------
 # PITR tabanı FİZİKSEL bir kopyadır; arşivlenen WAL/binlog o kopyanın
 # devamıdır. Geri yükleme veri dizinini değiştirdiği anda zincir kopar.

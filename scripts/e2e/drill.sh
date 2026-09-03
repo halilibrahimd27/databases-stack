@@ -341,6 +341,116 @@ kontrol_pozitif() {
     esac
 }
 
+# =============================================================================
+# AYIRT EDİCİ KONTROL — satır sayısının GÖREMEDİĞİ kayıp
+# =============================================================================
+# Prova bugüne kadar yalnız tablo ve satır sayıyordu. İndeks, kısıt, view,
+# trigger ve rutin kaybı bu ölçütten sessizce geçiyordu — yani "prova geçti"
+# rozeti, ölçmediği bir şeyi iddia ediyordu.
+#
+# Bu kontrolün tamamı o iddiayı sınamak için: öyle bir durum kuruyoruz ki
+# ESKİ ölçüt "birebir eşleşti" desin, YENİ ölçüt farkı görsün. İkisi aynı
+# cevabı verirse yeni ölçüt hiçbir şey eklemiyor demektir ve kontrol
+# BAŞARISIZ olmalı — "her ikisi de geçti" bir kanıt değildir.
+SEMA_TABLO="e2e_sema_kanit"
+
+sema_sql() {   # sema_sql <ifade>
+    case "$MOTOR" in
+    mariadb)
+        docker exec -e MYSQL_PWD="$SEMA_PAROLA" "$URETIM_C" \
+            mariadb -u"$SEMA_KULLANICI" -D "$SEMA_DB" -N -B -e "$1" 2>>"$E2E_LOG" ;;
+    postgresql)
+        docker exec -e PGPASSWORD="$SEMA_PAROLA" "$URETIM_C" \
+            psql -U "$SEMA_KULLANICI" -d "$SEMA_DB" -tAq -v ON_ERROR_STOP=1 \
+            -c "$1" 2>>"$E2E_LOG" ;;
+    *)  return 1 ;;
+    esac
+}
+
+sema_hazirla() {
+    SEMA_DB="${DEFAULT_DATABASE:-defaultdb}"
+    case "$MOTOR" in
+    mariadb)
+        SEMA_KULLANICI="root"
+        SEMA_PAROLA="${MARIADB_PASSWORD:-${DB_PASSWORD:-}}" ;;
+    postgresql)
+        SEMA_KULLANICI="${POSTGRES_USER:-root}"
+        SEMA_PAROLA="${POSTGRES_PASSWORD:-${DB_PASSWORD:-}}" ;;
+    *)  return 1 ;;
+    esac
+    [ -n "$SEMA_PAROLA" ] || return 1
+    sema_sql "DROP TABLE IF EXISTS $SEMA_TABLO;" >/dev/null || return 1
+    sema_sql "CREATE TABLE $SEMA_TABLO (id INT PRIMARY KEY, x INT);" >/dev/null || return 1
+    sema_sql "INSERT INTO $SEMA_TABLO VALUES (1,10),(2,20),(3,30);" >/dev/null || return 1
+    sema_sql "CREATE INDEX ix_e2e_sema ON $SEMA_TABLO (x);" >/dev/null || return 1
+    return 0
+}
+
+sema_temizle() {
+    [ -n "${SEMA_DB:-}" ] || return 0
+    sema_sql "DROP TABLE IF EXISTS $SEMA_TABLO;" >/dev/null 2>&1 || true
+}
+
+kontrol_sema_ayirt_edici() {
+    local ad="şema kaybını görüyor (satır sayısı GÖREMEZ)"
+    case "$MOTOR" in
+        mariadb|postgresql) ;;
+        *) t_skip "$ad" "$MOTOR için şema sayımı yazılmadı"; return 0 ;;
+    esac
+    if ! sema_hazirla; then
+        t_unknown "$ad" "kanıt tablosu kurulamadı (parola/erişim) — ayrıntı: $E2E_LOG"
+        return 0
+    fi
+    # Yedek ŞİMDİ alınıyor: içinde indeks VAR.
+    if ! zaman_asimi "$SURE_YEDEK" "$STACK_ROOT/scripts/backup.sh" "$MOTOR" \
+            >>"$E2E_LOG" 2>&1; then
+        sema_temizle
+        t_unknown "$ad" "yedek alınamadı — ayrıntı: $E2E_LOG"
+        return 0
+    fi
+    # Üretimden YALNIZ indeksi düşürüyoruz: satır sayısı DEĞİŞMİYOR.
+    if ! sema_sql "DROP INDEX ix_e2e_sema ON $SEMA_TABLO;" >/dev/null 2>&1 \
+       && ! sema_sql "DROP INDEX ix_e2e_sema;" >/dev/null 2>&1; then
+        sema_temizle
+        t_unknown "$ad" "indeks düşürülemedi — ayrıntı: $E2E_LOG"
+        return 0
+    fi
+
+    prova_calistir "şema ayırt ediciliği ($MOTOR)" "$MOTOR"
+    local es sema_es ri pi
+    es="$(json_alan match || true)"
+    sema_es="$(json_alan schema_match || true)"
+    ri="$(python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1],encoding='utf-8'))
+s=d.get('restored_schema') or {}
+print(s.get('index','yok'))" "$PROVA_JSON" 2>/dev/null || true)"
+    pi="$(python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1],encoding='utf-8'))
+s=d.get('prod_schema') or {}
+print(s.get('index','yok'))" "$PROVA_JSON" 2>/dev/null || true)"
+    sema_temizle
+
+    if [ -z "$es" ] || [ -z "$sema_es" ]; then
+        t_unknown "$ad" "prova JSON'ı okunamadı (match=$es schema_match=$sema_es)"
+        return 0
+    fi
+    # ESKİ ÖLÇÜT KÖR OLMALI: satır sayıları eşit. Değilse kurgu tutmamıştır
+    # ve bu kontrol bir şey kanıtlamaz — 'ölçemedik' diyoruz.
+    if [ "$es" != "true" ]; then
+        t_unknown "$ad" \
+            "kurgu tutmadı: satır sayıları da farklı çıktı (match=$es) — ayırt edicilik gösterilemedi"
+        return 0
+    fi
+    if [ "$sema_es" = "false" ] && [ "${ri:-0}" != "${pi:-0}" ]; then
+        t_ok "$ad" "satır sayısı eşit (match=true) ama indeks $ri≠$pi — eski ölçüt bunu göremezdi"
+    else
+        t_fail "$ad" \
+            "düşürülen indeks fark edilmedi: schema_match=$sema_es, kopya indeks=$ri üretim indeks=$pi"
+    fi
+}
+
 kontrol_bozuk() {
     local ad="BOZULMUŞ bir yedekte ok=false diyor ve 1 ile çıkıyor"
     local bozuk boyut yari
@@ -522,6 +632,9 @@ else
 
     kontrol_pozitif
     kontrol_bozuk
+
+    t_head "Şema kaybı — 'prova geçti' rozetinin göremediği"
+    kontrol_sema_ayirt_edici
 
     t_head "Sızıntı ve üretime dokunmama"
     kontrol_temizlik

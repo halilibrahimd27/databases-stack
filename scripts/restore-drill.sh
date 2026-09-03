@@ -161,14 +161,27 @@ JSON_BASILDI=0
 PROVA_C=""; HACIM=""; IMAJ=""; MEM_MB="$PROVA_MEM_MB"; GECICI=""
 HATA=""
 
+# Beş sayıyı adlandırılmış JSON'a çeviriyor. Boşsa null: "ölçülemedi" ile
+# "hepsi sıfır" aynı şey değil.
+sema_json() {   # sema_json "<i k v g r>"
+    local -a a
+    [ -n "${1:-}" ] || { printf 'null'; return 0; }
+    read -ra a <<< "$1"
+    [ "${#a[@]}" -eq 5 ] || { printf 'null'; return 0; }
+    printf '{"index":%s,"constraint":%s,"view":%s,"trigger":%s,"routine":%s}' \
+        "${a[0]}" "${a[1]}" "${a[2]}" "${a[3]}" "${a[4]}"
+}
+
 json_bas() {
     [ "$JSON_BASILDI" -eq 1 ] && return 0
     JSON_BASILDI=1
     local _satir
     _satir="$(
-        printf '{"engine":%s,"file":%s,"ok":%s,"seconds":%s,"restored_tables":%s,"restored_rows":%s,"prod_tables":%s,"prod_rows":%s,"match":%s,"cleanup":%s,"shadow":%s,"volume":%s,"generation":%s,"kept":%s,"detail":%s}\n' \
+        printf '{"engine":%s,"file":%s,"ok":%s,"seconds":%s,"restored_tables":%s,"restored_rows":%s,"prod_tables":%s,"prod_rows":%s,"match":%s,"restored_schema":%s,"prod_schema":%s,"schema_match":%s,"cleanup":%s,"shadow":%s,"volume":%s,"generation":%s,"kept":%s,"detail":%s}\n' \
             "$(js "$MOTOR")" "$(js "$DOSYA")" "$OK" "$SANIYE" \
             "$R_TABLO" "$R_SATIR" "$P_TABLO" "$P_SATIR" "$ESLESME" \
+            "$(sema_json "${R_SEMA:-}")" "$(sema_json "${P_SEMA:-}")" \
+            "${SEMA_ESLESME:-null}" \
             "$TEMIZ" "$([ "$GOLGE" -eq 1 ] && echo true || echo false)" \
             "$(js "$HACIM")" "$KUSAK" "$HACIM_SAKLANDI" "$(js "$DETAY")"
     )"
@@ -878,6 +891,97 @@ say_mssql() {
 # =============================================================================
 # Container ölmüşse SEBEBİNİ söylüyoruz. "Hazır olmadı" tek başına yedeği
 # suçlar; oysa en sık sebep bellek tavanıdır ve çaresi tek satırdır.
+# =============================================================================
+# ŞEMA NESNESİ SAYIMI — "prova geçti" rozetinin göremediği kayıp
+# =============================================================================
+# Tablo ve satır saymak, bir yedeğin geri yüklendiğini göstermeye YETMEZ:
+# indeksleri, kısıtları, view'ları, trigger'ları ve rutinleri kaybetmiş bir
+# kopya da aynı tablo/satır sayısını verir. Uygulama açılır, sorgular
+# yavaşlar, foreign key'ler yoktur ve bu ancak aylar sonra fark edilir.
+#
+# Sayım SALT OKUNURDUR: yalnız katalog/şema görünümlerine bakılıyor,
+# kullanıcı tablolarına dokunulmuyor.
+#
+# Sonuç TEK SATIR, boşlukla ayrılmış BEŞ sayı:
+#   <indeks> <kısıt> <view> <trigger> <rutin>
+# Ölçülemezse hiçbir şey basmıyoruz ve rc=1 dönüyoruz: eksik sayıyı sıfır
+# saymak, kaybı "hiç yoktu" diye göstermek olurdu.
+
+sema_say_postgresql() {
+    local C="$1" dbler db cikti i=0 k=0 v=0 g=0 r=0 p
+    dbler="$(pg_sorgu "$C" postgres \
+        "SELECT datname FROM pg_database WHERE datallowconn
+         AND datname NOT IN ('template0','template1')")" || return 1
+    [ -n "$dbler" ] || return 1
+    while IFS= read -r db; do
+        db="${db%$'\r'}"
+        [ -n "$db" ] || continue
+        # Sistem şemaları dışarıda; otomatik üretilen TOAST indeksleri de.
+        cikti="$(pg_sorgu "$C" "$db" "
+            SELECT
+              (SELECT count(*) FROM pg_index x
+                 JOIN pg_class c ON c.oid = x.indrelid
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')),
+              (SELECT count(*) FROM pg_constraint co
+                 JOIN pg_namespace n ON n.oid = co.connamespace
+                WHERE n.nspname NOT IN ('pg_catalog','information_schema')),
+              (SELECT count(*) FROM information_schema.views
+                WHERE table_schema NOT IN ('pg_catalog','information_schema')),
+              (SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal),
+              (SELECT count(*) FROM information_schema.routines
+                WHERE routine_schema NOT IN ('pg_catalog','information_schema'))
+        ")" || return 1
+        cikti="$(printf '%s' "$cikti" | tr -d '\r' | grep -v '^$' | head -1)"
+        # 'a|b|c|d|e' → beş sayı
+        IFS='|' read -r p1 p2 p3 p4 p5 <<< "$cikti"
+        for p in "$p1" "$p2" "$p3" "$p4" "$p5"; do sayi_mi "$p" || return 1; done
+        i=$((i+p1)); k=$((k+p2)); v=$((v+p3)); g=$((g+p4)); r=$((r+p5))
+    done <<< "$dbler"
+    printf '%s %s %s %s %s' "$i" "$k" "$v" "$g" "$r"
+}
+
+sema_say_mariadb() {
+    local C="$1" cikti p
+    # STATISTICS her SÜTUN için bir satır verir; indeks sayısı için
+    # (şema, tablo, indeks) üçlüsü tekilleştiriliyor. Bunu atlamak çok
+    # sütunlu indekslerde sayıyı şişirir ve her provada yalancı fark üretirdi.
+    cikti="$(my_sorgu "$C" "
+        SELECT
+          (SELECT COUNT(*) FROM (SELECT DISTINCT TABLE_SCHEMA,TABLE_NAME,INDEX_NAME
+             FROM information_schema.STATISTICS
+            WHERE TABLE_SCHEMA NOT IN ('information_schema','performance_schema','mysql','sys')) x),
+          (SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+            WHERE TABLE_SCHEMA NOT IN ('information_schema','performance_schema','mysql','sys')),
+          (SELECT COUNT(*) FROM information_schema.VIEWS
+            WHERE TABLE_SCHEMA NOT IN ('information_schema','performance_schema','mysql','sys')),
+          (SELECT COUNT(*) FROM information_schema.TRIGGERS
+            WHERE TRIGGER_SCHEMA NOT IN ('information_schema','performance_schema','mysql','sys')),
+          (SELECT COUNT(*) FROM information_schema.ROUTINES
+            WHERE ROUTINE_SCHEMA NOT IN ('information_schema','performance_schema','mysql','sys'))
+    ")" || return 1
+    cikti="$(printf '%s' "$cikti" | tr -d '\r' | grep -v '^$' | head -1)"
+    IFS=$'\t' read -r p1 p2 p3 p4 p5 <<< "$cikti"
+    for p in "$p1" "$p2" "$p3" "$p4" "$p5"; do sayi_mi "$p" || return 1; done
+    printf '%s %s %s %s %s' "$p1" "$p2" "$p3" "$p4" "$p5"
+}
+
+sema_uygulandi() { declare -F "sema_say_$1" >/dev/null 2>&1; }
+
+# Farkı insan diline çeviriyor: hangi tür kaç eksik/fazla.
+sema_fark_metni() {   # sema_fark_metni <kopya> <üretim>
+    local -a a b
+    read -ra a <<< "$1"
+    read -ra b <<< "$2"
+    local adlar=(indeks kısıt view trigger rutin) i out=""
+    for i in 0 1 2 3 4; do
+        if [ "${a[$i]}" -ne "${b[$i]}" ]; then
+            out="${out:+$out, }${adlar[$i]} ${a[$i]}≠${b[$i]}"
+        fi
+    done
+    printf '%s' "$out"
+}
+
 olum_sebebi() {
     local C="$1" oom kod son
     oom="$(docker inspect -f '{{.State.OOMKilled}}' "$C" 2>/dev/null)"
@@ -1271,6 +1375,19 @@ else
     warn "Geri yüklenen kopya sayılamadı — sağlamlık kontrolü ÖLÇÜLEMEDİ."
 fi
 
+# --------------------------------------------------- şema nesnesi sayımı ---
+# Tablo/satır eşleşmesi ŞEMA KAYBINI GÖRMEZ. Bu sayım, "prova geçti"
+# rozetinin bugüne kadar iddia ettiği ama ölçmediği şeyi ölçüyor.
+R_SEMA=""; P_SEMA=""; SEMA_ESLESME=null; SEMA_NOT=""
+if sema_uygulandi "$MOTOR"; then
+    if R_SEMA="$("sema_say_$MOTOR" "$PROVA_C")"; then
+        dlog "geri yüklenen şema: $R_SEMA (indeks kısıt view trigger rutin)"
+    else
+        R_SEMA=""
+        warn "Geri yüklenen kopyanın ŞEMASI sayılamadı — şema kontrolü ÖLÇÜLEMEDİ."
+    fi
+fi
+
 # --------------------------------------------------------- üretimle kıyas ---
 URETIM_C="$(primary_of "$MOTOR")"
 URETIM_NOT=""
@@ -1280,6 +1397,26 @@ if ! container_running "$URETIM_C"; then
 elif _p="$("say_$MOTOR" "$URETIM_C")"; then
     P_TABLO="${_p%% *}"; P_SATIR="${_p##* }"
     dlog "üretim ($URETIM_C): $P_TABLO tablo / $P_SATIR satır"
+    if sema_uygulandi "$MOTOR" && [ -n "$R_SEMA" ]; then
+        if P_SEMA="$("sema_say_$MOTOR" "$URETIM_C")"; then
+            dlog "üretim şeması : $P_SEMA"
+            if [ "$R_SEMA" = "$P_SEMA" ]; then
+                SEMA_ESLESME=true
+                SEMA_NOT="şema nesneleri birebir"
+            else
+                # EŞLEŞMEMEK TEK BAŞINA YEDEĞİN SUÇU DEĞİLDİR — yedek
+                # alındıktan sonra üretime indeks eklenmiş olabilir. Ama
+                # SESSİZ KALMAK, indeks kaybını "geçti" diye göstermekti.
+                SEMA_ESLESME=false
+                SEMA_NOT="ŞEMA FARKI: $(sema_fark_metni "$R_SEMA" "$P_SEMA") (kopya≠üretim) — yedek alındıktan sonra şema değişmiş olabilir; değişmediyse geri yükleme nesne kaybediyor"
+                warn "$SEMA_NOT"
+            fi
+        else
+            P_SEMA=""
+            SEMA_NOT="üretimin şeması sayılamadı — şema karşılaştırması ÖLÇÜLEMEDİ"
+            warn "$SEMA_NOT"
+        fi
+    fi
     if [ "$R_TABLO" = "null" ]; then
         # Üretim sayıldı ama KOPYA sayılamadı. İki tarafı karşılaştırmaya
         # kalkarsak "null ≠ 8" çıkar ve match=false basılır — yani panelde
@@ -1321,6 +1458,6 @@ if [ "$R_TABLO" -eq 0 ] && [ "$R_SATIR" -eq 0 ]; then
 fi
 
 OK=true
-DETAY="geri yüklendi: $R_TABLO tablo / $R_SATIR satır ($(birim_notu "$MOTOR")), ölçülen RTO ${SANIYE} sn; $URETIM_NOT"
+DETAY="geri yüklendi: $R_TABLO tablo / $R_SATIR satır ($(birim_notu "$MOTOR")), ölçülen RTO ${SANIYE} sn; $URETIM_NOT${SEMA_NOT:+; $SEMA_NOT}"
 dok "PROVA GEÇTİ — $MOTOR yedeği gerçekten geri yüklendi (${SANIYE} sn)."
 bitir 0
