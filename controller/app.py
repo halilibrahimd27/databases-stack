@@ -3561,6 +3561,15 @@ def do_replication(jid, eid, enable):
 # vermek, aynı anda ikinci bir koşum başlatmamak, sonucu görünür kılmak.
 
 BACKUP_SCRIPT = os.path.join(PROJECT_DIR, "scripts", "backup.sh")
+# Yedeğin içini OKUYAN betik. Yıkıcı değil: dosyayı yalnız akıtarak okur,
+# diske bir şey yazmaz, veritabanı açmaz. Satır verisi DÖNDÜRMEZ — paneli
+# açabilen herkesin müşteri satırlarını okuyabildiği bir görüntüleyici,
+# şifreli yedek özelliğini kendi eliyle iptal ederdi.
+INSPECT_SCRIPT = os.path.join(PROJECT_DIR, "scripts", "backup-inspect.sh")
+# 40 GB'lık bir dump'ta akış uzun sürebilir; panelin sonsuza kadar beklememesi
+# için üst sınır var. Betik kendi içinde de bayt sınırı uygular ve sınıra
+# gelince "kesildi" der — sessizce eksik cevap yok.
+INSPECT_TIMEOUT = int(os.environ.get("INSPECT_TIMEOUT", "300"))
 BACKUP_CFG_FILE = os.path.join(STATE_DIR, "backup.json")
 BACKUP_DEFAULTS = {"enabled": False, "time": "02:00", "retention_days": 7}
 BACKUP_RETENTION_MIN = 1
@@ -5634,6 +5643,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if bit - bas > 86400:
                 bas = bit - 86400
             return self._send(200, ash_pencere(eid, bas, bit))
+        if path.startswith("/api/backups/") and path.endswith("/inspect"):
+            # YEDEĞİN İÇİ — geri yüklemeden. "Yedek var" cümlesi iki soruyu
+            # cevaplar sanılır ama yalnız birini cevaplar: dosya duruyor mu.
+            # İkincisi ("içinde ne var") bugüne kadar ancak üretimi riske
+            # atarak öğrenilebiliyordu.
+            eid = path[len("/api/backups/"):-len("/inspect")].strip("/")
+            if not CATALOG.engine(eid):
+                return self._send(404, {"error": "Bilinmeyen motor: %s" % eid})
+            q = urllib.parse.parse_qs(
+                self.path.split("?", 1)[1] if "?" in self.path else "")
+            ad = (q.get("file") or [""])[0]
+            # Yolu ÇÖZEN tek yer geri yüklemeyle aynı: dosya adı doğrulaması
+            # iki ayrı yerde yazılırsa er geç ayrışır ve biri gevşer.
+            yol, hata = resolve_backup_file(eid, ad)
+            if hata:
+                return self._send(400, {"error": hata})
+            rc, out, err = run(["bash", INSPECT_SCRIPT, eid, yol],
+                               cwd=PROJECT_DIR, timeout=INSPECT_TIMEOUT,
+                               env=script_env())
+            d = _son_satir_json(out + err)
+            if d is None:
+                return self._send(500, {
+                    "error": "yedeğin içi okunamadı (çıkış %d): %s"
+                             % (rc, (err or out).strip()[-200:])})
+            return self._send(200, d)
         if path == "/api/backups":
             return self._send(200, backups_overview())
         if path.startswith("/api/engines/") and path.endswith("/connection"):

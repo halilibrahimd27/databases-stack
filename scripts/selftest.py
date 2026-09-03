@@ -3202,6 +3202,47 @@ _bkjs = io.open("gateway/html/yedekler.js", encoding="utf-8").read()
 ck("yedek satırı süren işi GÖSTERİYOR (sessiz kalmıyor)",
    "b.calisiyor" in _bkjs and "yedek alınıyor" in _bkjs)
 
+# --- Yedeğin içine bakma -----------------------------------------------------
+# "Yedek var" cümlesi iki soruyu cevaplar sanılır ama yalnız birini cevaplar:
+# dosya duruyor mu. İkincisi ("içinde ne var") ancak üretimi riske atıp geri
+# yükleyerek öğrenilebiliyordu.
+_ins = io.open("scripts/backup-inspect.sh", encoding="utf-8").read()
+ck("yedek inceleme betiği var ve kapsam dışı biçimde SEBEP yazıyor",
+   "kapsam_notu()" in _ins and "RDB ikili" in _ins)
+# EN ÖNEMLİ KURAL: satır verisi dönmemeli. Paneli açabilen herkesin müşteri
+# satırlarını okuyabildiği bir görüntüleyici, şifreli yedek özelliğini kendi
+# eliyle iptal ederdi.
+ck("inceleme SATIR VERİSİ döndürmüyor (yalnız ad ve sayı)",
+   "SATIR VERİSİ ASLA DÖNMEZ" in _ins
+   and '"tablolar": [{"ad": a, "satir": v["satir"]' in _ins)
+# Kesin sayı ile tahmin ayrı: "4 satır" demek ile "yaklaşık 4 satır" demek
+# arasındaki fark, kullanıcıyı yanlış bir kesinliğe ikna etmemek için var.
+ck("kesin satır sayısı ile tahmin AYRILIYOR",
+   '"satir_kesin"' in _ins and "satir_kesin" in _bkjs)
+ck("controller inceleme ucunu sunuyor (yol doğrulaması geri yüklemeyle aynı)",
+   'endswith("/inspect")' in _ctrl_py and "resolve_backup_file(eid, ad)" in _ctrl_py)
+
+# --- python3 - <<EOF ile VERİ BORUSU birlikte kullanılamaz -------------------
+# `python3 - <<EOF` yazıldığında program stdin'den okunur; boruyla gelen veri
+# kaybolur ve süzgeç SIFIR BAYT görür — üstelik hata da vermez, sessizce
+# "içinde hiçbir şey yok" der. Bu hata iki ayrı betikte yapıldı (ash.sh ve
+# backup-inspect.sh); üçüncüsü olmasın.
+import glob as _glob                                    # noqa: E402
+_boru_hatasi = []
+for _f in _glob.glob("scripts/*.sh") + _glob.glob("scripts/*/*.sh"):
+    _src = io.open(_f, encoding="utf-8").read()
+    for _ln in _src.splitlines():
+        if "python3 -" not in _ln or "<<" not in _ln:
+            continue
+        # "||" MANTIKSAL VEYA'DIR, boru değil: önce onu çıkarıyoruz. İlk
+        # sürüm bunu ayırmıyordu ve common.sh'taki masum bir satırı
+        # suçluyordu — kontrolün kendisi yanlış pozitif üretiyordu.
+        _temiz = _ln.replace("||", "")
+        if "|" in _temiz:
+            _boru_hatasi.append(_f)
+ck("hiçbir betik veri borusunu 'python3 - <<EOF' ile birleştirmiyor",
+   not _boru_hatasi, ", ".join(sorted(set(_boru_hatasi))) or "temiz")
+
 # =============================================================================
 print()
 if FAILS:

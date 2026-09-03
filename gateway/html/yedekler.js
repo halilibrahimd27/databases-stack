@@ -240,6 +240,63 @@ async function toggleSchedule(on) {
 const SATIR_SONU = String.fromCharCode(10);
 const SON_DENEME = {};
 
+/* YEDEĞİN İÇİ — geri yüklemeden.
+   "Yedek var" cümlesi iki soruyu cevaplar sanılır ama yalnız birini
+   cevaplar: dosya duruyor mu. İkincisi — içinde ne var — bugüne kadar ancak
+   üretimi riske atıp geri yükleyerek öğrenilebiliyordu. Oysa sabah sorulan
+   soru genelde şu: "dün silinen 'siparisler' tablosu bu yedekte VAR MI?"
+
+   SATIR VERİSİ GÖSTERMİYORUZ, bilerek: paneli açabilen herkesin müşteri
+   satırlarını tarayıcıda okuyabildiği bir görüntüleyici, şifreli yedek
+   özelliğini kendi eliyle iptal ederdi. Adlar ve sayılar yeter. */
+async function inspectBackup(engine, dosya) {
+  // infoBox başlığı textContent ile yazılıyor; esc() burada İKİ KEZ
+  // kaçış yapıp dosya adını bozardı.
+  infoBox(dosya,
+    '<p class="card-detail">Yedek okunuyor — geri yükleme YAPILMIYOR, dosya '
+    + 'yalnız akıtılarak taranıyor…</p>');
+  let d;
+  try {
+    d = await api('/backups/' + engine.id + '/inspect?file='
+                  + encodeURIComponent(dosya));
+  } catch (e) {
+    infoBox(dosya, '<p class="bk-warn">Okunamadı: ' + esc(e.message) + '</p>');
+    return;
+  }
+  if (d.kapsam === false) {
+    infoBox(dosya, '<p>Bu motorun yedek biçimi okunamıyor.</p>'
+      + '<p class="card-detail">' + esc(d.detail || '') + '</p>');
+    return;
+  }
+  if (!d.ok) {
+    infoBox(dosya, '<p class="bk-warn">' + esc(d.detail || 'okunamadı') + '</p>');
+    return;
+  }
+  const satirlar = (d.tablolar || []).map((t) => `
+    <tr><td>${esc(t.ad)}</td>
+        <td class="num">${t.satir}${t.satir_kesin ? '' : '<span title="INSERT sayısından tahmin — kesin sayı ancak geri yükleyerek bulunur">~</span>'}</td></tr>`).join('');
+  const kesik = d.kesildi
+    ? '<p class="bk-warn">Dosya çok büyük olduğu için tamamı taranmadı — '
+      + 'liste EKSİK olabilir.</p>' : '';
+  const gor = (d.gorunumler || []).length
+    ? '<p class="card-detail">Görünümler: ' + esc(d.gorunumler.join(', ')) + '</p>' : '';
+  infoBox(dosya,
+    `<p>${d.tablo_sayisi} tablo · ${d.gorunum_sayisi} görünüm · `
+    + `${d.rutin_sayisi} rutin · ${d.indeks_sayisi} indeks`
+    + `${d.encrypted ? ' · <b>şifreli</b>' : ''}</p>`
+    + kesik
+    + (satirlar
+        ? `<table class="bk-inspect"><thead><tr><th>Tablo</th>
+             <th class="num">Satır</th></tr></thead><tbody>${satirlar}</tbody></table>
+           <p class="card-detail">“~” işaretli sayılar TAHMİNDİR (INSERT
+             satırlarından sayıldı); işaretsizler dökümdeki veri bloğundan
+             birebir sayılmıştır.</p>`
+        : '<p>Tablo bulunamadı.</p>')
+    + gor
+    + '<p class="card-detail">Satır içeriği bilerek gösterilmiyor — bu ekran '
+    + 'yalnız adları ve sayıları verir.</p>');
+}
+
 async function takeBackup(engine) {
   const r = await api('/engines/' + engine.id + '/backup', { method: 'POST' });
   const bitti = await watchJob(r.job, engine.name + ' yedekleniyor…',
@@ -875,6 +932,11 @@ function rowHtml(engine, b, st, s) {
                >${esc(KAYNAK_AD[f.kind] || f.kind || '?')}</span>
              <span class="bk-file-name" title="${esc(f.file)}">${esc(f.file)}</span>
              <span class="bk-file-size">${esc(bayt(f.bytes))}</span>
+             <button class="btn btn-sm bk-file-btn" data-act="inspect"
+               data-id="${esc(engine.id)}" data-file="${esc(f.file)}"
+               aria-label="${esc(f.file)} yedeğinin içindekileri göster"
+               title="Yedeği GERİ YÜKLEMEDEN içindeki tabloları göster"
+               >İçini gör</button>
              <button class="btn btn-sm bk-file-btn" data-act="restore"
                data-id="${esc(engine.id)}" data-file="${esc(f.file)}"
                ${grKapali ? 'disabled' : ''}${grNot ? ' title="' + esc(grNot) + '"' : ''}
@@ -1136,6 +1198,7 @@ document.addEventListener('click', (ev) => {
   let p;
   switch (b.dataset.act) {
     case 'backup': p = takeBackup(engine); break;
+    case 'inspect': p = inspectBackup(engine, b.dataset.file); break;
     case 'drill':  p = runDrill(engine); break;
     case 'bk-on':  p = toggleSchedule(true); break;
     // Motora bağlı değil: dataset.id yok, engine null kalır.
