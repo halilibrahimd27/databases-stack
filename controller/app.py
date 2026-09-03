@@ -2576,6 +2576,111 @@ JOBS_LOCK = threading.Lock()
 ACTION_LOCK = threading.Lock()  # aynı anda tek compose çağrısı
 
 
+# =============================================================================
+# ETKİNLİK DEFTERİ — yığının KENDİ işleri, zaman aralığıyla
+# =============================================================================
+# JOBS yalnız BELLEKTE duruyor (new_job) ve controller yeniden başlayınca
+# buharlaşıyor. Bu, tek başına bir eksiklik gibi görünmüyordu; ASH gelince
+# asıl maliyeti ortaya çıktı:
+#
+#   "Dün gece 03:14'te veritabanı dondu" sorusunun en olası cevabı ÜRÜNÜN
+#   KENDİSİDİR — o saatte gecelik yedek, kurtarma provası, bakım ya da devir
+#   provası koşuyor olabilir. Hepsini bu yığın kendi kendine başlatıyor.
+#   Ama sabah bakıldığında elde o işlerin ne zaman başlayıp bittiğine dair
+#   HİÇBİR KAYIT yok; olay günlüğü yalnız "bitti" anını yazıyor, SÜREYİ değil.
+#
+# Bu defter tam olarak o boşluğu kapatıyor: her işin başlangıç ve bitiş ANI
+# diske yazılıyor. Böylece bir zaman aralığı sorulduğunda "o sırada bizim
+# şu işimiz koşuyordu" cümlesi TAHMİN değil ÖLÇÜM oluyor.
+#
+# Neden events.jsonl yetmiyor: olay kaydı NOKTASAL ("yedek alındı"), aralık
+# değil. Dört dakikalık bir donmanın hangi işle çakıştığını noktasal bir
+# kayıtla gösteremezsiniz.
+ETKINLIK_FILE = os.path.join(STATE_DIR, "activity.jsonl")
+# Sınırsız büyümüyor: events.jsonl'de bir kez yaşandı. Satır başına ~120 bayt,
+# 4 MB kabaca 30 bin iş eder — tek sunuculuk bir yığında yıllarca yeter.
+ETKINLIK_MAX_BYTES = int(os.environ.get("ETKINLIK_MAX_BYTES", str(4 * 1024 * 1024)))
+
+
+def _etkinlik_yaz(kayit):
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(ETKINLIK_FILE, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(kayit, ensure_ascii=False) + "\n")
+        if os.path.getsize(ETKINLIK_FILE) > ETKINLIK_MAX_BYTES:
+            os.replace(ETKINLIK_FILE, ETKINLIK_FILE + ".1")
+    except OSError as e:
+        log("etkinlik defteri yazılamadı: %r" % e)
+
+
+def etkinlik_basladi(jid, kind, engine):
+    _etkinlik_yaz({"id": jid, "kind": kind, "engine": engine,
+                   "olay": "basladi", "t": int(time.time())})
+
+
+def etkinlik_bitti(jid, ok, reason=None):
+    _etkinlik_yaz({"id": jid, "olay": "bitti", "t": int(time.time()),
+                   "ok": bool(ok), "reason": (reason or "")[:200]})
+
+
+def etkinlik_araligi(bas, bit):
+    """[bas, bit] ile ÇAKIŞAN yığın işleri.
+
+    Çakışma tanımı bilerek geniş: işin başlangıcı ya da bitişi pencerenin
+    içindeyse, ya da iş pencereyi tamamen kapsıyorsa sayılır. Dar tanım,
+    pencereden önce başlayıp sonra biten UZUN bir yedeği kaçırırdı — oysa
+    donmayı en çok o tür bir iş açıklar.
+
+    Bitişi olmayan iş 'sürüyor' sayılır: controller çöktüğünde bitiş kaydı
+    hiç yazılmamış olabilir ve bunu 'iş yoktu' diye okumak yanlış olur."""
+    basla, bitir_ = {}, {}
+    for yol in (ETKINLIK_FILE + ".1", ETKINLIK_FILE):
+        try:
+            with open(yol, encoding="utf-8") as fh:
+                for satir in fh:
+                    satir = satir.strip()
+                    if not satir:
+                        continue
+                    try:
+                        d = json.loads(satir)
+                    except ValueError:
+                        continue
+                    jid = d.get("id")
+                    if not jid:
+                        continue
+                    if d.get("olay") == "basladi":
+                        basla[jid] = d
+                    elif d.get("olay") == "bitti":
+                        bitir_[jid] = d
+        except OSError:
+            continue
+
+    out = []
+    for jid, b in basla.items():
+        t0 = b.get("t")
+        if not isinstance(t0, int):
+            continue
+        son = bitir_.get(jid) or {}
+        t1 = son.get("t")
+        suruyor = not isinstance(t1, int)
+        # Süren iş için üst sınır "şimdi": henüz bitmediği için pencereyle
+        # çakışıp çakışmadığı ancak böyle sorulabilir.
+        t1_ = t1 if isinstance(t1, int) else int(time.time())
+        if t1_ < bas or t0 > bit:
+            continue
+        out.append({
+            "id": jid, "kind": b.get("kind"), "engine": b.get("engine"),
+            "basladi": t0, "bitti": t1, "suruyor": suruyor,
+            "sure_sn": (t1_ - t0),
+            "ok": son.get("ok") if not suruyor else None,
+            # Pencerenin ne kadarını kapladı: %5'lik bir çakışma ile
+            # pencereyi baştan sona kaplayan bir iş aynı şey değil.
+            "ortusme_sn": max(0, min(bit, t1_) - max(bas, t0) + 1),
+        })
+    out.sort(key=lambda d: d["basladi"])
+    return out
+
+
 def new_job(kind, engine):
     jid = uuid.uuid4().hex[:12]
     with JOBS_LOCK:
@@ -2586,6 +2691,10 @@ def new_job(kind, engine):
             for k in sorted(JOBS, key=lambda x: JOBS[x]["started"])[:10]:
                 if JOBS[k]["state"] != "running":
                     JOBS.pop(k, None)
+    # Bellekteki JOBS controller yeniden başlayınca buharlaşır; ASH'in
+    # "o sırada bizim işimiz koşuyordu" cevabını verebilmesi için işin
+    # başlangıç anı DİSKE de yazılıyor.
+    etkinlik_basladi(jid, kind, engine)
     return jid
 
 
@@ -2606,6 +2715,7 @@ def job_done(jid, ok, reason=None, extra=None):
                 JOBS[jid]["reason"] = reason
             if extra:
                 JOBS[jid].update(extra)
+    etkinlik_bitti(jid, ok, reason)
 
 
 # =============================================================================
@@ -4281,6 +4391,13 @@ def ash_pencere(eid, bas, bit, adet=5):
                    if len(olculen) < toplam_sn else None,
         },
         "en_cok_oturum": {"n": en_cok, "t": en_cok_t},
+        # YIĞININ KENDİ İŞLERİ. Bu alanın varlık sebebi şu: bir donmanın en
+        # olası sebebi ÜRÜNÜN KENDİSİDİR — gecelik yedek, kurtarma provası,
+        # bakım, devir provası; hepsini bu yığın kendi kendine başlatıyor.
+        # Bu kesişimi kurmadan "gürültülü komşu bizdik" cümlesi bir tahmin
+        # olarak kalır; kurunca ÖLÇÜM olur. Hem motorları hem işleri aynı
+        # ürünün yönetiyor olması, bunu yapabilen tek yer olmamızı sağlıyor.
+        "yigin_isleri": etkinlik_araligi(bas, bit),
         "beklemeler": ilk(bekleme),
         "bekletenler": [{"pid": k, "ornek": v} for k, v in
                         sorted(bekleten.items(), key=lambda kv: -kv[1])[:adet]],
