@@ -4251,6 +4251,91 @@ _dsrc = io.open("scripts/restore-drill.sh", encoding="utf-8").read()
 ck("önkoşul reddi (çıkış 5) betikte ve controller'da aynı anlamda",
    "bitir 5" in _dsrc and "if rc == 5:" in _appsrc)
 
+# --- VERİ DİZİNİ DEĞİŞİNCE PITR TABANI ---------------------------------------
+# PITR tabanı FİZİKSEL bir kopyadır; arşivlenen WAL/binlog o kopyanın
+# devamıdır. Geri yükleme veri dizinini değiştirdiği anda zincir kopar.
+# Tehlike kesinti değil SESSİZLİK: panel "PITR açık" demeye devam eder,
+# pencere dolu görünür ve kullanıcı bunu ancak gerçekten geri dönmek
+# istediği gün öğrenir. Bu, bu üründe en çok korkulan sınıf — açık görünüp
+# ölü olan özellik.
+_eski_pitr = app.load_pitr
+_eski_run3 = app.run
+_eski_olay2 = app.record_event
+_eski_olc = app.measure_pitr
+_olaylar = []
+try:
+    app.record_event = lambda kind, eid, msg, level="info", **k: _olaylar.append(
+        (kind, level))
+    app.measure_pitr = lambda: None
+
+    # PITR KAPALI: taban almaya gerek yok, boşuna dakikalar harcamayalım.
+    app.load_pitr = lambda: {"rapor": {"engines": [
+        {"engine": "mariadb", "state": "kapali"}]}}
+    _cagri = []
+    app.run = lambda cmd, *a, **k: (_cagri.append(cmd), (0, "", ""))[1]
+    _d, _u = app.pitr_taban_yenile("mariadb")
+    ck("PITR kapalıyken taban alınmıyor",
+       _d == "gereksiz" and not _cagri, "%s / %s" % (_d, _cagri))
+
+    # PITR AÇIK: taban ZORUNLU ve geri yüklemenin parçası.
+    app.load_pitr = lambda: {"rapor": {"engines": [
+        {"engine": "mariadb", "state": "acik"}]}}
+    _cagri = []
+    _olaylar = []
+    _d2, _u2 = app.pitr_taban_yenile("mariadb")
+    ck("PITR açıkken geri yüklemeden sonra taban YENİLENİYOR",
+       _d2 == "alindi" and any("taban" in c for c in _cagri)
+       and ("pitr_base_renewed", "info") in _olaylar,
+       "%s / %s" % (_d2, _cagri[-1] if _cagri else "-"))
+
+    # TABAN ALINAMAZSA: iş 'başarılı' görünse bile bu CRITICAL. Sessiz
+    # geçmek, ölü bir PITR'ı açık göstermek olurdu.
+    app.run = lambda *a, **k: (1, "", "pg_basebackup patladı")
+    _olaylar = []
+    _d3, _u3 = app.pitr_taban_yenile("mariadb")
+    ck("taban alınamazsa CRITICAL olay yazılıyor ve uyarı dönüyor",
+       _d3 == "basarisiz" and _u3 and ("pitr_base_failed", "critical") in _olaylar,
+       (_u3 or "")[:60])
+
+    # DURUM ÖLÇÜLEMEDİYSE 'gereksiz' DEMİYORUZ. 'Bilmiyorum' ile 'kapalı'
+    # aynı şey değil; ikisini karıştırmak sessizliğin ta kendisi.
+    app.load_pitr = lambda: {"rapor": {"engines": []}}
+    _olaylar = []
+    _d4, _u4 = app.pitr_taban_yenile("mariadb")
+    ck("PITR durumu ölçülemezse 'bilinmiyor' deniyor, 'gereksiz' değil",
+       _d4 == "bilinmiyor" and ("pitr_base_unknown", "warning") in _olaylar)
+finally:
+    app.load_pitr = _eski_pitr
+    app.run = _eski_run3
+    app.record_event = _eski_olay2
+    app.measure_pitr = _eski_olc
+
+# Her iki geri yükleme yolu da tabanı yenilemeli. Klasik yolda bu eksikti ve
+# gölge yolu yazılırken ortaya çıktı: aynı sınıf hata, iki ayrı yerde.
+_kaynak_app = io.open("controller/app.py", encoding="utf-8").read()
+_golge_govde = _kaynak_app.split("def do_shadow_restore(")[1].split("\ndef ")[0]
+_klasik_govde = _kaynak_app.split("def do_restore(")[1].split("\ndef ")[0]
+ck("gölge geri yükleme PITR tabanını yeniliyor",
+   "pitr_taban_yenile(" in _golge_govde)
+ck("klasik geri yükleme de PITR tabanını yeniliyor",
+   "pitr_taban_yenile(" in _klasik_govde)
+
+# --- REPLİKA VARKEN TAKAS YOK ------------------------------------------------
+# Takas ana kopyanın geçmişini değiştirir; replika eski geçmişin devamıdır ve
+# o anda ayrışır. Sessizce bozmaktansa reddetmek doğru — ve ne yapılacağını
+# söylemek şart, yoksa kullanıcı çıkmazda kalır.
+ck("replikalı motorda gölge takası reddediliyor",
+   "replikasyon_kurulu_mu(eid)" in _golge_govde
+   and "yeniden kurun" in _golge_govde)
+_eski_state = app.load_state
+try:
+    app.load_state = lambda: {"profiles": ["mariadb-replica"], "overrides": []}
+    ck("replikasyon kurulu tespiti profil listesinden okunuyor",
+       app.replikasyon_kurulu_mu("mariadb") is True
+       and app.replikasyon_kurulu_mu("postgresql") is False)
+finally:
+    app.load_state = _eski_state
+
 # =============================================================================
 print()
 if FAILS:

@@ -4816,6 +4816,8 @@ def ash_ozet():
 # öteki "devir gerçekten kaç saniye sürüyor". Panelin bunları göstermesi,
 # vaat ile ölçüm arasındaki farkın tek görünür yeri.
 PITR_SCRIPT = os.path.join(PROJECT_DIR, "scripts", "pitr.sh")
+# Taban FİZİKSEL kopyadır: büyük bir veritabanında dakikalar sürer.
+PITR_TABAN_TIMEOUT = int(os.environ.get("PITR_TABAN_TIMEOUT", "3600"))
 HADRILL_SCRIPT = os.path.join(PROJECT_DIR, "scripts", "failover-drill.sh")
 PITR_FILE = os.path.join(STATE_DIR, "pitr.json")
 HADRILL_FILE = os.path.join(STATE_DIR, "ha-drill.json")
@@ -4869,6 +4871,83 @@ def measure_pitr():
                        or ("pitr.sh çıkış %d, JSON okunamadı" % rc)}
     _yaz_json_dosya(PITR_FILE, kayit)
     return kayit
+
+
+# =============================================================================
+# VERİ DİZİNİ DEĞİŞTİĞİNDE PITR TABANI
+# =============================================================================
+# PITR'ın tabanı FİZİKSEL bir kopyadır ve arşivlenen WAL/binlog zinciri o
+# kopyanın devamıdır. Geri yükleme (klasik ya da gölge) veri dizinini
+# değiştirdiği anda zincir kopar: eski taban + eski WAL'lar artık yeni veriye
+# uygulanamaz.
+#
+# Bunun tehlikesi kesinti değil, SESSİZLİK. Panel "PITR açık" demeye devam
+# eder, pencere dolu görünür, kullanıcı "istediğim ana dönebilirim" sanır —
+# ve bunu ancak gerçekten dönmek istediği gün öğrenir. Bu üründe en çok
+# korkulan sınıf tam olarak budur: açık görünüp ölü olan özellik.
+#
+# O yüzden taban yenilemek geri yüklemenin PARÇASIDIR, ayrı bir öneri değil.
+
+
+def pitr_durumu(eid):
+    """Bu motorda PITR açık mı: 'acik' | 'kapali' | None (bilmiyoruz)."""
+    rapor = (load_pitr() or {}).get("rapor") or {}
+    for e in (rapor.get("engines") or []):
+        if e.get("engine") == eid:
+            return e.get("state")
+    return None
+
+
+def pitr_taban_yenile(eid, jl=None):
+    """Geri yüklemeden SONRA yeni PITR tabanı al. (durum, mesaj) döner.
+
+    durum: 'alindi' | 'gereksiz' | 'basarisiz' | 'bilinmiyor'
+    'bilinmiyor' bilerek ayrı: PITR'ın açık olup olmadığını ölçemediysek
+    'gereksiz' demek, ölü bir özelliği açık göstermek olurdu."""
+    log_et = jl or (lambda *a: None)
+    engine = CATALOG.engine(eid)
+    ad = (engine or {}).get("name") or eid
+    durum = pitr_durumu(eid)
+    if durum == "kapali":
+        return "gereksiz", None
+    if durum is None:
+        record_event("pitr_base_unknown", eid,
+                     "%s geri yüklendi ama PITR durumu ÖLÇÜLEMEDİ; taban "
+                     "yenilenmedi. PITR açıksa arşiv zinciri artık bu veriye "
+                     "uymuyor demektir — './scripts/pitr.sh durum %s' ile "
+                     "bakıp gerekiyorsa './scripts/pitr.sh taban %s' çalıştırın."
+                     % (ad, eid, eid), level="warning")
+        return "bilinmiyor", ("PITR durumu ölçülemedi; taban yenilenmedi.")
+
+    log_et("   PITR tabanı yenileniyor (veri dizini değişti, eski zincir "
+           "artık geçerli değil)…")
+    rc, out, err = run(["bash", PITR_SCRIPT, "taban", eid], cwd=PROJECT_DIR,
+                       timeout=PITR_TABAN_TIMEOUT, env=script_env())
+    if rc == 0:
+        record_event("pitr_base_renewed", eid,
+                     "%s geri yüklendikten sonra PITR tabanı yenilendi; "
+                     "zaman penceresi bu andan itibaren yeniden birikiyor."
+                     % ad)
+        # Pencere ÖLÇÜMÜ de eskidi: eski taban/arşiv sayıları artık yanlış.
+        try:
+            measure_pitr()
+        except Exception as e:
+            log("PITR yeniden ölçülemedi: %r" % e)
+        return "alindi", None
+    detay = (err or out).strip()[-300:]
+    record_event("pitr_base_failed", eid,
+                 "%s geri yüklendi ama PITR TABANI ALINAMADI: %s. PITR şu an "
+                 "açık GÖRÜNÜYOR ama bu veriye dönülemez — './scripts/pitr.sh "
+                 "taban %s' ile elle alın." % (ad, detay, eid), level="critical")
+    return "basarisiz", ("PITR tabanı alınamadı: %s — zamanda geri dönme şu an "
+                         "ÇALIŞMAZ." % detay)
+
+
+def replikasyon_kurulu_mu(eid):
+    """Bu motorda replikasyon GERÇEKTEN kurulu mu (profil etkin mi)."""
+    engine = CATALOG.engine(eid)
+    prof = ((engine or {}).get("replication") or {}).get("profile")
+    return bool(prof and prof in load_state().get("profiles", []))
 
 
 def pitr_refresher():
@@ -5532,6 +5611,18 @@ def do_shadow_restore(jid, eid, filename=None):
     if not shutil.which("bash"):
         return job_done(jid, False, "Bu container'da bash yok.")
 
+    # REPLİKA VARKEN TAKAS YOK. Takas, ana kopyanın geçmişini değiştirir;
+    # replika eski geçmişin devamıdır ve ikisi o anda ayrışır. Replikasyon
+    # ya kırılır (PostgreSQL: farklı timeline/sistem kimliği) ya da hata
+    # üretmeye başlar — her hâlükârda kullanıcı bunu günler sonra öğrenir.
+    # Reddetmek, sessizce bozmaktan iyidir; ne yapılacağını da söylüyoruz.
+    if replikasyon_kurulu_mu(eid):
+        return job_done(jid, False,
+                        "%s için yedek kopya (replika) kurulu. Gölge takası "
+                        "ana kopyanın geçmişini değiştirir ve replika o anda "
+                        "ayrışır. Önce yedek kopyayı kapatın, takastan sonra "
+                        "yeniden kurun." % engine["name"])
+
     # AÇIK BİLET VARKEN İKİNCİ TAKAS YOK. Yoksa kimsenin izleyemeyeceği bir
     # kuşak ağacı oluşur: kullanıcı "geri dön" dediğinde hangi geçmişe
     # döneceği belirsizleşir ve eski hacimler diskte birikir.
@@ -5615,6 +5706,10 @@ def do_shadow_restore(jid, eid, filename=None):
                              level="critical")
                 return job_done(jid, False, mesaj)
 
+            # VERİ DİZİNİ DEĞİŞTİ: PITR zinciri koptu. Taban yenilemek
+            # takasın parçası — ayrı bir öneri olsaydı kimse yapmaz ve
+            # özellik açık görünüp ölü kalırdı.
+            pitr_durum, pitr_uyari = pitr_taban_yenile(eid, jl)
             bilet = bilet_kes(eid, eski, yeni, yol or sonuc.get("file"), sonuc)
             record_event("shadow_swapped", eid,
                          "%s yeni kopyaya geçti (%s). Kesinti %d sn — geri "
@@ -5623,10 +5718,10 @@ def do_shadow_restore(jid, eid, filename=None):
                          % (engine["name"], yeni, kesinti,
                             sonuc.get("seconds"), eski, BILET_SAAT),
                          level="warning")
-            return job_done(jid, True, None,
+            return job_done(jid, True, pitr_uyari,
                             {"volume": yeni, "outage_seconds": kesinti,
                              "restore_seconds": sonuc.get("seconds"),
-                             "ticket": bilet})
+                             "pitr": pitr_durum, "ticket": bilet})
         finally:
             BACKUP_LOCK.release()
     finally:
@@ -5760,7 +5855,14 @@ def do_restore(jid, eid, filename):
                              "%s %s dosyasından geri yüklendi; önceki veriler "
                              "bu dosyanın içeriğiyle değiştirildi."
                              % (engine["name"], ad), level="warning")
-                return job_done(jid, True)
+                # KLASİK YOL DA VERİ DİZİNİNİ DEĞİŞTİRİR. Buradaki eksiklik
+                # gölge yolu yazılırken ortaya çıktı: geri yükledikten sonra
+                # PITR arşivi eski veriye ait kalıyor, ama panel "PITR açık"
+                # demeye devam ediyordu. Kullanıcı bunu ancak gerçekten
+                # zamanda geri dönmek istediği gün öğrenirdi.
+                _pdurum, _puyari = pitr_taban_yenile(eid,
+                                                     lambda *m: job_log(jid, *m))
+                return job_done(jid, True, _puyari, {"pitr": _pdurum})
             # Başarısız geri yükleme, başarısız yedekten daha ağırdır: yedek
             # düşerse elde eski kurtarma noktası kalır, burada veritabanının
             # kendisi yarım kalmış olabilir. "critical" seviyesi bildirimi de
