@@ -421,6 +421,72 @@ async function runDrill(engine) {
    kullanıcıya “bir yedeğe dön” dedirtmek olurdu — hangisine döndüğünü ancak
    iş bittikten sonra öğrenirdi. Motor adını yazdırmak da bilerek: yanlışlıkla
    basılan tek bir düğme burada günün verisini siler. */
+/* GÖLGE GERİ YÜKLEME — bu ürünün tek "iki yönlü" yıkıcı işlemi.
+   Klasik geri yükleme üretimin verisini siler ve geri yükleme SÜRESİ boyunca
+   motor kullanılamaz. Gölge yolu yedeği yeni bir kopyaya yükler, üretim bu
+   sırada çalışmaya devam eder, sonra işaretçi çevrilir. Kullanıcıya iki sayıyı
+   birbirinden ayırarak sunuyoruz: geri yükleme ne kadar sürer, KESİNTİ ne
+   kadar sürer. Bunları karıştırmak, vaadi olduğundan büyük göstermek olurdu.
+   Bedelini de saklamıyoruz: takas anına kadar üretim ESKİ veriyi servis
+   etmeye devam eder ve diskte bir kopyalık fazladan yer gider. */
+async function shadowRestore(engine, f) {
+  const ok = await confirmBox(engine.name + ' yeni kopyaya geçsin mi?', `
+    <p>Yedek <b>yeni bir kopyaya</b> geri yüklenir; ${esc(engine.name)}
+       bu sırada <b>çalışmaya devam eder</b>. Kopya açılıp satırları
+       doğrulandıktan sonra üretim ona geçer.</p>
+    <div class="plan-line"><span>Yüklenecek dosya</span><b>${esc(f.file)}</b></div>
+    <div class="plan-line"><span>Yedeğin tarihi</span><b>${esc(tamTarih(f.epoch))}</b></div>
+    <div class="plan-line"><span>Dosya boyutu</span><b>${esc(bayt(f.bytes))}</b></div>
+    <p class="note"><b>Kesinti yalnız geçiş anındadır</b> — geri yükleme
+       süresi kadar değil. Geri yükleme dakikalar sürebilir; motor o süre
+       boyunca açık kalır.</p>
+    <p class="note">Bunun bedeli: geçişe kadar ${esc(engine.name)}
+       <b>bugünkü (belki bozuk) veriyi</b> servis etmeye devam eder, ve
+       diskte bir kopyalık fazladan yer gerekir. Yer yetmezse işlem
+       başlamadan sayıyla söylenir.</p>
+    <p class="note">Geçişten sonra <b>eski veri 24 saat saklanır</b>: karar
+       yanlışsa tek düğmeyle geri dönülür. Klasik geri yüklemede bu düğme
+       yoktur.</p>`,
+    'Yeni kopyaya geç');
+  if (!ok) return;
+
+  const r = await api('/engines/' + engine.id + '/shadow-restore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ file: f.file, onayla: true })
+  });
+  await watchJob(r.job, engine.name + ' yeni kopyaya hazırlanıyor…',
+    'Yedek ayrı bir kopyaya yükleniyor; üretim çalışmaya devam ediyor. ' +
+    'Geçiş, kopya doğrulandıktan sonra ve saniyeler içinde olur.');
+  await refreshBackups(true);
+  await refreshStatus();
+}
+
+/* Bilet: takas öncesine dönüş. Bu düğmenin varlığı, gölge yolunun asıl
+   vaadi — klasik geri yüklemede dönülecek bir yer kalmaz. */
+async function useTicket(engine, bilet) {
+  const ok = await confirmBox(engine.name + ' takas öncesine dönsün mü?', `
+    <p>${esc(engine.name)} <b>geçişten önceki veriye</b> döner.</p>
+    <div class="plan-line"><span>Dönülecek kopya</span><b>${esc(bilet.old_volume)}</b></div>
+    <div class="plan-line"><span>Geçişte yüklenen</span><b>${esc(bilet.file || '—')}</b></div>
+    <div class="plan-line"><span>Geçiş zamanı</span><b>${esc(tamTarih(bilet.at))}</b></div>
+    <p class="note">Kesinti yalnız container yeniden yaratılırken — saniyeler.</p>
+    <p class="note">Geçişten <b>sonra</b> yazılan veriler o kopyada
+       bulunmaz; geri dönmek onları geride bırakır.</p>`,
+    'Geri dön');
+  if (!ok) return;
+  const r = await api('/engines/' + engine.id + '/rollback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ onayla: true })
+  });
+  await watchJob(r.job, engine.name + ' takas öncesine dönüyor…',
+    'Container önceki kopyayla yeniden yaratılıyor.');
+  await refreshBackups(true);
+  await refreshStatus();
+}
+
+
 async function restoreEngine(engine, f) {
   const ok = await confirmBox(engine.name + ' geri yüklensin mi?', `
     <p><b>${esc(engine.name)} içindeki şu anki veriler SİLİNİR</b> ve
@@ -1013,6 +1079,13 @@ function rowHtml(engine, b, st, s) {
                aria-label="${esc(f.file)} yedeğinin içindekileri göster"
                title="${f.readable === false ? esc(ACILMAZ) : 'Yedeği GERİ YÜKLEMEDEN içindeki tabloları göster'}"
                >İçini gör</button>
+             ${b.shadow_supported ? `<button class="btn btn-sm bk-file-btn"
+               data-act="shadow" data-id="${esc(engine.id)}" data-file="${esc(f.file)}"
+               ${grKapali || f.readable === false ? 'disabled' : ''}${
+                 f.readable === false ? ' title="' + esc(ACILMAZ) + '"'
+                                      : (grNot ? ' title="' + esc(grNot) + '"' : '')}
+               title="Üretim çalışırken yeni bir kopyaya yükler; geçiş saniyeler sürer ve 24 saat geri dönülebilir"
+               >Kesintisiz dön</button>` : ''}
              <button class="btn btn-sm bk-file-btn" data-act="restore"
                data-id="${esc(engine.id)}" data-file="${esc(f.file)}"
                ${grKapali || f.readable === false ? 'disabled' : ''}${
@@ -1037,6 +1110,28 @@ function rowHtml(engine, b, st, s) {
       title="${esc(ACILMAZ)}">${b.unreadable} yedek açılamaz (şifreli, anahtar yok)</span>`);
   }
 
+  /* AÇIK BİLET: kullanıcının 'geri dönebilirim' hakkı ve SÜRESİ. Süreyi
+     yazmazsak kapı sessizce kapanır ve kimse fark etmez. */
+  if (b.ticket) {
+    const sa = Math.max(1, Math.round(b.ticket.remaining_seconds / 3600));
+    facts.push(`<span class="bk-ticket"
+      title="Geçişte yüklenen: ${esc(b.ticket.file || '—')} · önceki kopya: ${esc(b.ticket.old_volume)}"
+      >geri dönüş bileti açık — ${sa} saat kaldı</span>`);
+  }
+  /* İŞARETÇİ İLE GERÇEK AYRIŞMASI: dosya bir kopyayı gösterirken container
+     başkasını bağlamış olabilir (takas yarıda kalmışsa). Motor sağlıklı
+     görünür ve kimse hata görmez; bu yüzden panelde söylüyoruz. 'Ölçemedik'
+     ile 'ayrışma yok' ayrı iki cevap. */
+  if (b.generation && b.generation.drift === true) {
+    facts.push(`<span class="bk-none"
+      title="volumes.env ${esc(b.generation.intent || '?')} diyor, container ${esc(b.generation.live || '?')} bağlamış">
+      kopya işaretçisi AYRIŞMIŞ</span>`);
+  } else if (b.generation && b.generation.drift === null) {
+    facts.push(`<span class="card-detail"
+      title="Motor kapalıyken hangi kopyanın bağlı olduğu ölçülemez">
+      kopya işaretçisi ölçülemedi</span>`);
+  }
+
   const deneme = SON_DENEME[engine.id];
   const denemeNotu = deneme
     ? `<p class="bk-attempt ${deneme.tur === 'ertelendi' ? 'bk-attempt-wait'
@@ -1053,6 +1148,10 @@ function rowHtml(engine, b, st, s) {
       <button class="btn btn-sm" data-act="backup" data-id="${esc(engine.id)}"
         ${kapali || mesgul ? 'disabled' : ''}${bkNot ? ' title="' + esc(bkNot) + '"' : ''}
         aria-label="${esc(engine.name)} yedeğini şimdi al">Yedek al</button>
+      ${b.ticket ? `<button class="btn btn-sm btn-danger" data-act="rollback"
+        data-id="${esc(engine.id)}"
+        title="Geçişten önceki kopyaya dön — kesinti saniyeler"
+        >Takas öncesine dön</button>` : ''}
       ${provaBtn}
       ${sonBtn}
     </span>
@@ -1316,6 +1415,26 @@ document.addEventListener('click', (ev) => {
         return;
       }
       p = restoreEngine(engine, f);
+      break;
+    }
+    case 'shadow': {
+      const f = dosyaBul(engine.id, b.dataset.file);
+      if (!f) {
+        infoBox('Yedek bulunamadı', '<p>Bu dosya listede artık yok — saklama '
+          + 'temizliği silmiş olabilir. Sayfayı tazeleyin.</p>');
+        return;
+      }
+      p = shadowRestore(engine, f);
+      break;
+    }
+    case 'rollback': {
+      const bk = ((BACKUPS && BACKUPS.engines) || {})[engine.id] || {};
+      if (!bk.ticket) {
+        infoBox('Geri dönüş bileti yok', '<p>Bu motorda dönülecek bir '
+          + 'kopya kayıtlı değil. Sayfayı tazeleyip tekrar bakın.</p>');
+        return;
+      }
+      p = useTicket(engine, bk.ticket);
       break;
     }
   }

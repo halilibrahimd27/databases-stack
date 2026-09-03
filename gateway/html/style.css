@@ -1803,6 +1803,9 @@ main {
    yedeksiz motor eskiden gözden kaçıyordu. Yalnız renge de dayanmıyor —
    metnin kendisi “hiç yedek yok” diyor. */
 .bk-none { color: var(--warn); font-weight: 600; }
+/* Açık geri dönüş bileti: uyarı değil, KULLANILABİLİR BİR HAK. Kırmızı
+   yapmak kullanıcıyı bir arıza olduğuna inandırırdı; vurgulu ama sakin. */
+.bk-ticket { color: var(--accent); font-weight: 600; }
 
 /* Düğmeler KENDİ SÜTUNUNDA ve kendi kutusunda: ikisi yan yana sığmazsa alt
    alta geçerler, komşu sütunun üstüne binmezler. */

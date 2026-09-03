@@ -5056,6 +5056,7 @@ def bilet_gozetmeni():
     while True:
         try:
             biletleri_temizle()
+            artiklari_bildir()
         except Exception as e:
             log("bilet temizliği hatası: %r" % e)
         time.sleep(600)
@@ -5095,6 +5096,92 @@ def suren_isler_motor_bazli():
             continue
         out.setdefault(i.get("engine"), []).append(i.get("kind"))
     return out
+
+
+# Gölge hacmi diskte YER TUTAR. Bilet süresi dolunca temizleniyor, ama bir
+# koşum SIGKILL ile ölürse ne bilet kaydı olur ne de temizlik: hacim orada
+# kalır ve kimse `docker volume ls`ye bakmaz. Bu depoda kalıntı disiplini
+# tam da bu yüzden var (bkz. restore-drill.sh temizle()). Kendiliğinden
+# SİLMİYORUZ — içinde ne olduğunu bilmediğimiz bir hacmi silmek, kullanıcının
+# elindeki son kopyayı silmek olabilir. Söylüyoruz, kararı o veriyor.
+ARTIK_FILE = os.path.join(STATE_DIR, "shadow-orphans.json")
+
+
+def golge_hacimleri():
+    """Etiketli gölge hacimlerinin adları. Ölçülemezse None (boş liste DEĞİL)."""
+    rc, out, _ = run(["docker", "volume", "ls", "--filter",
+                      "label=dbstack-golge", "--format", "{{.Name}}"], timeout=30)
+    if rc != 0:
+        return None
+    return [x.strip() for x in out.splitlines() if x.strip()]
+
+
+def artik_golge_hacimleri():
+    """Ne canlı, ne niyet, ne de bir bilette geçen gölge hacimleri."""
+    hepsi = golge_hacimleri()
+    if hepsi is None:
+        return None
+    kullanilan = set()
+    for e in CATALOG.engines:
+        s = e.get("primary_service")
+        if not s or not volume_of(s):
+            continue
+        for v in (canli_hacim(s), niyet_hacmi(s)):
+            if v:
+                kullanilan.add(v)
+    for b in load_tickets().values():
+        if isinstance(b, dict):
+            for k in ("old_volume", "new_volume"):
+                if b.get(k):
+                    kullanilan.add(b[k])
+    return sorted(set(hepsi) - kullanilan)
+
+
+def artiklari_bildir():
+    """Yeni bir artık hacim görülürse BİR KEZ olay yaz.
+
+    Her turda yazmak olay defterini boğardı ve gürültü, okunmayan bir günlük
+    demek. Kaybolan artıkları da kayıttan düşüyoruz ki tekrar görülürse
+    yeniden haber verilsin."""
+    artiklar = artik_golge_hacimleri()
+    if artiklar is None:
+        return None
+    onceki = set(_read_json(ARTIK_FILE, []) or [])
+    yeni = [a for a in artiklar if a not in onceki]
+    if yeni:
+        record_event("shadow_orphan", None,
+                     "Sahipsiz gölge hacmi bulundu: %s. Yarıda kalmış bir "
+                     "gölge geri yüklemeden kalmış olabilir; içeriğini kontrol "
+                     "edip silin: docker volume rm %s"
+                     % (", ".join(yeni), " ".join(yeni)), level="warning")
+    if set(artiklar) != onceki:
+        _write_json(ARTIK_FILE, artiklar)
+        paylasilan_izin(ARTIK_FILE)
+    return artiklar
+
+
+def kusak_paneli(eid):
+    """Panelin göreceği kuşak durumu — YALNIZ ilginç olduğunda ölçülür.
+
+    Hiç gölge kullanılmamış bir kurulumda her istekte 5 motor için `docker
+    inspect` çalıştırmak, hiçbir şey söylemeyen bir maliyet olurdu. Niyet
+    varsayılandan farklıysa ya da açık bilet varsa bir şey OLMUŞ demektir;
+    ancak o zaman ölçüyoruz."""
+    e = CATALOG.engine(eid)
+    if not e:
+        return None
+    servis = e.get("primary_service")
+    taban = volume_of(servis) if servis else None
+    if not taban:
+        return None
+    niyet = niyet_hacmi(servis)
+    if niyet == taban and not bilet_of(eid):
+        return None
+    canli = canli_hacim(servis)
+    return {"base": taban, "intent": niyet, "live": canli,
+            "generation": kusak_no(niyet),
+            # ÜÇ DEĞERLİ: None = ölçemedik. Ayrışma yok DEMEK DEĞİL.
+            "drift": None if canli is None else (canli != niyet)}
 
 
 def shadow_supported(eid):
@@ -5162,6 +5249,7 @@ def backups_overview(now=None):
                             # bilmesi gereken tek şey bu.
                             "shadow_supported": shadow_supported(e["id"]),
                             "ticket": bilet_ozeti(e["id"]),
+                            "generation": kusak_paneli(e["id"]),
                             "listed": len(files)}
     return {
         # Anahtarın KENDİSİ hiçbir zaman dışarı verilmez; panelin bilmesi

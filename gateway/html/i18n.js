@@ -751,7 +751,83 @@
     '{1} yedek açılamaz (şifreli, anahtar yok)':
       '{1} backups cannot be opened (encrypted, no key)',
     'açılamaz':
-      'cannot open'
+      'cannot open',
+
+    /* --- gölge geri yükleme ve geri dönüş bileti --- */
+    '. Kopya açılıp satırları doğrulandıktan sonra üretim ona geçer.':
+      '. Once the copy opens and its rows check out, production switches to it.',
+    ': karar yanlışsa tek düğmeyle geri dönülür. Klasik geri yüklemede bu düğme yoktur.':
+      ': if the decision was wrong, one button takes you back. The classic restore has no such button.',
+    'Bu motorda dönülecek bir kopya kayıtlı değil. Sayfayı tazeleyip tekrar bakın.':
+      'No copy is recorded to return to for this engine. Refresh the page and look again.',
+    'Bunun bedeli: geçişe kadar {1}':
+      'What it costs: until the switch, {1}',
+    'Container önceki kopyayla yeniden yaratılıyor.':
+      'The container is being recreated with the previous copy.',
+    'Dönülecek kopya':
+      'Copy to return to',
+    'Geri dön':
+      'Go back',
+    'Geri dönüş bileti yok':
+      'No return ticket',
+    'Geçiş zamanı':
+      'Switch time',
+    'Geçişte yüklenen':
+      'Loaded at the switch',
+    'Geçişten':
+      'Data written',
+    'Geçişten sonra':
+      'After the switch',
+    'Geçişten önceki kopyaya dön — kesinti saniyeler':
+      'Return to the copy from before the switch — the outage is seconds',
+    'Kesinti yalnız container yeniden yaratılırken — saniyeler.':
+      'The outage is only the container being recreated — seconds.',
+    'Kesinti yalnız geçiş anındadır':
+      'The outage is the switch only',
+    'Kesintisiz dön':
+      'Restore without downtime',
+    'Takas öncesine dön':
+      'Back to before the switch',
+    'Yedek ayrı bir kopyaya yükleniyor; üretim çalışmaya devam ediyor. Geçiş, kopya doğrulandıktan sonra ve saniyeler içinde olur.':
+      'The backup is being loaded into a separate copy; production keeps running. The switch happens once the copy is verified, and takes seconds.',
+    'Yeni kopyaya geç':
+      'Switch to the new copy',
+    'Yüklenecek dosya':
+      'File to load',
+    'bugünkü (belki bozuk) veriyi':
+      'today’s (possibly corrupt) data',
+    'döner.':
+      '.',
+    'eski veri 24 saat saklanır':
+      'the old data is kept for 24 hours',
+    'geri dönüş bileti açık — {1} saat kaldı':
+      'return ticket open — {1} hours left',
+    'geri yüklenir; {1} bu sırada':
+      'is restored; {1} meanwhile',
+    'geçişten önceki veriye':
+      'to the data from before the switch',
+    'kopya işaretçisi AYRIŞMIŞ':
+      'copy pointer HAS DRIFTED',
+    'kopya işaretçisi ölçülemedi':
+      'copy pointer could not be measured',
+    'servis etmeye devam eder, ve diskte bir kopyalık fazladan yer gerekir. Yer yetmezse işlem başlamadan sayıyla söylenir.':
+      'keeps being served, and one extra copy’s worth of disk is needed. If there is not enough room you are told the numbers before anything starts.',
+    'takas öncesine dönsün mü?':
+      '— go back to before the switch?',
+    'takas öncesine dönüyor…':
+      'is going back to before the switch…',
+    'yazılan veriler o kopyada bulunmaz; geri dönmek onları geride bırakır.':
+      'after the switch is not in that copy; going back leaves it behind.',
+    'yeni kopyaya geçsin mi?':
+      '— switch to the new copy?',
+    'yeni kopyaya hazırlanıyor…':
+      'is being prepared on a new copy…',
+    'Üretim çalışırken yeni bir kopyaya yükler; geçiş saniyeler sürer ve 24 saat geri dönülebilir':
+      'Loads into a new copy while production runs; the switch takes seconds and can be undone for 24 hours',
+    'çalışmaya devam eder':
+      'keeps running',
+    '— geri yükleme süresi kadar değil. Geri yükleme dakikalar sürebilir; motor o süre boyunca açık kalır.':
+      '— not the length of the restore. The restore can take minutes; the engine stays up the whole time.'
   };
 
   function dilOku() {
