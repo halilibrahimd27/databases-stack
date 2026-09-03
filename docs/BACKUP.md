@@ -559,6 +559,128 @@ restore them by hand.
 
 ---
 
+## Restore without downtime (shadow)
+
+The classic restore is a **one-way door**: the current data is deleted, the
+file is written, and if the job stops halfway you have neither the old nor
+the new. The outage lasts as long as the whole restore.
+
+The shadow path does the same job in both directions:
+
+1. the backup is restored into a **new volume** — production keeps running,
+2. the copy is verified to actually open, and its rows are counted,
+3. the pointer is flipped — the outage is only the **container recreate**,
+4. the old volume is kept for 24 hours as a **return ticket**.
+
+Measured on a single server with 256 MB of data: restore 35 s, outage
+**3.6 s**. The two are reported separately; a phrase like "ten times faster"
+describes the outage, not the restore.
+
+From the panel: **Restore without downtime** on the backup's row. From the
+command line only the preparation runs (the controller does the swap):
+
+```bash
+./scripts/restore-drill.sh mariadb --golge
+```
+
+**The cost is stated plainly:** until the swap, production keeps serving
+today's possibly-corrupt data, and one extra copy's worth of disk is
+required. If there is not enough room the job is refused before it starts,
+with the numbers: "1777 MB needed, 204899 MB free".
+
+**Scope:** only the five engines that have an automatic restore. A swap is
+**refused** while a replica is set up — the swap rewrites the primary's
+history and the replica diverges on the spot; refusing beats breaking it
+quietly.
+
+### The return ticket
+
+After the swap the old volume is not deleted; it is kept for 24 hours. If the
+decision was wrong, **Back to before the switch** is one button in the panel
+and the outage is again seconds. When the ticket expires the old volume is
+deleted **with an event** — never silently, because a door the user believes
+is open is being closed.
+
+A second swap is refused while a ticket is open: after two swaps in a row it
+is no longer clear which history "go back" would return to.
+
+### Pointer drift
+
+If a swap dies halfway, `state/volumes.env` can name one copy while the
+container has mounted another. The engine looks healthy and nobody sees an
+error. So the live volume is measured **from the container, not the file**,
+and the panel says so when the two disagree. "Could not measure" and "no
+drift" are different answers: if the engine is off, the product does not
+claim the second.
+
+## Schema fingerprint
+
+For a long time the restore drill counted only **tables and rows**. The loss
+of an index, constraint, view, trigger or routine passed that test in
+silence — the "drill passed" badge was asserting something it never looked
+at.
+
+There are two measures now:
+
+- **Object counts:** the drill compares the restored copy with production
+  across five kinds (index, constraint, view, trigger, routine) and reports
+  the difference. A difference alone is not a failure — the schema may have
+  changed after the backup was taken; staying silent was the bug.
+- **Fingerprint:** the shape of the database is reduced to a single hash and
+  recorded **when the backup is taken**. The drill compares the restored
+  copy's fingerprint against that record. The question being asked is: *what
+  schema does this file actually restore?*
+
+```bash
+./scripts/schema.sh postgresql
+```
+
+Data does **not** enter the fingerprint: inserting a million rows must not
+change it. On MariaDB, `SHOW CREATE TABLE` is deliberately not used (it
+carries the `AUTO_INCREMENT` counter); a sequence contributes its definition
+but not its current value; every list is sorted. The format is versioned, and
+fingerprints from different versions are not compared, because comparing them
+would manufacture an enormous fake difference.
+
+If the schema changes during the backup (DDL), the record is marked
+"unstable": it is not certain which schema that file carries, and the product
+does not hide it.
+
+The panel shows a short fingerprint next to every backup file; its tooltip
+says how many tables, indexes and constraints that file contains.
+
+## Recovery points across engines
+
+An application rarely uses a single database. Because backups are taken
+engine by engine, minutes apart, "go back to last night" leaves you with
+several **moments** that are far apart.
+
+A recovery point backs up the selected engines as a **single round** and
+measures:
+
+- the **window**: the gap between the oldest and newest file in the set. If
+  it is not zero, this is a range and not an instant,
+- the **target moment**: when the round finished,
+- per engine, **how many seconds behind the target** it is.
+
+When restoring, engines with point-in-time recovery enabled are **rolled
+forward** onto the target and land exactly on it; the others return to the
+moment of their own file. The report says so as it is: *"three engines at the
+target, two 252 s behind"*.
+
+**What is not promised:** a real snapshot across heterogeneous engines
+without pausing writes is not possible. The product does not say "they all
+came back to the same moment"; it says with numbers how close it got.
+
+The round runs **sequentially**. Running the dumps in parallel would narrow
+the window, but two heavy dumps on one server mean double memory pressure in
+the same cgroup; the right way to narrow the window is rolling forward, not
+concurrency.
+
+A point whose files have been swept by retention does **not look
+restorable**: the panel writes how many files are missing and disables the
+button.
+
 ## Remote storage
 
 Set `REMOTE_SYNC_ENABLED=true` in `.env` and configure rclone. Google Drive,

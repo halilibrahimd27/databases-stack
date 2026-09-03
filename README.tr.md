@@ -489,6 +489,71 @@ Uzak depo (Google Drive / S3 / SFTP): [docs/GOOGLE-DRIVE.tr.md](docs/GOOGLE-DRIV
 
 ---
 
+## Basabildiğiniz geri yükleme
+
+Yedekleme ailesinin en zayıf halkası hep aynı yerdeydi: **geri yükleme
+düğmesine kimse basmıyor.** Basmak dört şey demekti — mevcut veri yok olur,
+kesinti geri yüklemenin tamamı kadar sürer, dosyanın gerçekten açılacağı
+basmadan önce bilinmez ve yanlış dosya seçildiyse geri dönüş yoktur.
+
+Bu sürümde geri yükleme **iki yönlü bir kapı**:
+
+| | Klasik | Kesintisiz (gölge) |
+|---|---|---|
+| Üretim | geri yükleme boyunca **kapalı** | **çalışmaya devam eder** |
+| Kesinti | geri yükleme süresi kadar | container yeniden yaratılırken |
+| Ölçülen | — | geri yükleme 35 sn · **kesinti 3,6 sn** |
+| Yanlış karar | geri dönüş yok | **24 saat geri dönüş bileti** |
+
+Bedeli saklanmıyor: takasa kadar üretim bugünkü (belki bozuk) veriyi servis
+etmeye devam eder ve diskte bir kopyalık fazladan yer gerekir. Yer yetmezse
+işlem başlamadan **sayıyla** reddedilir.
+
+Ayrıntı: [docs/BACKUP.tr.md](docs/BACKUP.tr.md)
+
+## "Bu dosya hangi şemayı geri getirir?"
+
+Kurtarma provası uzun süre yalnız tablo ve satır saydı. İndeks, kısıt, view,
+trigger ve rutin kaybı bu ölçütten **sessizce geçiyordu** — yani "prova
+geçti" rozeti, göremediği bir şeyi iddia ediyordu.
+
+Artık veritabanının şekli tek bir parmak izine indiriliyor ve **yedek
+alınırken** kaydediliyor; prova geri yüklenen kopyayı o kayıtla
+karşılaştırıyor. Ölçülmüş kanıt: satır sayıları birebir eşitken
+(`match: true`) düşürülmüş bir indeks yakalanıyor (`schema_match: false`).
+
+Parmak izine veri girmez — bir milyon satır eklemek onu değiştirmez.
+
+```bash
+./scripts/schema.sh postgresql
+```
+
+## Motorlar arası kurtarma noktası
+
+Bir uygulama çoğu zaman tek veritabanı kullanmaz. Yedekler motor motor ve
+dakikalar arayla alındığı için "dün geceye dön" demek, elde birbirinden uzak
+birkaç **an** bırakır.
+
+Kurtarma noktası seti, seçilen motorların yedeğini tek tur olarak alır ve
+**pencereyi ölçer**: setteki en eski ve en yeni dosya arasındaki fark. Geri
+yüklerken zamanda geri dönmesi açık olan motorlar hedef ana **ileri sarılarak**
+tam oturur, diğerleri kendi anlarına döner.
+
+Ürün "hepsi aynı ana geldi" **demez**; *"üç motor hedef anda, iki motor 252 sn
+geride"* der. Heterojen motorlarda, yazmayı durdurmadan gerçek bir anlık
+görüntü alınamaz — bunu "tutarlı yedek" diye sunmak yeni bir sessiz yeşil
+olurdu.
+
+## Dün gece tam olarak ne oluyordu?
+
+Aktif oturum geçmişi (ASH) saniyede bir örnekleniyor: o an kim neyi
+bekliyordu, bekleteni kimdi. "Dün gece dondu, sabah baktım normal" sorusunun
+cevabı burada.
+
+Örneklenemeyen saniyeler **ayrıca** yazılır: ölçüm yokluğu "sistem boştu"
+demek değildir. Yığının kendi işleri (yedek, prova, bakım) da aynı zaman
+çizgisine düşer — bir donmanın en olası sebebi çoğu zaman ürünün kendisidir.
+
 ## Zaman noktasına dönüş (PITR)
 
 "Dünkü yedeğe dön" çoğu zaman istenen şey değildir: veriyi bozan `UPDATE`
@@ -775,7 +840,7 @@ Bu ürünün iddiaları ölçülüyor. Depoda iki katman var:
 
 ```bash
 ./stack.sh selftest    # docker gerektirmez — boyutlandırma, API, nginx, betikler
-./stack.sh e2e         # ÇALIŞAN kuruluma karşı — on dört paket
+./stack.sh e2e         # ÇALIŞAN kuruluma karşı — on dokuz paket
 ./stack.sh e2e --hepsi # Kubernetes dahil
 ```
 
@@ -794,6 +859,10 @@ veri döndürüyor mu.
 | `failover` | Ölüm → devir → **aynı adresten yazma** → veri kaybı yok |
 | `backup` | Yedek al → **veriyi sil** → geri yükle → veri geri geldi |
 | `monitoring` | Hedefler, metrikler, **her panonun her sorgusu** |
+| `shadow` | Kesintisiz geri yükleme: kesinti **gateway portundan** ölçülüyor, bilet geri döndürüyor |
+| `schema` | Şema parmak izi: aynı şema aynı hash, veri değişimi etkilemez, DDL fark edilir |
+| `recovery-set` | Kurtarma noktası: pencere ölçülüyor, geri yükleme o ana döndürüyor |
+| `ash` | Aktif oturum geçmişi: örnekleniyor, bekleyen/bekleten ayırt ediliyor |
 | `lifecycle` | Aç/kapat/aç — kapatınca veri silinmiyor |
 | `k8s` | Ayarlar pod içinde uygulanıyor mu (k3s açar ve sonunda kapatır) |
 

@@ -529,6 +529,76 @@ Remote storage (Google Drive / S3 / SFTP):
 
 ---
 
+## A restore you can actually press
+
+The weakest link in the backup family was always the same: **nobody presses
+the restore button.** Pressing it meant four things — the current data is
+destroyed, the outage lasts as long as the whole restore, whether the file
+will really open is unknown until you press, and if you picked the wrong file
+there is no way back.
+
+In this version a restore is a **two-way door**:
+
+| | Classic | Without downtime (shadow) |
+|---|---|---|
+| Production | **down** for the whole restore | **keeps running** |
+| Outage | as long as the restore | the container recreate |
+| Measured | — | restore 35 s · **outage 3.6 s** |
+| Wrong decision | no way back | **24-hour return ticket** |
+
+The cost is not hidden: until the swap, production keeps serving today's
+possibly-corrupt data, and one extra copy's worth of disk is required. If
+there is not enough room the job is refused before it starts, **with the
+numbers**.
+
+Details: [docs/BACKUP.md](docs/BACKUP.md)
+
+## "What schema does this file restore?"
+
+For a long time the restore drill counted only tables and rows. The loss of
+an index, constraint, view, trigger or routine passed **in silence** — the
+"drill passed" badge was asserting something it never looked at.
+
+The shape of the database is now reduced to a single fingerprint and recorded
+**when the backup is taken**; the drill compares the restored copy against
+that record. Measured proof: with row counts identical (`match: true`), a
+dropped index is caught (`schema_match: false`).
+
+Data does not enter the fingerprint — inserting a million rows does not
+change it.
+
+```bash
+./scripts/schema.sh postgresql
+```
+
+## Recovery points across engines
+
+An application rarely uses a single database. Because backups are taken
+engine by engine, minutes apart, "go back to last night" leaves you with
+several **moments** that are far apart.
+
+A recovery point backs up the selected engines as a single round and
+**measures the window**: the gap between the oldest and newest file in the
+set. When restoring, engines with point-in-time recovery enabled are **rolled
+forward** onto the target and land exactly on it; the others return to their
+own moment.
+
+The product does **not** say "they all came back to the same moment"; it says
+*"three engines at the target, two 252 s behind"*. A real snapshot across
+heterogeneous engines without pausing writes is not possible, and presenting
+it as a "consistent backup" would be a new silent green.
+
+## What exactly was happening last night?
+
+Active session history (ASH) is sampled once a second: who was waiting on
+what at that moment, and who was blocking them. This is where the answer to
+"it froze last night, everything looked normal this morning" lives.
+
+Seconds that could not be sampled are reported **separately**: absence of
+measurement does not mean "the system was idle". The stack's own jobs
+(backup, drill, maintenance) land on the same timeline — the most likely
+cause of a freeze is often the product itself.
+
 ## Going back to a point in time (PITR)
 
 "Go back to yesterday's backup" is usually not what you want: if the `UPDATE`
@@ -841,7 +911,7 @@ This product's claims are measured. There are two layers in the repository:
 
 ```bash
 ./stack.sh selftest    # needs no docker — sizing, API, nginx, scripts
-./stack.sh e2e         # against a RUNNING installation — fourteen suites
+./stack.sh e2e         # against a RUNNING installation — nineteen suites
 ./stack.sh e2e --hepsi # including Kubernetes
 ```
 
@@ -862,6 +932,10 @@ dashboard return data.
 | `failover` | Death → failover → **writing from the same address** → no data loss |
 | `backup` | Back up → **delete the data** → restore → the data came back |
 | `monitoring` | Targets, metrics, **every query of every dashboard** |
+| `shadow` | Restore without downtime: the outage is measured **from the gateway port**, the ticket takes it back |
+| `schema` | Schema fingerprint: same schema same hash, data changes do not move it, DDL is caught |
+| `recovery-set` | Recovery point: the window is measured, the restore really returns to that moment |
+| `ash` | Active session history: sampled, waiter and blocker told apart |
 | `lifecycle` | On/off/on — turning it off does not delete data |
 | `k8s` | Whether the settings are applied inside the pod (brings up k3s and takes it down at the end) |
 

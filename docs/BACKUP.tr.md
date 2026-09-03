@@ -502,6 +502,120 @@ kaybolduysa bunları elle geri yükleyin.
 
 ---
 
+## Kesintisiz geri yükleme (gölge)
+
+Klasik geri yükleme **tek yönlü bir kapıdır**: mevcut veri silinir, dosya
+basılır ve iş yarıda kalırsa elde ne eskisi ne yenisi kalır. Kesinti de
+geri yüklemenin tamamı kadar sürer.
+
+Gölge yolu aynı işi iki yönlü yapar:
+
+1. yedek **yeni bir hacme** geri yüklenir — üretim bu sırada çalışmaya
+   devam eder,
+2. kopyanın gerçekten açıldığı ve satır sayısı doğrulanır,
+3. işaretçi çevrilir — kesinti yalnız **container yeniden yaratılırken**,
+4. eski hacim **geri dönüş bileti** olarak 24 saat durur.
+
+Ölçülen değerler (256 MB veri, tek sunucu): geri yükleme 35 sn, kesinti
+**3,6 sn**. İkisi ayrı raporlanır; "10 kat hızlı" gibi bir cümle geri
+yükleme süresini değil kesintiyi anlatır.
+
+Panelden: yedek satırındaki **Kesintisiz dön**. Komut satırından yalnız
+hazırlık kısmı çalıştırılabilir (takası controller yapar):
+
+```bash
+./scripts/restore-drill.sh mariadb --golge
+```
+
+**Bedeli açıkça söylenir:** takasa kadar üretim bugünkü (belki bozuk) veriyi
+servis etmeye devam eder ve diskte bir kopyalık fazladan yer gerekir. Yer
+yetmiyorsa işlem başlamadan sayıyla reddedilir: "1777 MB gerekiyor, 204899 MB
+boş".
+
+**Kapsam:** yalnız otomatik geri yüklemesi olan beş motorda. Replikası açık
+bir motorda takas **reddedilir** — takas ana kopyanın geçmişini değiştirir ve
+replika o anda ayrışır; sessizce bozmaktansa reddetmek doğrudur.
+
+### Geri dönüş bileti
+
+Takastan sonra eski hacim silinmez, 24 saat saklanır. Karar yanlışsa panelden
+**Takas öncesine dön** tek düğmedir ve kesinti yine saniyeler sürer. Süre
+dolunca eski hacim **olayla** silinir — sessizce değil, çünkü kullanıcının
+"geri dönebilirim" sandığı bir kapı kapanıyor.
+
+Bilet açıkken ikinci bir takas kabul edilmez: iki takas üst üste yapılırsa
+"geri dön" dendiğinde hangi geçmişe dönüleceği belirsizleşir.
+
+### İşaretçi ayrışması
+
+Takas yarıda kalırsa `state/volumes.env` bir kopyayı gösterirken container
+başkasını bağlamış olabilir. Motor sağlıklı görünür ve kimse hata görmez.
+Bu yüzden canlı hacim **dosyadan değil container'dan ölçülür**; ikisi
+ayrışırsa panel bunu söyler. "Ölçemedim" ile "ayrışma yok" ayrı iki cevaptır:
+motor kapalıysa ürün ikincisini iddia etmez.
+
+## Şema parmak izi
+
+Kurtarma provası uzun süre yalnız **tablo ve satır** saydı. İndeks, kısıt,
+view, trigger ve rutin kaybı bu ölçütten sessizce geçiyordu — yani "prova
+geçti" rozeti, göremediği bir şeyi iddia ediyordu.
+
+Artık iki ölçüt var:
+
+- **Nesne sayımı:** prova, geri yüklenen kopya ile üretimi beş türde
+  karşılaştırır (indeks, kısıt, view, trigger, rutin) ve farkı yazar. Fark
+  tek başına başarısızlık değildir — yedek alındıktan sonra şema değişmiş
+  olabilir; sessiz kalmak hataydı.
+- **Parmak izi:** veritabanının şekli tek bir hash'e indirilir ve **yedek
+  alınırken** kaydedilir. Prova, geri yüklenen kopyanın parmak izini o kayıtla
+  karşılaştırır. Sorulan soru şu: *elimdeki bu dosya hangi şemayı geri
+  getirir?*
+
+```bash
+./scripts/schema.sh postgresql
+```
+
+Parmak izine **veri girmez**: bir milyon satır eklemek onu değiştirmemelidir.
+MariaDB'de `SHOW CREATE TABLE` bilerek kullanılmaz (`AUTO_INCREMENT` sayacını
+taşır), sequence'ın tanımı girer ama anlık değeri girmez, listeler sıralanır.
+Biçim sürümlüdür; farklı sürümlerin parmak izleri karşılaştırılmaz, çünkü
+karşılaştırmak dev bir sahte fark üretirdi.
+
+Yedek **alınırken** şema değişirse (DDL) kayıt "kararsız" işaretlenir:
+dosyanın hangi şemayı taşıdığı kesin değildir ve ürün bunu saklamaz.
+
+Panelde her yedek dosyasının yanında kısa parmak izi görünür; balonunda o
+dosyanın kaç tablo, kaç indeks, kaç kısıt içerdiği yazar.
+
+## Kurtarma noktası setleri
+
+Bir uygulama çoğu zaman tek veritabanı kullanmaz. Yedekler motor motor ve
+dakikalar arayla alındığı için "dün geceye dön" demek, elde birbirinden uzak
+birkaç **an** bırakır.
+
+Set, seçilen motorların yedeğini **tek tur** olarak alır ve şunu ölçer:
+
+- **pencere**: setteki en eski ve en yeni dosya arasındaki fark. Sıfır
+  değilse bu bir an değil bir aralıktır,
+- **hedef an**: turun bittiği an,
+- motor başına **hedeften kaç saniye geride** kalındığı.
+
+Geri yüklerken zamanda geri dönmesi (PITR) açık olan motorlar hedef ana
+**ileri sarılarak** tam oturur; diğerleri kendi dosyalarının anına döner.
+Rapor bunu olduğu gibi söyler: *"üç motor hedef anda, iki motor 252 sn
+geride"*.
+
+**Vaat edilmeyen şey:** heterojen motorlarda, yazmayı durdurmadan gerçek bir
+anlık görüntü alınamaz. Ürün "hepsi aynı ana geldi" demez; ne kadar
+yaklaşıldığını sayıyla söyler.
+
+Tur **sırayla** koşar. Paralel almak pencereyi daraltırdı ama aynı sunucuda
+iki ağır dump, aynı cgroup'ta çift bellek baskısı demektir; pencereyi
+daraltmanın doğru yolu paralellik değil, PITR ile ileri sarmaktır.
+
+Dosyaları saklama temizliğine takılmış bir nokta **dönülebilir görünmez**:
+panel eksik dosya sayısını yazar ve düğmeyi kapatır.
+
 ## Uzak depo
 
 `.env` içinde `REMOTE_SYNC_ENABLED=true` yapıp rclone'u yapılandırın.
