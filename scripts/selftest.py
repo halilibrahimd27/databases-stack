@@ -3859,6 +3859,68 @@ ck("anahtarsız .env'de şifreleme kapalı (uydurma 'açık' yok)",
 _sh.rmtree(_envdir, ignore_errors=True)
 _sh.rmtree(_encdir, ignore_errors=True)
 
+
+# =============================================================================
+head("13. Hacim defteri — yanlış hacmi silmek sessiz veri kaybıdır")
+# =============================================================================
+# Hacim adları eskiden controller/app.py'ye elle yazılıydı (VOLUME_OF, 6
+# servis). Compose 21 servise hacim bağlıyor; ürün geri kalan 15'ini hiç
+# bilmiyordu — "yedek kopyayı yeniden kur" gibi HACİM SİLEN bir iş için bu,
+# sessizce yanlış şeyi silmenin ya da hiçbir şey yapmamanın kapısı.
+# Şimdi kaynak catalog.json. Tehlike yer değiştirdi: katalog ile compose
+# AYRIŞABİLİR. Ayrışma, ürünün var olmayan bir hacmi silmesi ya da canlı
+# veriyi taşıyan hacmi görememesi demek; ikisi de sessizdir. Bu yüzden
+# denetim çift yönlü ve TAM eşitlik arıyor.
+_vsrc = io.open("docker-compose.yml", encoding="utf-8").read()
+_vblok = _vsrc[_vsrc.index("\nvolumes:"):_vsrc.index("\nservices:")]
+_adli = set(_re2.findall(r"^  ([a-z0-9_]+):\s*$", _vblok, _re2.M))
+_compose_vol, _suan = {}, None
+for _ln in _vsrc[_vsrc.index("\nservices:"):].split("\n"):
+    _m = _re2.match(r"^  ([a-z0-9-]+):\s*$", _ln)
+    if _m:
+        _suan = _m.group(1)
+        continue
+    _m2 = _re2.match(r"^\s*-\s*([a-z0-9_]+):(/[^\s:]+)", _ln)
+    if _m2 and _suan and _m2.group(1) in _adli:
+        _compose_vol.setdefault(_suan, set()).add(_m2.group(1))
+
+_kat = json.loads(io.open("catalog.json", encoding="utf-8").read())
+_kat_vol = {}
+for _e in _kat["engines"]:
+    for _s, _v in (_e.get("data_volumes") or {}).items():
+        _kat_vol.setdefault(_s, set()).update(_v)
+
+_fark = []
+for _s in sorted(set(_compose_vol) | set(_kat_vol)):
+    _a, _b = _compose_vol.get(_s, set()), _kat_vol.get(_s, set())
+    if _a != _b:
+        _fark.append("%s: compose=%s katalog=%s"
+                     % (_s, sorted(_a) or "-", sorted(_b) or "-"))
+ck("katalogdaki hacim defteri compose ile birebir aynı", not _fark,
+   "; ".join(_fark[:3]) or "%d servis" % len(_compose_vol))
+
+# Bildirilen her hacim compose'un üst bloğunda TANIMLI olmalı: tanımsız bir
+# ada docker "no such volume" der ve iş, sebebi anlaşılmayan bir hata verir.
+_tanimsiz = sorted({v for vs in _kat_vol.values() for v in vs} - _adli)
+ck("katalogdaki her hacim compose'da tanımlı", not _tanimsiz,
+   ", ".join(_tanimsiz) or "%d hacim" % len(_adli))
+
+# Hacim adı PROJE ÖNEKSİZ yazılmalı: önekli yazılırsa çalışan ad
+# '<proje>_<proje>_x' olur ve hiçbir zaman eşleşmez.
+_onekli = sorted({v for vs in _kat_vol.values() for v in vs
+                  if v.startswith("databases-stack_") or v.startswith("databases_stack_")})
+ck("hacim adları proje öneksiz yazılmış", not _onekli,
+   ", ".join(_onekli) or "temiz")
+
+# volume_of() ARTIK ELLE YAZILI HARİTA TUTMAMALI: iki kaynak olursa biri
+# eskir ve hangisinin kazandığı çağrı sırasına kalır.
+_capp = io.open("controller/app.py", encoding="utf-8").read()
+ck("controller'da elle yazılı hacim haritası kalmamış",
+   "VOLUME_OF = {" not in _capp,
+   "temiz" if "VOLUME_OF = {" not in _capp else "VOLUME_OF hâlâ duruyor")
+ck("volume_of katalogdan okuyor", "def volumes_of(service):" in _capp
+   and "CATALOG.engines" in _capp.split("def volumes_of(service):")[1][:400])
+
 # =============================================================================
 print()
 if FAILS:

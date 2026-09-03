@@ -2056,17 +2056,36 @@ def _perform_failover_locked(engine, eid, fo, reason, jid, refuse):
     return True, None
 
 
-VOLUME_OF = {
-    "mariadb": "mariadb_data", "mariadb-replica": "mariadb_replica_data",
-    "postgresql": "postgresql_data", "postgresql-replica": "postgresql_replica_data",
-    "redis": "redis_data", "redis-replica": "redis_replica_data",
-}
+# Hacim adları KATALOGDAN okunur. Eskiden altı servis buraya elle yazılıydı;
+# oysa compose 21 servise hacim bağlıyor ve ürün geri kalan 15'ini hiç
+# bilmiyordu. Bir hacmi ADIYLA tanımak, onu silen (yedek kopyayı yeniden kur)
+# ya da kuşaklayan (gölge geri yükleme) her iş için ön koşul — ve yanlış adı
+# silmek sessiz veri kaybıdır. Bu yüzden kaynak tek: catalog.json, ve
+# selftest onun compose ile ayrışmadığını denetliyor.
+
+
+def volumes_of(service):
+    """Servisin bağladığı ADLI hacimlerin tam adları (proje öneki ile)."""
+    for e in CATALOG.engines:
+        adlar = (e.get("data_volumes") or {}).get(service)
+        if adlar:
+            return ["%s_%s" % (PROJECT, a) for a in adlar]
+    return []
 
 
 def volume_of(service):
-    """Servisin veri hacminin tam adı (proje öneki ile), yoksa None."""
-    v = VOLUME_OF.get(service)
-    return ("%s_%s" % (PROJECT, v)) if v else None
+    """Servisin VERİ hacminin tam adı, yoksa None.
+
+    Bir servisin birden çok hacmi olabiliyor (elasticsearch: data + snapshots);
+    veri hacmi olarak '<servis>_data' kalıbına uyanı seçiyoruz. Uymuyorsa
+    tahmin yürütmüyoruz: yanlış hacmi döndürmektense None demek doğru."""
+    adlar = volumes_of(service)
+    if len(adlar) == 1:
+        return adlar[0]
+    for a in adlar:
+        if a.endswith("_data"):
+            return a
+    return None
 
 
 # Yeni kurulan yedeğin gerçekten yedek olduğunu doğrulamak için beklenecek
