@@ -1129,7 +1129,7 @@ data:
           "backup": {
             "supported": true,
             "kind": "logical",
-            "ext": "sql.gz"
+            "ext": "tar.gz"
           },
           "connection": {
             "username": "default",
