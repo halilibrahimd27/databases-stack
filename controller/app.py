@@ -225,6 +225,24 @@ def load_tuning():
     return _read_json(TUNING_JSON, {})
 
 
+# AÇILIŞTA UYGULANMIŞ ayarlar. tuning.json dengeleme ile değişebiliyor; bu
+# dosya yalnız AKTİVASYONDA yazılır ve "çalışan container hangi ayarlarla
+# açıldı" sorusunun tek kesin cevabıdır. Dengelemenin tabanı buradan
+# hesaplanır: motorun zaten ayırdığı belleğin altına inmek, cgroup'un
+# container'ı OOM etmesi demek.
+APPLIED_TUNING_FILE = os.path.join(STATE_DIR, "tuning_applied.json")
+
+
+def load_applied_tuning():
+    return _read_json(APPLIED_TUNING_FILE, {})
+
+
+def save_applied_tuning(eid, tuning):
+    d = load_applied_tuning()
+    d[eid] = dict(tuning or {})
+    _write_json(APPLIED_TUNING_FILE, d)
+
+
 def save_tuning(tun):
     """tuning.json'u yazar ve compose'un --env-file ile okuduğu .env'i render eder."""
     _write_json(TUNING_JSON, tun)
@@ -3217,6 +3235,9 @@ def do_activate(jid, eid, requested_mb=None):
             tun = load_tuning()
             tun[eid] = p["tuning"]
             save_tuning(tun)
+            # Container BU ayarlarla yaratılacak; dengelemenin tabanı bunu
+            # bilmek zorunda.
+            save_applied_tuning(eid, p["tuning"])
             job_log(jid, "tuning.env yazıldı")
         except OSError as e:
             # Docker'da bu dosya ŞART (compose onu --env-file ile okur).
@@ -3502,6 +3523,7 @@ def do_rebalance(jid):
         # 3040 MB'a ÇIKIYOR ve kullanıcı yer açmak için bastığı düğmeden
         # "Tamamlandı" alıp aynı hatayı görmeye devam ediyordu.
         ideal, taban, agirlik = {}, {}, {}
+        _uygulanan = load_applied_tuning()
         for e, _c, _s in hedefler:
             res = e.get("resources", {})
             mn = int(res.get("min_mb", 256))
@@ -3519,8 +3541,18 @@ def do_rebalance(jid):
             # innodb_buffer_pool 1917 MB iken tavan 789 MB'a indirilmişti.
             # İç ayar çalışan motorda değişmez; o bellek ancak motor yeniden
             # başlatılınca geri alınabilir.
-            mevcut = max(x["memory_mb"] for x in (_c, _s) if x is not None)
-            rez_simdi = engine_reserved_mb(eid_, limit_mb=mevcut)
+            # KAYNAK: açılışta uygulanmış ayarlar. Güncel TAVANDAN türetmek
+            # iki yönden de yanlıştı — tavan yapay olarak şişirilmişse taban da
+            # şişiyor ve dengeleme hiçbir şeyi indiremiyordu; elle düşürülmüşse
+            # taban olduğundan küçük görünüp ayrılmış belleğin altına
+            # inilebiliyordu.
+            uyg = _uygulanan.get(eid_)
+            if uyg:
+                rez_simdi = engine_reserved_mb(eid_, tuning=uyg)
+            else:
+                # Kayıt yok (eski kurulum): elimizdeki en iyi tahmin.
+                mevcut = max(x["memory_mb"] for x in (_c, _s) if x is not None)
+                rez_simdi = engine_reserved_mb(eid_, limit_mb=mevcut)
             zemin = max(mn, int(rez_simdi))
             # Ölçemediysek küçültmüyoruz: tabanı kendi ideali sayıyoruz.
             taban[eid_] = (max(zemin, int(max(kul) * REBALANCE_HEADROOM))
