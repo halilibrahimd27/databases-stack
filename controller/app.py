@@ -22,6 +22,7 @@ Harici Python bağımlılığı yoktur (yalnız stdlib).
 """
 
 import copy
+import datetime
 import http.server
 import json
 import os
@@ -6015,6 +6016,51 @@ def recovery_set_ozet(now=None):
     return out
 
 
+def _pitr_en_yeni(eid):
+    """Bu motorda İLERİ SARILABİLECEK en yeni an (epoch) — yoksa None.
+
+    Arşive henüz düşmemiş bir ana dönülemez; hedefi buna göre kırpmazsak
+    "tam oturur" vaadi tutmaz ve işlem reddedilir.
+
+    Ölçüm ANLIK yapılıyor, state/pitr.json'dan OKUNMUYOR: o dosya beş
+    dakikada bir tazeleniyor ve tam da arşivi yeni ilerlettiğimiz anda
+    eskimiş olur — yani kırpmayı gereğinden fazla yapardık."""
+    rc, out, err = run(["bash", PITR_SCRIPT, "durum", eid, "--json"],
+                       cwd=PROJECT_DIR, timeout=300, env=script_env())
+    d = _son_satir_json(out + err)
+    if not d:
+        return None
+    for e in (d.get("engines") or []):
+        if e.get("engine") != eid:
+            continue
+        ham = e.get("newest")
+        if not ham:
+            return None
+        try:
+            return int(datetime.datetime.strptime(
+                ham, "%Y-%m-%dT%H:%M:%S%z").timestamp())
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def _dumptan_geri_yukle(jid, eid, ad, kayit, hedef, jl):
+    """Setteki dosyadan geri yükler ve hedefin kaç saniye gerisinde
+    kalındığını döndürür."""
+    geride = max(0, hedef - int(kayit.get("at") or 0))
+    yol, hata = resolve_backup_file(eid, kayit.get("file"))
+    if hata:
+        return {"ok": False, "mode": "dump", "detail": hata}
+    rc, err, ertelendi = _backup_run(
+        ["restore-%s" % eid, yol], jl, {"ASSUME_YES": "yes"})
+    ok = rc == 0 and not ertelendi
+    if ok:
+        pitr_taban_yenile(eid, jl)
+    return {"ok": ok, "mode": "dump", "behind_seconds": geride,
+            "detail": ("hedefin %d sn öncesine döndü" % geride) if ok
+                      else (err or "geri yüklenemedi")}
+
+
 def do_recovery_set(jid, ad, eids):
     """Seçilen motorların yedeğini TEK TUR olarak alır ve pencereyi ölçer.
 
@@ -6061,6 +6107,18 @@ def do_recovery_set(jid, ad, eids):
             motorlar[eid] = {"file": dosya, "at": int(time.time()),
                              "pitr": pitr_durumu(eid)}
             sema_yedege_bagla(eid, None, yeni, jl)
+            # ARŞİVİ ŞİMDİ İLERLET. Hedef an turun bittiği andır; o ana ait
+            # WAL/binlog arşive düşmemişse ileri sarma o ana ULAŞAMAZ ve
+            # "tam oturur" vaadi tutmaz. e2e bunu canlı sunucuda yakaladı:
+            # istenen 06:58:14, en yeni dönülebilir an 06:57:59.
+            if motorlar[eid]["pitr"] == "acik":
+                _rc, _o, _e = run(["bash", PITR_SCRIPT, "arsivle", eid],
+                                  cwd=PROJECT_DIR, timeout=600, env=script_env())
+                if _rc != 0:
+                    # Arşivleyemedik: set yine alınır ama o motor hedefe
+                    # oturamayabilir. Sessiz geçmiyoruz.
+                    jl("   UYARI: %s arşivi ilerletilemedi; hedef ana "
+                       "ulaşılamayabilir." % e["name"])
         if not motorlar:
             return job_done(jid, False,
                             "Setteki hiçbir motorun yedeği alınamadı: %s"
@@ -6126,35 +6184,51 @@ def do_recovery_set_restore(jid, sid, onayla=False):
         if _pitr_ileri_sarabilir(eid):
             # İLERİ SARMA: dump'ın anı ile hedef arasındaki fark WAL/binlog
             # ile kapatılıyor. Setin asıl değeri bu — dosyalar dakikalar
-            # arayla alınmış olsa bile bu motorlar TAM hedefe oturuyor.
+            # arayla alınmış olsa bile bu motorlar hedefe oturuyor.
             jl("· %s: PITR ile hedef ana sarılıyor…" % ad)
-            hedef_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(hedef))
+            # Önce arşivi ilerlet: hedefe ait segment henüz düşmemiş olabilir.
+            run(["bash", PITR_SCRIPT, "arsivle", eid], cwd=PROJECT_DIR,
+                timeout=600, env=script_env())
+            # HEDEF ARŞİVİN ÖTESİNDEYSE KIRP. Ulaşılamayan bir ana ısrar edip
+            # işi düşürmek, elde çalışan bir kopya varken hiçbir şey
+            # yapmamaktır. Kırpınca ne kadar geride kaldığımızı SÖYLÜYORUZ.
+            _varilan = hedef
+            _en_yeni = _pitr_en_yeni(eid)
+            if _en_yeni and _en_yeni < hedef:
+                _varilan = _en_yeni
+                jl("   hedef arşivin ötesinde; ulaşılabilir en yeni ana "
+                   "sarılıyor (%d sn geride)" % (hedef - _en_yeni))
+            hedef_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(_varilan))
+            _env = script_env()
+            # pitr.sh don ONAY İSTER; burada okunacak bir terminal yok ve
+            # onayı kullanıcı seti geri yüklerken verdi.
+            _env["ASSUME_YES"] = "yes"
             rc, out, err = run(["bash", PITR_SCRIPT, "don", eid, hedef_str],
                                cwd=PROJECT_DIR, timeout=PITR_TABAN_TIMEOUT,
-                               env=script_env())
+                               env=_env)
             for satir in (out + err).strip().splitlines()[-40:]:
                 job_log(jid, satir)
-            sonuc[eid] = {"ok": rc == 0, "mode": "pitr",
-                          "behind_seconds": 0 if rc == 0 else None,
-                          "detail": "hedef ana sarıldı" if rc == 0
-                                    else (err or out).strip()[-200:]}
+            if rc == 0:
+                sonuc[eid] = {"ok": True, "mode": "pitr",
+                              "behind_seconds": max(0, hedef - _varilan),
+                              "detail": "hedef ana sarıldı"
+                                        if _varilan == hedef
+                                        else ("arşivin ulaştığı ana sarıldı "
+                                              "(%d sn geride)" % (hedef - _varilan))}
+            else:
+                # İLERİ SARMA DÜŞTÜ: dosyaya dönüyoruz. Setin tamamını
+                # başarısız saymak, elde çalışan bir kopya varken hiçbir şey
+                # yapmamak olurdu — ama ne olduğunu da saklamıyoruz.
+                jl("   ileri sarma düştü, dosyadan geri yüklemeye dönülüyor: %s"
+                   % (err or out).strip()[-160:])
+                sonuc[eid] = _dumptan_geri_yukle(jid, eid, ad, k, hedef, jl)
+                sonuc[eid]["detail"] = ("ileri sarma yapılamadı, dosyadan "
+                                        "geri yüklendi — " + sonuc[eid]["detail"])
         else:
             # DUMP: hedefin N saniye öncesi. N'i saklamıyoruz.
-            geride = max(0, hedef - int(k.get("at") or 0))
             jl("· %s: dosyadan geri yükleniyor (hedefin %d sn öncesi)…"
-               % (ad, geride))
-            yol, hata = resolve_backup_file(eid, k.get("file"))
-            if hata:
-                sonuc[eid] = {"ok": False, "mode": "dump", "detail": hata}
-                continue
-            rc, err, ertelendi = _backup_run(
-                ["restore-%s" % eid, yol], jl, {"ASSUME_YES": "yes"})
-            sonuc[eid] = {"ok": rc == 0 and not ertelendi, "mode": "dump",
-                          "behind_seconds": geride,
-                          "detail": ("hedefin %d sn öncesine döndü" % geride)
-                                    if rc == 0 else (err or "geri yüklenemedi")}
-            if rc == 0:
-                pitr_taban_yenile(eid, jl)
+               % (ad, max(0, hedef - int(k.get("at") or 0))))
+            sonuc[eid] = _dumptan_geri_yukle(jid, eid, ad, k, hedef, jl)
 
     tam = [e for e, r in sonuc.items() if r.get("ok") and r.get("behind_seconds") == 0]
     geride = [(e, r.get("behind_seconds")) for e, r in sonuc.items()
