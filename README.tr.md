@@ -214,6 +214,58 @@ kapalı motorların hepsinde "bellek yetmiyor" diyordu — boş bir makinede.
 Reddedilen aktivasyon **hangi kapıya** takıldığını yazar; hepsine birden
 "bellek yetmiyor" demez.
 
+#### Ana kopya ile yedek kopya AYNI ANDA tepe yapamaz
+
+Aynı sunucuda, sonradan ölçüldü. Üç yedek kopya açıkken tavan toplamı **16812
+MB**'a çıkmıştı ve bunun 13742 MB'ı üç ana/yedek çiftinden geliyordu (mariadb
+3196 + mariadb-replica 3196, diğerleri de öyle). O anda gerçek kullanım **1266
+MB** — tavanların %7'si — ve çekirdek 13939 MB kullanılabilir bildiriyordu. SQL
+Server reddedildi: 2048 MB tavan istiyordu, 1698 MB kalmıştı.
+
+Bu ret temkinlilik değil, **sayma hatasıydı**. Yedek kopya ana kopyanın
+**yerine** geçmek için vardır, **üstüne** değil: normal işleyişte yalnız
+değişiklik akışını uygular (ölçüldü: 254 MB, 120 MB, 5 MB), devir anında ise
+eski ana kopya fence'lenmiş olur. İki tavanı toplamak, tanımı gereği birbirini
+dışlayan iki tepeyi üst üste koymaktır.
+
+Yedek kopya artık tavan defterinde `STANDBY_CEILING_WEIGHT` (varsayılan 0.5) ile
+sayılıyor. Sıfır değil: yeniden tohumlama sırasında (`pg_basebackup`,
+`mariabackup`) yedek kopya gerçekten ağır iş yaparken ana kopya da hizmet
+veriyor.
+
+Bununla gevşeyen tek şey **yumuşak** kapı. Sert kapı her rezerveyi tam sayıyor,
+çekirdek kemeri olduğu gibi duruyor — defter yanılırsa çekirdeğin ölçümü hâlâ
+son sözü söylüyor.
+
+#### İşletim sistemi payı varsayılmıyor, ÖLÇÜLÜYOR
+
+OS payı düz bir %20 idi — bu makinede 3196 MB. Ölçüldüğünde işletim sisteminin
+gerçekte tuttuğu **~780 MB** (`toplam − MemAvailable − container'ların kendi
+kullanımı`). Aşırı taahhüt katsayısıyla çarpılınca aradaki fark, SQL Server'ın
+istediğinden fazla tavan bütçesi eder.
+
+Ölçüm kullanılıyor ama **yalnız gevşetmek için**: düz oran üst sınır olarak
+kalıyor, 1024 MB taban taban olarak kalıyor ve ölçüm alınamazsa düz orana
+dönülüyor. Yanılma yönünün güvenli tarafta kalması bütün mesele.
+
+İki düzeltmeden sonra, aynı sunucuda:
+
+| | önce | sonra |
+|---|---|---|
+| işletim sistemi payı | 3196 MB | 1574 MB |
+| dağıtılabilir | 12340 MB | 13962 MB |
+| tavan defteri | 16812 MB | 13376 MB |
+| kalan tavan bütçesi | 1698 MB | 7567 MB |
+| SQL Server | reddediliyor | **3072 MB tavanla açılıyor** |
+
+#### "Yer yok" bir çıkmaz değil
+
+Ret artık **yeniden dengelemenin kaç MB açacağını ölçüp** söylüyor — yetmeyeceği
+durumu da. **Yapmadığı** şey motorları sessizce küçültmek. Tavan canlı düşer ama
+motorun iç ayarı (buffer pool, heap) ancak bir sonraki açılışta küçülür; sessiz
+bir küçültme, sebebiyle alakasız bir anda ortaya çıkan bir yavaşlama olarak
+görünürdü. Sayı gösteriliyor, risk yazılıyor, karar sizde kalıyor.
+
 #### Yeniden dengeleme
 
 Tavan toplamı politika sınırını geçtiğinde (bir motor elle büyütüldü,

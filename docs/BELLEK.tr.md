@@ -53,7 +53,14 @@ türediği ve transaction pooling'in sınırları `docs/POOLING.md`de.
 dağıtılabilir = toplam RAM − işletim sistemi payı − çekirdek servis payı
 ```
 
-- **İşletim sistemi payı** = `max(1024 MB, RAM × 0.20)`, en çok RAM'in %60'ı.
+- **İşletim sistemi payı** — ölçülebiliyorsa **ÖLÇÜLÜR**:
+  `toplam − MemAvailable − container'ların kendi kullanımı`, `OS_MEASURE_SAFETY`
+  (2.0) ile çarpılır. `[1024 MB, max(1024 MB, RAM × 0.20)]` aralığına kısılır ve
+  ölçüm alınamazsa düz orana döner — yani bütçeyi yalnız *gevşetebilir*, asla
+  sıkamaz. Düz orandaki %60 üst sınırı şart: 512 MB'lık bir makinede "1024 MB
+  işletim sistemine gitti" demek bütçeyi sıfırın altına indirir.
+  16 GB'lık sunucuda ölçüldü: düz oran 3196 MB diyordu, işletim sistemi
+  gerçekte **~780 MB** tutuyordu, kullanılan pay **1574 MB** oldu.
   Üst sınır şart: 512 MB'lık bir makinede "1024 MB işletim sistemine ayrıldı"
   demek bütçeyi eksiye düşürür ve hiçbir motor açılamaz.
 - **Çekirdek servis payı** = 448 MB — gateway (nginx), kontrol servisi ve
@@ -72,7 +79,19 @@ Sırayla uygulanır ve ret mesajı **hangi kapıya** takıldığını söyler
 
 ```
 Σ tavan + yeni tavan  ≤  dağıtılabilir × OVERCOMMIT_LIMIT
+
+yedek kopyanın tavanı  tavan × STANDBY_CEILING_WEIGHT  olarak sayılır
 ```
+
+**Ana kopya ile yedek kopya aynı anda tepe yapamaz.** Yedek kopya, ana
+kopyanın *yerine* geçmek için vardır, *üstüne* değil: normal işleyişte
+yalnız değişiklik akışını uygular, devir anında ise eski ana kopya
+fence'lenmiş olur. İkisinin tavanını tam toplamak, tanımı gereği
+birbirini dışlayan iki tepeyi üst üste koymaktır — ölçüldü: 16812 MB'lık
+defterin 13742 MB'ı tek başına buradan geliyordu ve %87'si boş bir
+makinede yeni motorlar reddediliyordu. Ağırlık 0 değil 0.5, çünkü yeniden
+tohumlama sırasında (`pg_basebackup`, `mariabackup`) yedek kopya gerçekten
+ağır iş yaparken ana kopya da hizmet veriyor.
 
 Tavanların hepsi aynı anda dolmaz; aşırı taahhüt bilinçli bir politikadır.
 Varsayılan katsayı **1.5** ve ölçüme göre bile temkinlidir — aşağıdaki dört
@@ -218,6 +237,9 @@ Hepsi kontrol servisinin ortam değişkenidir; verilmezse varsayılan geçerlidi
 | `PRESSURE_WARN` | `10.0` | `some avg10` bu değerden büyükse baskı "orta" |
 | `PRESSURE_HIGH` | `30.0` | Bu değerden büyükse "yuksek" |
 | `REBALANCE_HEADROOM` | `1.3` | Yeni tavanın gerçek kullanıma göre asgari katı |
+| `STANDBY_CEILING_WEIGHT` | `0.5` | Yedek kopyanın tavanının defterdeki ağırlığı. `1.0` = tam say (eski çift sayım) |
+| `OS_MEASURE_SAFETY` | `2.0` | Ölçülen işletim sistemi kullanımının kaç katı ayrılsın |
+| `OS_MEASURE_TTL` | `10.0` | O ölçümün tazelik süresi (saniye) |
 
 Kodda sabit olanlar: işletim sistemi payı `%20` (en az 1024 MB, en çok RAM'in
 %60'ı), çekirdek servis payı `448 MB`, en küçük anlamlı tavan değişimi

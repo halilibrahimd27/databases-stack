@@ -558,7 +558,10 @@ def render_metrics():
     # geliyor: ayrı bir formül tutmak, "Grafana başka, panel başka söylüyor"
     # sınıfından hataların kaynağıydı.
     total, avail = host_memory_mb()
-    committed = sum(c["memory_mb"] for c in conts if c["status"] == "running")
+    # DEFTERİN KENDİSİ: yedek kopyalar ağırlıklı. Burada ayrı bir toplam
+    # yapmak, Grafana'nın panelden başka bir sayı göstermesi demekti.
+    committed = stack_ceiling_mb()
+    committed_ham = sum(c["memory_mb"] for c in conts if c["status"] == "running")
     os_reserve = os_reserve_mb(total)
     allocatable = allocatable_mb(total)
     reserved = stack_reserved_mb()
@@ -569,8 +572,13 @@ def render_metrics():
     add("dbstack_host_memory_available_bytes", "Sunucuda kullanilabilir RAM",
         "gauge", [([], avail * MB)])
     add("dbstack_memory_committed_bytes",
-        "Calisan container'larin TAVAN toplami (docker --memory; rezervasyon "
-        "DEGIL)", "gauge", [([], committed * MB)])
+        "Tavan DEFTERI: calisan container'larin tavanlari, yedek kopyalar "
+        "STANDBY_CEILING_WEIGHT ile (politika bu sayiya bakar)", "gauge",
+        [([], committed * MB)])
+    add("dbstack_memory_committed_raw_bytes",
+        "Tavanlarin HAM toplami: hepsi ayni anda tepe yaparsa. Politika bunu "
+        "kullanmaz; ana kopya ile yedegi ayni anda tepe yapamaz", "gauge",
+        [([], committed_ham * MB)])
     add("dbstack_memory_reserved_bytes",
         "Acik motorlarin ACILISTA gercekten ayirdigi bellek (shared_buffers, "
         "buffer pool, JVM -Xms)", "gauge", [([], reserved * MB)])
@@ -3414,7 +3422,7 @@ def do_rebalance(jid):
         #    formül tutmak, "yeniden dengele"den sonra motoru kapatıp açınca
         #    başka bir sayı çıkması demek olurdu.
         istek = {}
-        for e, _c in hedefler:
+        for e, _c, _s in hedefler:
             res = e.get("resources", {})
             istek[e["id"]] = int(_clamp(total * float(res.get("share", 0.2)),
                                         int(res.get("min_mb", 256)),
@@ -6908,7 +6916,12 @@ def status():
     # (stack_committed_mb) bunu söylüyor ama panel onu "AYRILAN BELLEK" diye
     # gösterip RAM ile kıyaslıyordu; yanına dağıtılabiliri, rezerve toplamını
     # ve çekirdeğin baskı ölçümünü koyuyoruz ki tek başına okunmasın.
-    used_by_stack = sum(c["memory_mb"] for c in containers.values() if c["status"] == "running")
+    # Panelin gösterdiği sayı POLİTİKANIN baktığı sayı olmak zorunda: ikisi
+    # ayrıldığında panel "sınır aşıldı" derken plan hesabı yeni motoru kabul
+    # ediyordu. Ham toplam ayrıca veriliyor, kaybolmuyor.
+    used_by_stack = stack_ceiling_mb()
+    used_by_stack_raw = sum(c["memory_mb"] for c in containers.values()
+                            if c["status"] == "running")
     allocatable = allocatable_mb(total)
     reserved_total = stack_reserved_mb()
 
@@ -6995,6 +7008,9 @@ def status():
             "mem_total_mb": total,
             "mem_available_mb": available,
             "stack_committed_mb": used_by_stack,
+            # Ham toplam: "hepsi ayni anda tepe yaparsa". Politika
+            # bunu kullanmiyor ama gizlemiyoruz da.
+            "stack_committed_raw_mb": used_by_stack_raw,
             # Açık motorların AÇILIŞTA gerçekten ayırdığı bellek. Ölçümde
             # tavan toplamı 15 GB iken bu sayı bunun çok altındadır; ikisini
             # yan yana göstermek "%122 aşım" yanılgısını kapatıyor.

@@ -56,9 +56,15 @@ connection pool on 6432; how the pool settings derive from
 allocatable = total RAM − operating-system share − core-services share
 ```
 
-- **Operating-system share** = `max(1024 MB, RAM × 0.20)`, at most 60% of RAM.
-  The upper bound is required: on a 512 MB machine, saying "1024 MB went to the
-  operating system" drops the budget below zero and no engine can start.
+- **Operating-system share** — **measured** when it can be:
+  `total − MemAvailable − the containers' own usage`, times `OS_MEASURE_SAFETY`
+  (2.0). It is clamped to `[1024 MB, max(1024 MB, RAM × 0.20)]` and falls back
+  to the flat ratio when the measurement cannot be taken, so it can only ever
+  *relax* the budget, never tighten it. The 60%-of-RAM cap on the flat ratio is
+  required: on a 512 MB machine, saying "1024 MB went to the operating system"
+  drops the budget below zero and no engine can start.
+  Measured on the 16 GB server: the flat ratio said 3196 MB, the operating
+  system really held **~780 MB**, and the share used was **1574 MB**.
 - **Core-services share** = 448 MB — the gateway (nginx), the controller and
   Adminer. These are always up.
 
@@ -76,7 +82,18 @@ the product prints, in Turkish: ceiling · reserve · kernel).
 
 ```
 Σ ceiling + new ceiling  ≤  allocatable × OVERCOMMIT_LIMIT
+
+where a standby's ceiling counts as  ceiling × STANDBY_CEILING_WEIGHT
 ```
+
+**A primary and its standby cannot peak at the same time.** The standby exists
+to take over *instead of* the primary, not *in addition to* it: in steady state
+it only applies the change stream, and at failover the old primary is fenced.
+Adding both ceilings in full stacks two peaks that are mutually exclusive by
+definition — measured, that alone had put 13742 MB of a 16812 MB ledger on the
+board and was refusing new engines on a machine that was 87% free. The weight is
+0.5 rather than 0 because during a reseed (`pg_basebackup`, `mariabackup`) the
+standby really is working hard while the primary still serves.
 
 Not every ceiling fills at the same time; overcommit is a deliberate policy.
 The default coefficient is **1.5** and it is cautious even against the
@@ -236,6 +253,9 @@ the default applies.
 | `PRESSURE_WARN` | `10.0` | If `some avg10` is above this value, pressure is "orta" |
 | `PRESSURE_HIGH` | `30.0` | Above this value, "yuksek" |
 | `REBALANCE_HEADROOM` | `1.3` | Minimum multiple of actual use for the new ceiling |
+| `STANDBY_CEILING_WEIGHT` | `0.5` | Weight of a standby's ceiling in the ledger. `1.0` = count it in full (the old double-counting) |
+| `OS_MEASURE_SAFETY` | `2.0` | Multiple of the measured operating-system usage that is reserved |
+| `OS_MEASURE_TTL` | `10.0` | Freshness of that measurement, in seconds |
 
 Hard-coded in the code: the operating-system share `20%` (at least 1024 MB, at
 most 60% of RAM), the core-services share `448 MB`, the smallest meaningful

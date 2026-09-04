@@ -855,7 +855,10 @@ probe_meta() {   # <motor> → "ENV|etiket"  (bu motorda iç ayar yoksa boş)
     postgresql)    printf 'POSTGRES_SHARED_BUFFERS|shared_buffers' ;;
     mongodb)       printf 'MONGO_WIREDTIGER_CACHE_GB|WiredTiger önbelleği' ;;
     redis)         printf 'REDIS_MAXMEMORY|maxmemory' ;;
-    mssql)         printf 'MSSQL_MEMORY_LIMIT_MB|max server memory (MB)' ;;
+    # 'max server memory' ürünün DOKUNMADIĞI bir sp_configure ayarı;
+    # MSSQL_MEMORY_LIMIT_MB ise SQL Server'a makinede ne kadar bellek
+    # olduğunu söyler. Ölçülmesi gereken ikincisi.
+    mssql)         printf "MSSQL_MEMORY_LIMIT_MB|SQL Server'ın gördüğü bellek" ;;
     cassandra)     printf 'CASSANDRA_HEAP|JVM heap' ;;
     elasticsearch) printf 'ELASTIC_JAVA_OPTS|JVM heap' ;;
     kafka)         printf 'KAFKA_HEAP_OPTS|JVM heap (-Xmx)' ;;
@@ -896,11 +899,17 @@ probe_bytes() {   # probe_bytes <motor> <container> → bayt
         ;;
     mssql)
         pw="${MSSQL_PASSWORD:-${DB_PASSWORD:-}}"
+        # ÖLÇÜLEN: SQL Server'ın kendini ne kadar bellekli sandığı.
+        # MSSQL_MEMORY_LIMIT_MB tam olarak bunu belirliyor (ölçüldü: env 2457
+        # → physical_memory_kb 2457 MB). Eskiden 'max server memory' okunuyordu
+        # ama ürün o sp_configure ayarına HİÇ dokunmuyor; varsayılanı
+        # 2147483647 MB olarak kalıyor ve kontrol, ayarlanmamış bir düğmeye
+        # bakıp "limit aşılıyor" diyordu.
         out="$(SQLCMDPASSWORD="$pw" TO "$DEX_TIMEOUT" docker exec -e SQLCMDPASSWORD "$C" \
                /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -h -1 -W -Q \
-               "SET NOCOUNT ON; SELECT CAST(value_in_use AS BIGINT) FROM sys.configurations WHERE name = 'max server memory (MB)'" \
+               "SET NOCOUNT ON; SELECT physical_memory_kb FROM sys.dm_os_sys_info" \
                2>/dev/null | tr -d ' \r' | grep -m1 -E '^[0-9]+$')"
-        [ -n "$out" ] && printf '%s' "$((out * 1048576))"    # MB → bayt
+        [ -n "$out" ] && printf '%s' "$((out * 1024))"       # KB → bayt
         ;;
     cassandra)
         # nodetool info: "Heap Memory (MB) : 245.66 / 1004.00" → tavan ikinci alan

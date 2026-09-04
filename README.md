@@ -231,6 +231,59 @@ memory" on every engine that was off — on an idle machine.
 A refused activation writes down **which gate** it hit; it does not say "not
 enough memory" to all of them at once.
 
+#### A primary and its standby cannot peak at the same time
+
+Measured on the same server, later. With three standby copies running the
+ceiling total had reached **16812 MB**, and 13742 MB of that came from three
+primary/standby pairs (mariadb 3196 + mariadb-replica 3196, and so on). Actual
+usage at that moment was **1266 MB** — 7% of the ceilings — and the kernel
+reported 13939 MB available. SQL Server was refused: it wanted a 2048 MB
+ceiling and 1698 MB were left.
+
+That refusal was a **counting error**, not caution. A standby exists to take
+over **instead of** the primary, not **in addition to** it: in steady state it
+only applies the change stream (measured: 254 MB, 120 MB, 5 MB), and at failover
+the old primary is fenced. Adding both ceilings stacks two peaks that are
+mutually exclusive by definition.
+
+A standby now counts with `STANDBY_CEILING_WEIGHT` (0.5 by default) in the
+ceiling ledger. Not zero: during a reseed (`pg_basebackup`, `mariabackup`) the
+standby really is working hard while the primary still serves.
+
+Only the **soft** gate is relaxed by this. The hard gate still counts every
+reserve in full and the kernel seatbelt is untouched — if the ledger is wrong,
+the kernel's measurement still has the last word.
+
+#### The operating system's share is measured, not assumed
+
+The OS share used to be a flat 20% of RAM — 3196 MB on this machine. Measured,
+the operating system really holds about **780 MB** (`total − MemAvailable − the
+containers' own usage`). Multiplied by the overcommit factor, that difference is
+more ceiling budget than SQL Server was asking for.
+
+The measurement is used, but **only to relax**: the flat ratio stays an upper
+bound, the 1024 MB floor stays a floor, and if the measurement cannot be taken
+the flat ratio is used. Erring in the safe direction is the whole point.
+
+After both corrections, on the same server:
+
+| | before | after |
+|---|---|---|
+| operating system share | 3196 MB | 1574 MB |
+| allocatable | 12340 MB | 13962 MB |
+| ceiling ledger | 16812 MB | 13376 MB |
+| ceiling budget left | 1698 MB | 7567 MB |
+| SQL Server | refused | **starts with a 3072 MB ceiling** |
+
+#### "No room" is not a dead end
+
+A refusal now measures **how much room rebalancing would free** and says so —
+including when it would not be enough. What it does **not** do is shrink engines
+silently. The ceiling drops live, but an engine's internal setting (buffer pool,
+heap) only shrinks at its next restart; a silent trim would surface as a
+slowdown at a moment nobody could connect to the decision that caused it. The
+number is shown, the risk is stated, and the decision stays yours.
+
 #### Rebalancing
 
 When the ceiling total passes the policy limit (an engine was enlarged by hand,

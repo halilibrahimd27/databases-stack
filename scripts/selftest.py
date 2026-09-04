@@ -250,6 +250,54 @@ ck("teklif motorun asgari tavanının altına inmiyor",
        for k in (_p2.get("trim_items") or []) if k.get("engine")),
    "mariadb tabanı=%d MB" % _taban_mariadb)
 app.container_usage_mb = _eski_kul
+
+# Dengeleme GERÇEKTEN koşuyor mu. Kaynak taraması bir açma hatasını göremez;
+# fonksiyonun çalışması gerekiyor. Docker'a dokunmuyoruz — `run` sahte.
+_eski_run, _eski_kul2 = app.run, app.container_usage_mb
+_eski_topo2 = app.load_topology
+_docker_cagri = []
+
+
+def _sahte_run(cmd, **kw):
+    _docker_cagri.append(list(cmd))
+    return 0, "", ""
+
+
+app.run = _sahte_run
+app.container_usage_mb = lambda c: 200
+app.load_topology = lambda: {"mariadb": {"primary": "mariadb"}}
+HOST["total"] = 16384
+RUNNING["list"] = [{"service": "mariadb", "memory_mb": 6000},
+                   {"service": "mariadb-replica", "memory_mb": 6000},
+                   {"service": "postgresql", "memory_mb": 4000}]
+_jid = app.new_job("rebalance", None)
+# Fonksiyonun KENDİSİ patlarsa bu bir çökme değil, bir BULGU olmalı: ölçülen
+# arıza tam olarak buydu (üçlüye dönen listeyi ikili açan bir döngü) ve
+# yakalanmadan bırakılırsa selftest yığın iziyle ölür, hangi denetimin ne
+# dediği kaybolur.
+try:
+    app.do_rebalance(_jid)
+    _hata = None
+except Exception as _e:
+    _hata = repr(_e)
+_is = app.JOBS[_jid]
+ck("yeniden dengeleme koşuyor ve 'done' ile bitiyor",
+   _hata is None and _is["state"] == "done",
+   _hata or (_is.get("reason") or "")[:90])
+ck("yedek kopyanın tavanı da güncelleniyor (dokunulmaz değil)",
+   any("mariadb-replica" in c for c in _docker_cagri),
+   "%d docker update çağrısı" % len(_docker_cagri))
+# Emniyet kuralı burada da geçerli: hiçbir tavan ölçülen kullanımın
+# REBALANCE_HEADROOM katının altına inmedi.
+_yeni = [int(c[c.index("--memory") + 1].rstrip("m"))
+         for c in _docker_cagri if "--memory" in c]
+ck("dengeleme hiçbir tavanı kullanımın %.2f katının altına indirmiyor"
+   % app.REBALANCE_HEADROOM,
+   all(v >= int(200 * app.REBALANCE_HEADROOM) for v in _yeni),
+   "en düşük=%s MB" % (min(_yeni) if _yeni else "-"))
+app.run, app.container_usage_mb = _eski_run, _eski_kul2
+app.load_topology = _eski_topo2
+RUNNING["list"] = []
 RUNNING["list"] = []
 app.save_tuning({})
 
@@ -2480,9 +2528,30 @@ ck("açık motorların rezerve toplamı tavan toplamından KÜÇÜK "
 
 _oran = _sayi(_sis, "overcommit_ratio")
 _pol = _sayi(_sis, "overcommit_limit")
-ck("aşırı taahhüt oranı bildiriliyor (tavan toplamı / dağıtılabilir)",
-   _oran is not None and _pol is not None and _oran > 1.0,
-   "oran=%s politika=%s" % (_oran, _pol))
+_defter = _sayi(_sis, "stack_committed_mb")
+_ham = _sayi(_sis, "stack_committed_raw_mb")
+ck("aşırı taahhüt oranı bildiriliyor ve DEFTERLE tutarlı",
+   None not in (_oran, _pol, _defter, _alloc) and _alloc > 0
+   and abs(_oran - round(_defter / float(_alloc), 2)) < 0.011,
+   "oran=%s defter=%s dağıtılabilir=%s" % (_oran, mb(_defter), mb(_alloc)))
+
+# Panel, Grafana ve admission AYNI sayıyı görmek zorunda. Panelde görüldü:
+# üstteki uyarı "tavanlar toplamı 22 GB, politika 20 GB'a izin veriyor" derken
+# plan hesabı yeni motoru KABUL ediyordu — çünkü uyarı ham toplamı, plan ise
+# defteri okuyordu. Ham toplam gizlenmiyor, ama politika kararını o vermiyor.
+ck("panelin gördüğü sayı, politikanın baktığı defterin ta kendisi",
+   _defter is not None and _ham is not None and _defter <= _ham,
+   "defter=%s ham=%s" % (mb(_defter), mb(_ham)))
+
+# ÖLÇÜLEN OLAYIN KENDİSİ: bu kurgu 15087 MB tavanla %122 aşım diye
+# raporlanıyor ve her motoru reddettiriyordu. O toplamın 3196 MB'ı
+# mariadb-replica'ya ait — ana kopyasıyla aynı anda tepe yapamayacak bir
+# yedek kopyaya. Defter düzelince aynı durum aşım olmaktan çıkıyor.
+ck("ölçülen olay, düzeltilmiş defterle artık aşım DEĞİL",
+   _oran is not None and _oran <= _pol,
+   "oran=%s politika=%s (ham toplamla %s olurdu)"
+   % (_oran, _pol,
+      round(_ham / float(_alloc), 2) if _ham and _alloc else "?"))
 
 _psi = _sis.get("pressure")
 ck("çekirdek baskı sinyali sözleşmedeki biçimde bildiriliyor",
