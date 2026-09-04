@@ -3456,7 +3456,14 @@ import html.parser as _html_parser        # noqa: E402
 # Bu iki sabit aşağıdaki JS bölümünde de kullanılıyor; burada TANIMLANIYOR
 # çünkü HTML denetimi ondan önce koşuyor.
 _TR_HARF = "çğıöşüÇĞİÖŞÜ"
-_ATIL = _re2.compile(r"^[\s:;,.·—–|()\[\]{}<>&%*+=0-9-]*$")
+def _dilsiz(_s):
+    """İçinde hiç harf yoksa çevrilecek bir şey de yoktur.
+
+    Eskiden dil-nötr karakterler tek tek sayılıyordu ve liste eksik kalıyordu
+    (simgeler, para birimleri, oklar). Ölçüt artık karakterin kendisinde:
+    harf yoksa dil de yok. Diakritiksiz Türkçe ('Panele girin') harf içerdiği
+    için bu süzgeçten GEÇMEZ — eski arızayı geri getirmiyor."""
+    return not any(_ch.isalpha() for _ch in _s)
 
 _BS = chr(92)
 _ANAHTAR_DESEN = r"^\s*'((?:[^'" + _BS + _BS + r"]|" + _BS + _BS + r".)+)':"
@@ -3594,7 +3601,7 @@ for _s in sorted(_glob2.glob(_os2.path.join(_HTML_DIZIN, "*.html"))):
     for _m in _c.serbest:
         # DİL TAHMİNİ YOK: "Panele girin" gibi diakritiksiz Türkçe metinler
         # eski süzgeçten kaçıyordu. Dil-nötr olanlar TEK TEK sayılı.
-        if _ATIL.match(_m) or _m in _HTML_NOTR:
+        if _dilsiz(_m) or _m in _HTML_NOTR:
             continue
         if _m not in _ANAHTARLAR:
             _isaretli_eksik.append("%s (işaretsiz): %s" % (_ad, _m[:40]))
@@ -3991,7 +3998,7 @@ def _js_metinleri(yol):
         _etiketli = "<" in _z and ">" in _z
         for _h in (_metin_dugumleri(_z) if _etiketli else [_z]):
             _x = _re2.sub(r"\s+", " ", _h).strip()
-            if not _x or _ATIL.match(_x):
+            if not _x or _dilsiz(_x):
                 continue
             # Zincir bir NİTELİK ortasında başlıyorsa ('… title="' + x)
             # baştaki nitelik adı metnin parçası değil.
@@ -4003,7 +4010,7 @@ def _js_metinleri(yol):
             _k = _js_numarala(_x)
             if not _etiketli and _KOD_DIZGI2.match(_k):
                 continue
-            if _ATIL.match(_re2.sub(r"\{\d\}", "", _k)):
+            if _dilsiz(_re2.sub(r"\{\d\}", "", _k)):
                 continue
             out.add(_k)
     return out

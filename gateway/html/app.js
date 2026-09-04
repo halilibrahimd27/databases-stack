@@ -1135,16 +1135,16 @@ function render() {
     toolLinks.push(aktif && e.panel
       ? `<button class="tool-link is-on" data-act="panel" data-id="${esc(e.id)}"
            title="${esc(e.panel.name)} panelini yeni sekmede aç"
-         >${esc(e.icon || '')} ${esc(e.name)} aç</button>`
+         ><span class="tool-ico">${esc(e.icon || '')}</span> ${esc(e.name)} aç</button>`
       : `<a class="tool-link" href="#eng-${esc(e.id)}"
-           title="Satırına git">${esc(e.icon || '')} ${esc(e.name)}</a>`);
+           title="Satırına git"><span class="tool-ico">${esc(e.icon || '')}</span> ${esc(e.name)}</a>`);
   });
 
   /* Yedekler artık ayrı bir sayfa. Bağlantısı "Araçlar" satırında, izleme
      kısayolunun yanında duruyor: panelin içinden kaldırılan bir bölüm, yerine
      görünür bir kapı bırakmazsa kullanıcı için SİLİNMİŞ demektir. */
   toolLinks.push(`<a class="tool-link" href="/yedekler"
-      title="Yedek dosyaları, zamanlama ve geri yükleme">💾 Yedekler</a>`);
+      title="Yedek dosyaları, zamanlama ve geri yükleme"><span class="tool-ico">💾</span> Yedekler</a>`);
 
   const tl = $('#tool-links');
   if (tl) {

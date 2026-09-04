@@ -63,7 +63,7 @@
       'They use no resources at all. Click a row to see what it is for.',
     'Durum işaretleri': 'Status badges',
     'Araçlar': 'Tools',
-    'İzleme aç': 'Open monitoring',
+    'İzleme aç': 'Open Monitoring',
     'Çalışıyor': 'Running',
     'Başlatılıyor': 'Starting',
     'Sorunlu': 'Unhealthy',
@@ -650,6 +650,11 @@
       'Scheduled round {1}',
     'baştan ayrılan {1}':
       'reserved up front {1}',
+    /* Üst bardaki ikinci satır tek bir metin düğümü: iki yarısı ayrı ayrı
+       değil, bütün olarak eşleşmek zorunda. 'üst sınır {1}' aşağıda zaten
+       var; eksik olan bileşik satırdı. */
+    'baştan ayrılan {1} · üst sınır {2}':
+      '{1} reserved up front · {2} ceiling',
     'bellek baskısı: {1}':
       'memory pressure: {1}',
     'boş · baskı {1}':
@@ -949,6 +954,9 @@
       'For row-and-column data such as users, orders and products. JSON fields, map/location data, full-text search and complex reporting queries are all handled inside it too — most projects go for years without needing anything else.',
     'Kullanıcılar, siparişler, ürünler gibi satır-sütun verisi. WordPress, Laravel, çoğu web uygulaması bunu ister.':
       'Row-and-column data such as users, orders and products. WordPress, Laravel and most web applications ask for this.',
+    'Analitik (OLAP)': 'Analytics (OLAP)',
+    'Arama & Log': 'Search & Log',
+    'Nesne Depolama': 'Object storage',
     'Mesajlaşma & Streaming':
       'Messaging & Streaming',
     'Microsoft SQL Server 2022 Express. T-SQL iş yükleri.':
@@ -1514,6 +1522,41 @@
     return false;
   }
 
+  /* Metin düğümünün, data-i18n taşıyan en yakın atası. dugumCevir() böyle
+     düğümleri atlıyor ("uygula() zaten çeviriyor" diye); izleyicinin o
+     elemanı yeniden çevirebilmesi için hangisi olduğunu bilmesi gerekiyor. */
+  function isaretliAta(d) {
+    var p = d.parentNode;
+    while (p && p.nodeType === 1) {
+      if (p.hasAttribute('data-i18n-html')) return null;
+      if (p.hasAttribute('data-i18n')) return p;
+      p = p.parentNode;
+    }
+    return null;
+  }
+
+  /* İşaretli bir elemanı çevirir. KAYNAĞI TAZELER: panelin kendi kodu
+     çalışırken bu metni değiştirebiliyor (bellek başlığı böyle) ve kaynağı
+     bir kez saklayıp bir daha bakmamak, o yeni metni sonsuza kadar
+     çevrilmemiş bırakıyordu. Son yazdığımız çeviriyi sakladığımız için
+     "değişen ben miyim, panel mi" sorusunu ölçerek yanıtlıyoruz. */
+  function isaretliCevir(el) {
+    if (!el || el.nodeType !== 1) return;
+    var simdi = el.textContent.replace(/\s+/g, ' ').trim();
+    if (!el.dataset.i18nSrc
+        || (el.dataset.i18nOut !== undefined
+            && simdi !== el.dataset.i18nOut
+            && simdi !== el.dataset.i18nSrc)) {
+      el.dataset.i18nSrc = simdi;
+    }
+    var yeni = t(el.dataset.i18nSrc);
+    /* Aynıysa YAZMIYORUZ: textContent'e yazmak yeni bir metin düğümü, o da
+       yeni bir mutasyon demek. Eşitlik kontrolü olmadan izleyici bu
+       fonksiyonu sonsuza kadar kendi kendine çağırırdı. */
+    if (el.textContent !== yeni) el.textContent = yeni;
+    el.dataset.i18nOut = yeni.replace(/\s+/g, ' ').trim();
+  }
+
   function dugumCevir(d) {
     if (!OZGUN || !d || d.nodeType !== 3) return;
     if (!d.nodeValue || !d.nodeValue.trim()) return;
@@ -1531,7 +1574,12 @@
     if (!vardi) OZGUN.set(d, ham);
     /* Baştaki ve sondaki boşluk korunuyor: "Kapat" ile " Kapat " yan yana
        geldiğinde kelimelerin birbirine yapışmaması için. */
-    d.nodeValue = ham.match(/^\s*/)[0] + karsilik + ham.match(/\s*$/)[0];
+    var on = ham.match(/^\s*/)[0];
+    /* AMA noktalamadan önce değil. Türkçede araya giren <b>…</b>'den sonra
+       cümle boşlukla devam ediyor; İngilizce karşılığı virgülle başlayınca
+       ekranda "the same address , the connection" kalıyordu. */
+    if (/^[,.;:!?]/.test(karsilik)) on = '';
+    d.nodeValue = on + karsilik + ham.match(/\s*$/)[0];
   }
 
   /* Baloncuk metinleri (title) ve ekran okuyucu etiketleri de kullanıcıya
@@ -1547,18 +1595,30 @@
       if (el.hasAttribute('data-i18n-attr')) continue;
       var saklaAd = 'i18nDom' + ad.replace(/(^|-)([a-z])/g,
         function (m, a, b) { return b.toUpperCase(); });
+      var ciktiAd = saklaAd + 'Out';
+      var simdiki = el.getAttribute(ad);
       var vardi = Object.prototype.hasOwnProperty.call(el.dataset, saklaAd);
-      var ham = vardi ? el.dataset[saklaAd] : el.getAttribute(ad);
+      /* Metinde olduğu gibi: panel bu niteliği çalışırken değiştirebiliyor
+         (aria-label böyle). Son yazdığımızdan farklıysa değiştiren biz
+         değiliz — saklanan kaynak eskimiştir, tazeliyoruz. */
+      if (vardi && el.dataset[ciktiAd] !== undefined
+          && simdiki !== el.dataset[ciktiAd]
+          && simdiki !== el.dataset[saklaAd]) {
+        vardi = false;
+      }
+      var ham = vardi ? el.dataset[saklaAd] : simdiki;
       if (DIL === 'tr') {
-        if (vardi) el.setAttribute(ad, ham);
+        if (vardi && simdiki !== ham) el.setAttribute(ad, ham);
         continue;
       }
       var anahtar = String(ham).replace(/\s+/g, ' ').trim();
       var karsilik = Object.prototype.hasOwnProperty.call(EN, anahtar)
         ? EN[anahtar] : kalipCevir(anahtar);
       if (karsilik === null || karsilik === undefined) continue;
-      if (!vardi) el.dataset[saklaAd] = ham;
-      el.setAttribute(ad, karsilik);
+      el.dataset[saklaAd] = ham;
+      /* Aynıysa yazmıyoruz: nitelik yazmak da mutasyon demek. */
+      if (simdiki !== karsilik) el.setAttribute(ad, karsilik);
+      el.dataset[ciktiAd] = karsilik;
     }
   }
 
@@ -1585,17 +1645,31 @@
         var ek = kayitlar[i].addedNodes;
         for (var j = 0; j < ek.length; j++) {
           var n = ek[j];
-          if (n.nodeType === 3) dugumCevir(n);
+          /* İşaretli bir elemanın İÇİNDE metin değiştiyse o elemanı
+             yeniden çevirmek gerekiyor: dugumCevir() onu atlıyor ve
+             uygula() da o an çağrılmıyordu — iki taraf da ötekinin
+             yapacağını sanıyordu ve metin Türkçe kalıyordu. */
+          if (n.nodeType === 3) {
+            var im = isaretliAta(n);
+            if (im) isaretliCevir(im); else dugumCevir(n);
+          }
           /* uygula() sonunda zaten agaci() geziyor; ikinci kez çağırmak
              beş saniyede bir yeniden çizilen panelde boşa iş demekti. */
           else if (n.nodeType === 1) uygula(n);
         }
+        if (kayitlar[i].type === 'attributes') nitelikCevir(kayitlar[i].target);
       }
     });
     /* characterData izlenmiyor: kendi yazdığımız nodeValue'lar geri
        beslenip sonsuz döngü kurmasın. childList bizim için yeterli —
        panel içeriği innerHTML ile bütün olarak değişiyor. */
-    izleyici.observe(document.body, { childList: true, subtree: true });
+    /* Nitelikler de izleniyor: panel çalışırken aria-label/title
+       yazabiliyor ve o metin de kullanıcıya ulaşıyor. nitelikCevir()
+       aynı değeri yeniden yazmadığı için bu döngü kendini beslemiyor. */
+    izleyici.observe(document.body, {
+      childList: true, subtree: true,
+      attributes: true, attributeFilter: NITELIKLER
+    });
   }
 
   function uygula(kok) {
@@ -1612,10 +1686,7 @@
          Daha kötüsü: selftest de sıkıştırarak baktığı için 'karşılığı var'
          diyordu; kontrol, ürünün yaptığından BAŞKA bir şeyi ölçüyordu.
          uygulaHtml() zaten böyle normalleştiriyordu; ikisi artık aynı. */
-      if (!el.dataset.i18nSrc) {
-        el.dataset.i18nSrc = el.textContent.replace(/\s+/g, ' ').trim();
-      }
-      el.textContent = t(el.dataset.i18nSrc);
+      isaretliCevir(el);
     });
     k.querySelectorAll('[data-i18n-attr]').forEach(function (el) {
       el.dataset.i18nAttr.split(',').forEach(function (ad) {
