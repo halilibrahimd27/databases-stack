@@ -1948,8 +1948,12 @@ _bk = open("scripts/backup.sh", encoding="utf-8").read()
 _fn = re.findall(r"\n((?:backup|restore)_\w+)\(\) \{(.*?)\n\}", _bk, re.S)
 _undef = [n for n, body in _fn if '"$C"' in body and 'C="$(primary_of' not in body]
 ck("yedek/geri yükleme fonksiyonlarında $C tanımsız kalmıyor", not _undef, ", ".join(_undef))
+# Ölçüt BİÇİM değil DAVRANIŞ: motor alt kabukta koşsun ve çıkış kodu
+# '|| ... =$?' ile yakalansın. Çıplak bir `( ... )` set -e altında bütün
+# turu keser; `if ( ... )` de `( ... ) || rc=$?` de bundan muaftır.
 ck("bir motorun kabuk hatası tüm turu öldürmüyor (alt kabukta çalışıyor)",
-   'if ( "backup_$eid" ); then' in _bk)
+   'if ( "backup_$eid" ); then' in _bk
+   or '( "backup_$eid" ) || _rc=$?' in _bk)
 
 # Parola HOST'ta genişlerse (çift tırnak) değişken host'ta yoktur; set -u alt
 # kabuğu öldürür, motor listesi boş kalır ve BOŞ arşiv "doğrulandı" damgası yer.
