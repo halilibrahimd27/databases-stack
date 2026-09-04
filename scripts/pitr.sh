@@ -2124,6 +2124,8 @@ Zamanda bir ana dönme (PITR) — databases-stack
         arşiv ne kadar yer tutuyor.
 
   ./scripts/pitr.sh kur <motor>
+  ./scripts/pitr.sh cakisma <motor>   Arsivleyici ayni adli farkli bir segmentte
+                                     takildiysa onu karantinaya alir (SILMEZ)
         Arşiv dizinini açar ve motorun oraya YAZABİLDİĞİNİ ölçer.
 
   ./scripts/pitr.sh taban [motor]
@@ -2167,6 +2169,33 @@ KOMUT="${1:-yardim}"
 shift 2>/dev/null || true
 
 case "$KOMUT" in
+    cakisma)
+        # ARŞİVLEYİCİ AD ÇAKIŞMASINDA KİLİTLENİR. PostgreSQL segmentleri
+        # SIRAYLA işler; bir tanesi geçilemeyince arşivleme orada durur ve
+        # pg_wal büyümeye başlar. Ölçüldü: aynı adlı ama farklı içerikli bir
+        # segment yüzünden 109 başarısız deneme, pencere 26 dakika ilerlemedi.
+        #
+        # Çakışan dosyayı SİLMİYORUZ: eski soya ait olabilir ve o soydaki bir
+        # ana dönmek için gerekebilir. Karantinaya taşıyoruz ve ne yaptığımızı
+        # söylüyoruz.
+        motor="${1:-postgresql}"
+        [ "$motor" = "postgresql" ] || die "cakisma yalnız postgresql için"
+        kar="$(dirname "$WAL_DIR")/wal-cakisma"
+        C="$(primary_of postgresql)"
+        container_running "$C" || die "$motor çalışmıyor ($C)"
+        son="$(docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" "$C" \
+               psql -U "${POSTGRES_USER:-root}" -d postgres -tAc \
+               "select coalesce(last_failed_wal,'') from pg_stat_archiver" \
+               2>/dev/null | tr -d ' \r')"
+        [ -n "$son" ] || { log "Arşivleyici takılı değil — yapılacak bir şey yok."; exit 0; }
+        [ -e "$WAL_DIR/$son" ] || die "Takılan segment ($son) arşivde yok; sebep çakışma değil. './scripts/pitr.sh durum $motor' çıktısına bakın."
+        mkdir -p "$kar"
+        mv "$WAL_DIR/$son" "$kar/$son.$(date +%Y%m%d%H%M%S)"
+        ok "Çakışan segment karantinaya alındı: $son → $kar/"
+        log "  Dosya SİLİNMEDİ; eski soya ait bir kurtarma için orada duruyor."
+        log "  Arşivleme birkaç saniye içinde kaldığı yerden devam eder."
+        exit 0
+        ;;
     durum)
         MOTOR=""; JSON=0
         for a in "$@"; do
