@@ -119,6 +119,21 @@ PRESSURE_HIGH = _env_float("PRESSURE_HIGH", 30.0, 0.0)
 # container'ı ANINDA OOM eder; %30 pay, dump/checkpoint gibi ani sıçramalara
 # yer bırakır.
 REBALANCE_HEADROOM = _env_float("REBALANCE_HEADROOM", 1.3, 1.05)
+# Yedek kopyanın tavan defterindeki AĞIRLIĞI. Ana kopya ile yedek kopya aynı
+# anda tepe yapamaz — yedeğin varlık sebebi, ana kopya öldüğünde onun YERİNE
+# geçmesidir; devir anında eskisi fence'lenmiş olur. İkisini tam tavanla
+# toplamak, tanımı gereği birbirini dışlayan iki tepeyi üst üste koymaktı.
+# 0 değil 0.5: yeniden tohumlama penceresinde (pg_basebackup/mariabackup)
+# yedek kopya gerçekten ağır iş yaparken ana kopya da hizmet veriyor.
+STANDBY_CEILING_WEIGHT = min(
+    1.0, _env_float("STANDBY_CEILING_WEIGHT", 0.5, 0.0))
+# İşletim sistemi payı ÖLÇÜLDÜĞÜNDE, ölçülen değerin kaç katı ayrılsın.
+# Ölçüm anlıktır; OS'un tepe ihtiyacı ondan yüksek olabilir.
+OS_MEASURE_SAFETY = _env_float("OS_MEASURE_SAFETY", 2.0, 1.0)
+# Ölçümün tazelik süresi. Plan/bütçe/durum hesapları aynı istekte aynı sayıyı
+# görmek zorunda: iki ayrı yerde iki farklı OS payı, ölçülen %122 tavan
+# aşımının sebeplerinden biriydi.
+OS_MEASURE_TTL = _env_float("OS_MEASURE_TTL", 10.0, 1.0)
 # Bu eşiğin altındaki tavan değişikliği uygulanmaz: her yeniden dengelemede
 # birkaç MB oynatmak, olay günlüğünü doldurmaktan başka bir şey yapmaz.
 REBALANCE_MIN_DELTA_MB = 32
@@ -922,11 +937,46 @@ def stack_reserved_mb(exclude=None):
     return toplam
 
 
+def standby_services(topo=None):
+    """ŞU AN yedek kopya olan servisler (motor başına en fazla bir tane).
+
+    Devirden sonra roller takas olabiliyor: katalogdaki 'replica_service'
+    her zaman yedek değildir. Topolojiye bakıp hangisinin ana kopya olduğunu
+    okuyoruz; yedek olan ÖTEKİDİR.
+    """
+    t = topo if topo is not None else load_topology()
+    out = set()
+    for e in CATALOG.engines:
+        rep = e.get("replication", {})
+        if not rep.get("replica_service"):
+            continue
+        prim = t.get(e["id"], {}).get("primary", e["primary_service"])
+        out.add(rep["replica_service"] if prim == e["primary_service"]
+                else e["primary_service"])
+    return out
+
+
 def stack_ceiling_mb(exclude_services=None):
-    """Çalışan container'ların docker --memory TAVANLARININ toplamı (MB)."""
+    """Çalışan container'ların docker --memory TAVAN toplamı (MB).
+
+    YEDEK KOPYALAR STANDBY_CEILING_WEIGHT ile sayılır. Ölçüldü: 15984 MB'lık
+    makinede tavan toplamı 16812 MB'a çıkmıştı ve bunun 13742 MB'ı üç
+    ana/yedek çiftinden geliyordu; gerçek kullanım aynı anda 1266 MB idi ve
+    yeni bir motor "üst sınır bütçesi doldu" diye açılamıyordu. Çift sayım
+    düzeltilmeden dengeleme de bir şey açmıyordu, çünkü yedek kopyalar
+    dokunulmaz kabul ediliyordu.
+    """
     haric = exclude_services or set()
-    return sum(c["memory_mb"] for c in docker_containers()
-               if c["status"] == "running" and c["service"] not in haric)
+    yedekler = standby_services()
+    toplam = 0.0
+    for c in docker_containers():
+        if c["status"] != "running" or c["service"] in haric:
+            continue
+        pay = c["memory_mb"]
+        if c["service"] in yedekler:
+            pay *= STANDBY_CEILING_WEIGHT
+        toplam += pay
+    return int(toplam)
 
 
 def host_pressure():
@@ -972,6 +1022,47 @@ def host_pressure():
     return out
 
 
+_OS_OLCUM = {"at": 0.0, "mb": None}
+_OS_OLCUM_LOCK = threading.Lock()
+
+
+def measured_os_mb(total=None, available=None):
+    """İşletim sisteminin GERÇEKTEN tuttuğu bellek (MB); ölçülemezse None.
+
+    total − MemAvailable − Σ container kullanımı. MemAvailable geri
+    kazanılabilir sayfa önbelleğini zaten düşüyor; kalan 'geri alınamaz'
+    bellekten container payını çıkarınca geriye işletim sistemi kalır.
+
+    Container kullanımı TEK BİR TANESİ bile ölçülemezse None dönüyoruz:
+    eksik bir toplam, OS payını olduğundan BÜYÜK gösterir ve sonuç sessizce
+    yanlış tarafa kayar. Ölçemediğimizde düz orana düşmek dürüst olanı.
+    """
+    simdi = time.time()
+    with _OS_OLCUM_LOCK:
+        if simdi - _OS_OLCUM["at"] < OS_MEASURE_TTL:
+            return _OS_OLCUM["mb"]
+    if total is None or available is None:
+        total, available = host_memory_mb()
+    deger = None
+    if total > 0 and available > 0:
+        kullanim = 0
+        eksik = False
+        for c in docker_containers():
+            if c["status"] != "running":
+                continue
+            k = container_usage_mb(c)
+            if k is None:
+                eksik = True
+                break
+            kullanim += k
+        if not eksik:
+            deger = max(0, total - available - kullanim)
+    with _OS_OLCUM_LOCK:
+        _OS_OLCUM["at"] = simdi
+        _OS_OLCUM["mb"] = deger
+    return deger
+
+
 def os_reserve_mb(total):
     """İşletim sistemi payı — TEK yerden.
 
@@ -983,8 +1074,16 @@ def os_reserve_mb(total):
     """
     if total <= 0:
         return 0
-    return min(max(OS_RESERVE_MIN_MB, int(total * OS_RESERVE_RATIO)),
+    oran = min(max(OS_RESERVE_MIN_MB, int(total * OS_RESERVE_RATIO)),
                int(total * 0.6))
+    # ÖLÇÜM VARSA ONU KULLAN — ama yalnız GEVŞETMEK için. Düz oran bir üst
+    # sınır olarak duruyor: bu değişiklik hiçbir koşulda payı bugünkünden
+    # daha aza indiremez... yani daha riskli hâle getiremez.
+    olculen = measured_os_mb(total)
+    if olculen is None:
+        return oran
+    return int(min(oran, max(OS_RESERVE_MIN_MB,
+                             olculen * OS_MEASURE_SAFETY)))
 
 
 def allocatable_mb(total=None):
@@ -1016,6 +1115,53 @@ def _fit_reserve(eid, limit, min_mb, reserve_budget, available):
         limit = max(min_mb, int(limit * 0.95))
         rez = engine_reserved_mb(eid, limit_mb=limit)
     return limit, rez
+
+
+def trim_potansiyeli(exclude_services=None):
+    """Yeniden dengeleme kaç MB tavan bütçesi açar — ÖLÇEREK.
+
+    Her çalışan container için tavanın inebileceği en düşük değer:
+    max(ölçülen kullanım × REBALANCE_HEADROOM, motorun min_mb'si). Aradaki
+    fark açılabilecek yerdir. Yedek kopyalar defterdeki ağırlıklarıyla
+    sayılır, plan_engine'deki aritmetiğin aynısı.
+
+    KULLANIMI ÖLÇÜLEMEYEN container HİÇ SAYILMAZ: körlemesine küçültmek
+    cgroup'un container'ı anında OOM etmesi demek, dolayısıyla dengeleme de
+    ona dokunmuyor. Sayarsak var olmayan bir yeri vaat etmiş oluruz.
+
+    Dönen: (toplam_mb, [{service, engine, from_mb, to_mb, usage_mb}, ...])
+    """
+    haric = exclude_services or set()
+    yedekler = standby_services()
+    # Servis → motor eşlemesi: min_mb motorun katalog kaydından geliyor.
+    servis_motor = {}
+    for e in CATALOG.engines:
+        for sv in e.get("services", []):
+            servis_motor[sv] = e
+    toplam = 0.0
+    kalemler = []
+    for c in docker_containers():
+        if c["status"] != "running" or c["service"] in haric:
+            continue
+        eski = c["memory_mb"]
+        if not eski:
+            continue
+        kullanim = container_usage_mb(c)
+        if kullanim is None:
+            continue
+        e = servis_motor.get(c["service"])
+        mn = int((e or {}).get("resources", {}).get("min_mb", 64))
+        yeni = max(int(kullanim * REBALANCE_HEADROOM), mn)
+        if eski - yeni < REBALANCE_MIN_DELTA_MB:
+            continue
+        agirlik = STANDBY_CEILING_WEIGHT if c["service"] in yedekler else 1.0
+        toplam += (eski - yeni) * agirlik
+        kalemler.append({"service": c["service"],
+                         "engine": (e or {}).get("id"),
+                         "from_mb": eski, "to_mb": yeni,
+                         "usage_mb": int(kullanim)})
+    kalemler.sort(key=lambda k: k["to_mb"] - k["from_mb"])
+    return int(toplam), kalemler
 
 
 def plan_engine(eid, requested_mb=None):
@@ -1144,6 +1290,30 @@ def plan_engine(eid, requested_mb=None):
                int(allocatable * OVERCOMMIT_LIMIT), committed,
                max(engine_budget, 0), available, pressure["seviye"],
                total, os_reserve, CORE_RESERVE_MB)), reason_kind="bellek")
+        # 'Yeniden dengele' demek yetmiyordu: kullanıcı o düğmenin işe
+        # yarayıp yaramayacağını bilmeden basıyordu. Ne kadar açılacağını
+        # ÖLÇÜP söylüyoruz — açılan yer yetmiyorsa da bunu önceden görüyor.
+        acilabilir, kalemler = trim_potansiyeli(own)
+        detail["trim_mb"] = acilabilir
+        detail["trim_items"] = kalemler[:6]
+        eksik = max(0, min_mb + overhead - max(engine_budget, 0))
+        if acilabilir >= eksik and kalemler:
+            detail["reason"] += (
+                " Ölçüldü: yeniden dengeleme %d MB açar (gereken %d MB) — "
+                "tavanlar gerçek kullanıma çekilerek, kesinti olmadan. "
+                "Motorların iç ayarları (buffer pool, heap) bir sonraki "
+                "yeniden başlatmada küçülür; o an sorgular yavaşlayabilir."
+                % (acilabilir, eksik))
+        elif kalemler:
+            detail["reason"] += (
+                " Ölçüldü: yeniden dengeleme %d MB açar ama %d MB gerekiyor —"
+                " tek başına yetmez, bir motoru durdurmanız ya da"
+                " OVERCOMMIT_LIMIT'i yükseltmeniz gerekir."
+                % (acilabilir, eksik))
+        else:
+            detail["reason"] += (
+                " Ölçüldü: yeniden dengeleme yer AÇMAZ — açık container'ların"
+                " tavanları zaten gerçek kullanımlarına yakın.")
         return detail
 
     # --- SERT KURAL: rezerve bütçesi ----------------------------------------
@@ -3219,11 +3389,17 @@ def do_rebalance(jid):
         containers = docker_containers(force=True)
         calisan = {c["service"]: c for c in containers
                    if c["status"] == "running"}
+        # Yedek kopyalar da hedefe dahil. Eskiden `disari`deydiler, yani
+        # DOKUNULMAZ sayılıyorlardı: ölçüldü, üç yedek kopya 6871 MB tavan
+        # tutarken %5-7 kullanıyordu ve dengeleme onlara dokunamadığı için
+        # bütçe dar kalıyor, hesap "değişiklik yok" deyip çıkıyordu.
         hedefler = []
         for e in CATALOG.engines:
             c = calisan.get(current_primary(e))
-            if c:
-                hedefler.append((e, c))
+            if not c:
+                continue
+            sb = standby_of(e)
+            hedefler.append((e, c, calisan.get(sb) if sb else None))
         if not hedefler:
             return job_done(jid, False,
                             "Açık motor yok — dengelenecek bir tavan da yok.")
@@ -3249,12 +3425,28 @@ def do_rebalance(jid):
         #    exporter, replika, gateway) tavanları düşüldükten sonra kalanı
         #    aşamaz. Aşıyorsa hepsi AYNI oranda kısılır: kimse ayrıcalıklı
         #    değil, sıraya göre son açılan cezalandırılmıyor.
-        prim_isimler = {c["service"] for _e, c in hedefler}
+        bizim = {c["service"] for _e, c, _s in hedefler}
+        bizim |= {s["service"] for _e, _c, s in hedefler if s is not None}
         disari = sum(c["memory_mb"] for c in containers
                      if c["status"] == "running"
-                     and c["service"] not in prim_isimler)
+                     and c["service"] not in bizim)
         pay = int(allocatable * OVERCOMMIT_LIMIT) - disari
-        toplam = sum(istek.values())
+
+        def _agirlikli_toplam(m):
+            """İstenen tavanların defterdeki AĞIRLIKLI toplamı.
+
+            Yedek kopya STANDBY_CEILING_WEIGHT ile sayılıyor — plan_engine
+            hangi aritmetiği kullanıyorsa burada da aynısı kullanılmak
+            zorunda.
+            """
+            t = 0.0
+            for e, _c, s in hedefler:
+                t += m[e["id"]]
+                if s is not None:
+                    t += m[e["id"]] * STANDBY_CEILING_WEIGHT
+            return t
+
+        toplam = _agirlikli_toplam(istek)
         if pay <= 0:
             # Motor dışı container'ların tavanları tek başına bütçeyi yemiş.
             # Motorlara verebileceğimiz en dürüst değer asgarileridir; daha
@@ -3281,15 +3473,15 @@ def do_rebalance(jid):
         #    duruyoruz ve durumu günlüğe yazıyoruz.
         for _ in range(20):
             rez = sum(engine_reserved_mb(e["id"], limit_mb=istek[e["id"]])
-                      for e, _c in hedefler)
+                      for e, _c, _s in hedefler)
             if rez <= allocatable:
                 break
-            for e, _c in hedefler:
+            for e, _c, _s in hedefler:
                 mn = int(e.get("resources", {}).get("min_mb", 256))
                 istek[e["id"]] = max(mn, int(istek[e["id"]] * 0.9))
         else:
             rez = sum(engine_reserved_mb(e["id"], limit_mb=istek[e["id"]])
-                      for e, _c in hedefler)
+                      for e, _c, _s in hedefler)
             job_log(jid, "UYARI: rezerve toplamı asgari tavanlarda bile "
                          "dağıtılabiliri aşıyor (%d MB > %d MB) — bir motoru "
                          "durdurmadan bu sunucuya sığmaz" % (rez, allocatable))
@@ -3297,8 +3489,17 @@ def do_rebalance(jid):
         # 4) Uygula. Tavan, ölçülen GERÇEK kullanımın altına İNDİRİLEMEZ.
         tun = load_tuning()
         degisen = uygulanan = hata = 0
-        for e, c in hedefler:
+        # Ana kopya ve (varsa) yedek kopya AYNI tavanı alır: yedek, devirde
+        # onun yerine geçecek ve dar bir cgroup'a sıkışmamalı. Her container
+        # yine KENDİ ölçülen kullanımına göre bir tabanla korunuyor.
+        uygulanacak = []
+        for e, c, s in hedefler:
+            uygulanacak.append((e, c, False))
+            if s is not None:
+                uygulanacak.append((e, s, True))
+        for e, c, yedek_mi in uygulanacak:
             eid = e["id"]
+            ad = eid if not yedek_mi else "%s→%s" % (eid, c["service"])
             eski = c["memory_mb"]
             yeni = int(istek[eid])
             kullanim = container_usage_mb(c)
@@ -3310,17 +3511,17 @@ def do_rebalance(jid):
                                  "kalıyordu — tabana çekildi; cgroup limiti "
                                  "anlık kullanımın altına inerse container "
                                  "ANINDA OOM olur"
-                            % (eid, yeni, REBALANCE_HEADROOM, taban))
+                            % (ad, yeni, REBALANCE_HEADROOM, taban))
                     yeni = taban
             elif yeni < eski:
                 job_log(jid, "%s: gerçek kullanım ölçülemedi — tavan "
                              "KÜÇÜLTÜLMÜYOR (körlemesine küçültmek anında OOM "
-                             "demektir)" % eid)
+                             "demektir)" % ad)
                 yeni = eski
             yeni = max(yeni, int(e.get("resources", {}).get("min_mb", 256)))
             if abs(yeni - eski) < REBALANCE_MIN_DELTA_MB:
                 job_log(jid, "%s: %d MB — değişiklik yok (kullanım %s)"
-                        % (eid, eski,
+                        % (ad, eski,
                            "%d MB" % kullanim if kullanim is not None
                            else "ölçülemedi"))
                 continue
@@ -3341,19 +3542,24 @@ def do_rebalance(jid):
                 # hiçbir şey yapamadan başarısız görünürdü.
                 job_log(jid, "%s: --memory-swap reddedildi (çekirdekte swap "
                              "muhasebesi kapalı olabilir), yalnız --memory "
-                             "ile yeniden deneniyor" % eid)
+                             "ile yeniden deneniyor" % ad)
                 rc, out, err = run(["docker", "update",
                                     "--memory", "%dm" % yeni,
                                     c["name"]], timeout=120)
             if rc != 0:
                 hata += 1
                 job_log(jid, "%s: docker update BAŞARISIZ (%d): %s"
-                        % (eid, rc, (out + err).strip()[-300:]))
+                        % (ad, rc, (out + err).strip()[-300:]))
                 continue
             uygulanan += 1
-            tun[eid] = compute_tuning(e, yeni)
+            # tuning.env motor başına tek: iç ayarlar ANA KOPYANIN tavanından
+            # türetiliyor. Yedek kopya aynı env ile açıldığı için ikisi zaten
+            # aynı değeri görüyor; yedeğin tavanından ikinci kez türetmek
+            # dosyayı iki farklı sayı arasında salındırırdı.
+            if not yedek_mi:
+                tun[eid] = compute_tuning(e, yeni)
             job_log(jid, "%s: %d MB → %d MB (kullanım %s, rezerve %d MB)"
-                    % (eid, eski, yeni,
+                    % (ad, eski, yeni,
                        "%d MB" % kullanim if kullanim is not None
                        else "ölçülemedi",
                        engine_reserved_mb(eid, limit_mb=yeni)))
@@ -3369,20 +3575,23 @@ def do_rebalance(jid):
             docker_containers(force=True)     # panel güncel tavanı görsün
 
         record_event("rebalance", "tümü",
-                     "Tavanlar yeniden dengelendi: %d motorun %d'sinde tavan "
-                     "değişti%s. Dağıtılabilir %d MB, aşırı taahhüt sınırı "
-                     "%.2f. Container'lar yeniden başlatılmadı."
-                     % (len(hedefler), uygulanan,
+                     "Tavanlar yeniden dengelendi: %d container'ın %d'sinde "
+                     "tavan değişti%s. Dağıtılabilir %d MB, aşırı taahhüt "
+                     "sınırı %.2f. Container'lar yeniden başlatılmadı."
+                     % (len(uygulanacak), uygulanan,
                         (", %d tanesinde docker update başarısız" % hata)
                         if hata else "", allocatable, OVERCOMMIT_LIMIT),
                      level="warning" if hata else "info")
         if hata:
             return job_done(jid, False,
-                            "%d motorun tavanı güncellendi ama %d tanesinde "
+                            "%d container'ın tavanı güncellendi ama %d "
+                            "tanesinde "
                             "docker update başarısız oldu; ayrıntı iş "
                             "günlüğünde." % (uygulanan, hata))
         return job_done(jid, True, None,
-                        {"changed": uygulanan, "considered": len(hedefler)})
+                        {"changed": uygulanan,
+                         "considered": len(uygulanacak),
+                         "engines": len(hedefler)})
     finally:
         ACTION_LOCK.release()
 

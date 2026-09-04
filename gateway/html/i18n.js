@@ -1244,6 +1244,11 @@
       'Automatic failover: {1} is out of service, {2} became the primary. Reason: {3}',
     'Sahipsiz gölge hacmi bulundu: {1}. Yarıda kalmış bir gölge geri yüklemeden kalmış olabilir; içeriğini kontrol edip silin: docker volume rm {2}':
       'An orphaned shadow volume was found: {1}. It may be left over from a shadow restore that stopped halfway; check its contents and delete it: docker volume rm {2}',
+    /* Yeni metin: yedek kopyalar da dengeleniyor, sayılan şey artık
+       motor değil container. Eski anahtar duruyor — geçmiş olaylar
+       kaydedildikleri metinle saklanıyor. */
+    'Tavanlar yeniden dengelendi: {1} container\'ın {2}\'sinde tavan değişti{3}. Dağıtılabilir {4} MB, aşırı taahhüt sınırı {5}. Container\'lar yeniden başlatılmadı.':
+      'Ceilings rebalanced: the ceiling changed on {2} of {1} containers{3}. Distributable {4} MB, overcommit limit {5}. No container was restarted.',
     'Tavanlar yeniden dengelendi: {1} motorun {2}\'sinde tavan değişti{3}. Dağıtılabilir {4} MB, aşırı taahhüt sınırı {5}. Container\'lar yeniden başlatılmadı.':
       'Ceilings rebalanced: the ceiling changed on {2} of {1} engines{3}. Distributable {4} MB, overcommit limit {5}. No container was restarted.',
     'Yedek kopya kaldırıldığı için otomatik devir de kapatıldı — yükseltilecek bir düğüm kalmadı. Yeniden korunmak için \'Yedek Kopya Kur\' deyip otomatik devri tekrar açın.':

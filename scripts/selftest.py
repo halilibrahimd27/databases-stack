@@ -54,7 +54,13 @@ def mb(v):
 os.environ.update(BACKEND="docker", STACK_DIR="/opt/databases", CONTROLLER_TOKEN="SELFTEST",
                   CATALOG_PATH="catalog.json", STATE_DIR="/tmp/dbstack-selftest")
 os.makedirs("/tmp/dbstack-selftest", exist_ok=True)
-for f in ("tuning.json", "tuning.env", "state.json"):
+# topology.json ve rol dosyaları DA baştan siliniyor: 3. bölüm gerçek bir
+# devir kurguluyor ve topolojiye "mariadb'nin ana kopyası mariadb-replica"
+# yazıyor. Dosya koşum bitince kalıyordu ve bir sonraki koşumda 1. bölüm o
+# kaydı okuyup çalışan 'mariadb' container'ını yedek kopya sayıyordu — aynı
+# girdiyle iki farklı sonuç. Koşumlar arası sızıntı, ölçümü güvenilmez yapar.
+for f in ("tuning.json", "tuning.env", "state.json", "topology.json",
+          "roles.env", "failover-guard.json"):
     p = "/tmp/dbstack-selftest/" + f
     if os.path.exists(p):
         os.remove(p)
@@ -129,6 +135,121 @@ p = app.plan_engine("elasticsearch")
 ck("(negatif) aynı motorlar küçük tavanlarla açıkken KABUL ediliyor "
    "— ret bütçeden geliyor, motorların varlığından değil",
    p.get("ok") is True, (p.get("reason") or "")[:70])
+RUNNING["list"] = []
+app.save_tuning({})
+
+# =============================================================================
+head("   Ana kopya ile yedek kopya AYNI ANDA tepe yapamaz")
+# =============================================================================
+# Canlı sunucuda ölçüldü: 15984 MB'lık makinede tavan toplamı 16812 MB'a
+# çıkmıştı ve bunun 13742 MB'ı üç ana/yedek çiftinden geliyordu. Gerçek
+# kullanım aynı anda 1266 MB, çekirdek 13939 MB boş bildiriyordu — ve yeni
+# motor "üst sınır bütçesi doldu" diye reddediliyordu. Yedeğin varlık sebebi
+# ana kopya ÖLDÜĞÜNDE onun YERİNE geçmek; ikisini tam tavanla toplamak,
+# tanımı gereği birbirini dışlayan iki tepeyi üst üste koymaktı.
+_topo_yedek = {"mariadb": {"primary": "mariadb"}}
+_eski_topo = app.load_topology
+app.load_topology = lambda: _topo_yedek
+RUNNING["list"] = [{"service": "mariadb", "memory_mb": 4000},
+                   {"service": "mariadb-replica", "memory_mb": 4000}]
+_defter = app.stack_ceiling_mb()
+ck("yedek kopya tavan defterinde YARIM ağırlıkla sayılıyor",
+   _defter == 4000 + int(4000 * app.STANDBY_CEILING_WEIGHT),
+   "defter=%d MB (ham toplam 8000 MB)" % _defter)
+
+# Roller devirden sonra TAKAS olabiliyor: katalogdaki 'replica_service' her
+# zaman yedek değildir. Ölçüldü — sunucuda ana kopya 'mariadb-replica' idi.
+_topo_yedek["mariadb"] = {"primary": "mariadb-replica"}
+_defter2 = app.stack_ceiling_mb()
+ck("devirden sonra AĞIRLIK yer değiştiriyor (yedek artık 'mariadb')",
+   _defter2 == 4000 + int(4000 * app.STANDBY_CEILING_WEIGHT)
+   and "mariadb" in app.standby_services(),
+   "yedekler=%s" % sorted(app.standby_services()))
+
+# Ağırlık, YUMUŞAK kuralı gevşetir ama SERT kuralı ASLA: rezerve gerçekten
+# ayrılan bellektir ve aşırı taahhüt edilemez.
+_govde_plan = io.open("controller/app.py", encoding="utf-8").read()
+_govde_defter = _govde_plan.split("def stack_reserved_mb(")[1].split(chr(10) + "def ")[0]
+ck("rezerve defteri ağırlıklandırılmıyor (SERT kural esnetilmedi)",
+   "STANDBY_CEILING_WEIGHT" not in _govde_defter)
+
+app.load_topology = _eski_topo
+RUNNING["list"] = []
+
+# =============================================================================
+head("   İşletim sistemi payı — ölçüm yalnız GEVŞETEBİLİR")
+# =============================================================================
+# Ölçüldü: 15984 MB'lık sunucuda düz %20 ile 3196 MB düşülüyordu; işletim
+# sisteminin gerçekten tuttuğu ~780 MB idi. Fark, aşırı taahhüt katsayısıyla
+# çarpılınca SQL Server'ın istediğinden fazla bütçe eder. Ama ölçüm yanılırsa
+# yanılma yönü GÜVENLİ tarafta kalmalı: düz oran bir ÜST SINIR olarak duruyor.
+for _t in (2048, 8192, 16384, 131072):
+    _duz = min(max(app.OS_RESERVE_MIN_MB, int(_t * app.OS_RESERVE_RATIO)),
+               int(_t * 0.6))
+    app._OS_OLCUM["at"] = 0.0
+    app._OS_OLCUM["mb"] = 10          # saçma derecede küçük bir "ölçüm"
+    app._OS_OLCUM["at"] = __import__("time").time()
+    _pay = app.os_reserve_mb(_t)
+    ck("%d MB sunucuda OS payı düz oranı AŞMIYOR ve asgarinin altına inmiyor"
+       % _t,
+       app.OS_RESERVE_MIN_MB <= _pay <= _duz,
+       "pay=%d MB (düz oran %d MB)" % (_pay, _duz))
+app._OS_OLCUM["at"] = 0.0
+app._OS_OLCUM["mb"] = None
+
+# Ölçülemezse düz orana DÖNÜYOR: ölçemediğimiz yerde iyimser davranmıyoruz.
+_eski_olc = app.measured_os_mb
+app.measured_os_mb = lambda total=None, available=None: None
+ck("ölçüm yoksa düz orana dönülüyor (iyimser varsayım yok)",
+   app.os_reserve_mb(16384) == min(
+       max(app.OS_RESERVE_MIN_MB, int(16384 * app.OS_RESERVE_RATIO)),
+       int(16384 * 0.6)))
+app.measured_os_mb = _eski_olc
+
+# =============================================================================
+head("   'Yer yok' bir çıkmaz değil, ÖLÇÜLMÜŞ bir teklif")
+# =============================================================================
+# Kullanıcı haklı olarak sordu: sunucuda bu kadar boş yer varken neden 'olmaz'
+# deniyor? Ret metni artık 'yeniden dengele' demekle yetinmiyor, o dengelemenin
+# kaç MB açacağını ÖLÇÜP yazıyor — açılan yer yetmiyorsa onu da söylüyor.
+HOST["total"] = 8192
+RUNNING["list"] = [{"service": "mariadb", "memory_mb": 5000},
+                   {"service": "cassandra", "memory_mb": 6000}]
+_p = app.plan_engine("elasticsearch")
+ck("tavan reddi ölçülmüş bir 'ne kadar açılır' taşıyor",
+   _p.get("ok") is False and "trim_mb" in _p
+   and "Ölçüldü:" in (_p.get("reason") or ""),
+   "trim=%s MB" % _p.get("trim_mb"))
+# Kullanımı ölçülemeyen container hiç sayılmıyor: körlemesine küçültmek
+# cgroup'un container'ı ANINDA OOM etmesi demek. Var olmayan bir yeri vaat
+# etmek, 'yer açarım' deyip açamamaktır.
+ck("kullanımı ölçülemeyen container teklife GİRMİYOR",
+   _p.get("trim_mb") == 0 and not _p.get("trim_items"),
+   "kalem=%s" % len(_p.get("trim_items") or []))
+
+# Kullanım ÖLÇÜLEBİLİYORSA teklif gerçekten yer buluyor. Sıfır dönen bir
+# hesap her zaman geçer; olumlu yolu da sınamazsak denetim boş kalır.
+_eski_kul = app.container_usage_mb
+app.container_usage_mb = lambda c: 200          # her container 200 MB
+_p2 = app.plan_engine("elasticsearch")
+_taban_mariadb = max(int(200 * app.REBALANCE_HEADROOM),
+                     int(app.CATALOG.engine("mariadb")["resources"]["min_mb"]))
+ck("kullanım ölçülebiliyorsa teklif yer buluyor",
+   _p2.get("trim_mb", 0) > 0 and _p2.get("trim_items"),
+   "trim=%s MB, %s kalem" % (_p2.get("trim_mb"),
+                             len(_p2.get("trim_items") or [])))
+ck("teklif hiçbir tavanı kullanımın %.2f katının altına indirmiyor"
+   % app.REBALANCE_HEADROOM,
+   all(k["to_mb"] >= int(k["usage_mb"] * app.REBALANCE_HEADROOM)
+       for k in (_p2.get("trim_items") or [])),
+   "en düşük hedef=%s" % min(
+       [k["to_mb"] for k in (_p2.get("trim_items") or [])] or [0]))
+ck("teklif motorun asgari tavanının altına inmiyor",
+   all(k["to_mb"] >= int(app.CATALOG.engine(k["engine"])
+                         .get("resources", {}).get("min_mb", 64))
+       for k in (_p2.get("trim_items") or []) if k.get("engine")),
+   "mariadb tabanı=%d MB" % _taban_mariadb)
+app.container_usage_mb = _eski_kul
 RUNNING["list"] = []
 app.save_tuning({})
 
