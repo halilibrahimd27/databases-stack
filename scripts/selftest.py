@@ -4568,6 +4568,17 @@ ck("gölge geri yükleme PITR tabanını yeniliyor",
 ck("klasik geri yükleme de PITR tabanını yeniliyor",
    "pitr_taban_yenile(" in _klasik_govde)
 
+# PITR ÜRETİM GERİ YÜKLEMESİ TEK YÖNLÜ KAPI OLMAMALI. Canlı sunucuda
+# ölçüldü: pencere kontrolü geçti, taban üretim hacmine basıldı, küme
+# açılamadı ("could not locate required checkpoint record"), container 21 kez
+# yeniden başladı ve geri dönüş yoktu. Pencerenin doğru olması, TABANIN
+# oynatılabileceği anlamına gelmiyor — bunu ancak deneyerek öğreniyoruz.
+_psrc = io.open("scripts/pitr.sh", encoding="utf-8").read()
+ck("PITR üretim geri yüklemesi önce tek kullanımlık kopyada deniyor",
+   "ÖN PROVA KAPISI" in _psrc and 'PITR_ON_PROVA' in _psrc)
+ck("ön prova düşerse üretime DOKUNULMUYOR",
+   "ÖN PROVA DÜŞTÜ" in _psrc and "üretime DOKUNULMADI" in _psrc)
+
 # --- REPLİKA VARKEN TAKAS YOK ------------------------------------------------
 # Takas ana kopyanın geçmişini değiştirir; replika eski geçmişin devamıdır ve
 # o anda ayrışır. Sessizce bozmaktansa reddetmek doğru — ve ne yapılacağını

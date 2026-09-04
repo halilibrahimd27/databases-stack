@@ -1281,6 +1281,31 @@ cmd_don() {
 
     plog "Hedef: $(epoch_yaz "$hedef") — aralık $(epoch_yaz "$en_eski") … $(epoch_yaz "$en_yeni") içinde."
 
+    # --- ÖN PROVA KAPISI -----------------------------------------------------
+    # ÜRETİME YAZMADAN ÖNCE AYNI KURTARMAYI TEK KULLANIMLIK BİR KOPYADA
+    # DENİYORUZ. Ölçülen olay: pencere kontrolü geçti, taban üretim hacmine
+    # basıldı ve küme açılamadı ("could not locate required checkpoint
+    # record"); container 21 kez yeniden başladı ve geri dönüş yoktu.
+    # Pencerenin doğru olması, TABANIN OYNATILABİLECEĞİ anlamına gelmiyor —
+    # bunu ancak gerçekten deneyerek öğrenebiliriz.
+    #
+    # Bedeli: geri yükleme iki kez koşar. Büyük bir veritabanında bu uzun
+    # sürer; PITR_ON_PROVA=0 ile kapatılabilir ama kapatan kişi neyi
+    # kapattığını bilerek kapatır.
+    if [ "$prova" != "1" ] && [ "${PITR_ON_PROVA:-1}" != "0" ]; then
+        plog "Ön prova: aynı kurtarma önce tek kullanımlık bir kopyada deneniyor."
+        plog "  (üretime henüz DOKUNULMUYOR; PITR_ON_PROVA=0 ile atlanabilir)"
+        if ( if [ "$motor" = "postgresql" ]; then
+                 pg_don "$hedef" 1 "$dsql"
+             else
+                 my_don "$hedef" 1 "$dsql"
+             fi ) >>"$LOG_FILE" 2>&1; then
+            plog "Ön prova GEÇTİ — üretime uygulanıyor."
+        else
+            reddet "ÖN PROVA DÜŞTÜ: bu an için seçilen taban tek kullanımlık bir kopyada AÇILAMADI, bu yüzden üretime DOKUNULMADI. Üretime yazsaydık veritabanı açılamaz hâlde kalırdı ve geri dönüş olmazdı. Ayrıntı: $LOG_FILE. Başka bir an deneyin ya da './scripts/pitr.sh taban $motor' ile yeni bir taban alın."
+        fi
+    fi
+
     if [ "$motor" = "postgresql" ]; then
         pg_don "$hedef" "$prova" "$dsql"
     else
