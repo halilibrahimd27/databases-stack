@@ -24,7 +24,7 @@ your application's connection address changing.
 ## What does it look like?
 
 <div align="center">
-<img src="ss/01-panel.png" alt="Management panel" width="900">
+<img src="ss/en/01-panel.png" alt="Management panel" width="900">
 </div>
 
 The page has two zones. At the top, the ones that are **currently on**, as
@@ -44,7 +44,7 @@ kernel's memory pressure was zero.
 Details: [Memory is calculated automatically](#memory-is-calculated-automatically).
 
 <div align="center">
-<img src="ss/03-islemler.png" alt="Hard-to-undo actions in a collapsed section" width="900">
+<img src="ss/en/03-islemler.png" alt="Hard-to-undo actions in a collapsed section" width="900">
 </div>
 
 Everyday actions are on the face of the card (open the panel, connection info).
@@ -54,7 +54,7 @@ sentence what will happen**. Hitting the wrong one out of six buttons standing
 side by side is not possible in this product.
 
 <div align="center">
-<img src="ss/06-yedekler.png" alt="Backups page" width="900">
+<img src="ss/en/06-yedekler.png" alt="Backups page" width="900">
 </div>
 
 Backups have their own page (**Tools ("Araçlar") → Backups ("Yedekler")**): the
@@ -86,7 +86,7 @@ PromQL query; and when you turn it off, it drops out of the target list by
 itself.
 
 <div align="center">
-<img src="ss/04-olaylar.png" alt="Recent events" width="900">
+<img src="ss/en/04-olaylar.png" alt="Recent events" width="900">
 </div>
 
 At the bottom of the panel **it says what happened**: which engine came up when,
@@ -96,7 +96,7 @@ what is going on from here, without logging into the server and reading
 `docker logs`.
 
 <div align="center">
-<img src="ss/02-kurulum.png" alt="Certificate installation guide" width="620">
+<img src="ss/en/02-kurulum.png" alt="Certificate installation guide" width="620">
 </div>
 
 There is no domain name on an internal network, so the server produces the TLS
