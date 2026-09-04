@@ -1323,7 +1323,51 @@
     '{1} yeniden replika olarak kuruldu; roller tutarlı (ana kopya: {2})':
       '{1} was rebuilt as a replica; the roles are consistent (primary: {2})',
     '{1} {2} dosyasından geri yüklendi; önceki veriler bu dosyanın içeriğiyle değiştirildi.':
-      '{1} was restored from {2}; the previous data was replaced with the contents of that file.'
+      '{1} was restored from {2}; the previous data was replaced with the contents of that file.',
+
+    /* --- iç şablon / ifade bölgesinde saklı kalmış metinler --- */
+    'Alternatif:': 'Alternative:',
+    'Açık motorlara verilen üst sınırlar': 'Ceilings given to the running engines',
+    'Açık motorların baştan ayırdığı': 'Reserved up front by the running engines',
+    'Bağlantı adresi (connection string)': 'Connection string',
+    'Bağlantı portu': 'Connection port',
+    'Baştan ayıracağı': 'Would reserve up front',
+    'Bu motora ait': 'Belonging to this engine',
+    'Bu veritabanı için gereken en az': 'The minimum this database needs',
+    'Dağıtılabilir bellek': 'Distributable memory',
+    'KAPALI': 'OFF',
+    'Kullanıcı': 'User',
+    'Parola': 'Password',
+    'Politika sınırı': 'Policy limit',
+    'Port': 'Port',
+    'Sunucu toplam belleği': 'Server total memory',
+    'Sıradaki deneme': 'Next attempt',
+    'Sıradaki yedek': 'Next backup',
+    'Temizle': 'Clear',
+    'Veritabanı': 'Database',
+    'Yönetim ekranı': 'Admin panel',
+    'container hâlâ duruyor.': 'containers are still there.',
+    '{1} KB göster': 'Show {1} KB',
+    '{1} motorun hiç yedeği yok.': '{1} engines have no backup at all.',
+    '{1} sürüyor': '{1} running',
+    '{1} tanesi dikkat istiyor — en üstte.': '{1} of them need attention — at the top.',
+    '{1} — ölçülen sayılar ve ne yapılacağı için tıklayın': '{1} — click for the measured numbers and what to do',
+    '{1}× · {2}': '{1}× · {2}',
+    '· {1} sn ölçülemedi': '· {1} s not measured',
+    'üretimde lisans gerekir': 'a licence is required in production',
+    'Şu anki gerçek kullanım': 'Actual usage right now',
+    'Şu anki tavan toplamı': 'Current total of ceilings',
+    'şema {1}{2}': 'schema {1}{2}',
+    'Bu seçenek arşivdeki kayıtlarla hedefe ileri sarar. Ölçülen risk: PostgreSQL\'de kümeyi açılamaz hâlde bırakabiliyor — küme daha önce bir dosyadan kurulduysa arşiv o soya ait değildir. Kapalı bırakırsanız geri yükleme dosyadan yapılır ve bu risk yoktur.':
+      'This option rolls forward to the target using the archive. Measured risk: on PostgreSQL it can leave the cluster unable to start — if the cluster was previously built from a file, the archive does not belong to that lineage. Leave it off and the restore is done from the file, without that risk.',
+    'Varsayılan olarak her motor':
+      'By default each engine is restored from its',
+    'Zamanda geri dönmeyi kullan — hedef ana tam otur':
+      'Use point-in-time recovery — land exactly on the target',
+    'geri yüklenir ve yukarıda yazan kadar geride kalır.':
+      'own backup file and stays behind by the amount shown above.',
+    'kendi yedek dosyasından':
+      'own backup file'
   };
 
   function dilOku() {

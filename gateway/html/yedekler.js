@@ -625,20 +625,31 @@ async function setGeriYukle(sid) {
     <div class="plan-line"><span>Zaman</span><b>${esc(tamTarih(s.finished))}</b></div>
     <div class="plan-line"><span>Pencere</span><b>${s.window_seconds} sn</b></div>
     ${satir}
-    <p class="note">Zamanda geri dönmesi açık olan motorlar hedef ana tam
-       oturur; diğerleri kendi yedeklerinin alındığı ana döner ve yukarıda
-       yazan kadar geride kalır.</p>
+    <p class="note">Varsayılan olarak her motor <b>kendi yedek dosyasından</b>
+       geri yüklenir ve yukarıda yazan kadar geride kalır.</p>
+    <label class="set-sec">
+      <input type="checkbox" id="ileri-sar-cb">
+      <span>Zamanda geri dönmeyi kullan — hedef ana tam otur</span>
+    </label>
+    <p class="note">Bu seçenek arşivdeki kayıtlarla hedefe ileri sarar.
+       Ölçülen risk: PostgreSQL'de kümeyi açılamaz hâlde bırakabiliyor —
+       küme daha önce bir dosyadan kurulduysa arşiv o soya ait değildir.
+       Kapalı bırakırsanız geri yükleme dosyadan yapılır ve bu risk yoktur.</p>
     <p class="note">Onaylamak için noktanın adını yazın:
        <b>${esc(s.name || '')}</b></p>
     <div class="bk-onay">
       <input id="onay-inp" class="bk-onay-inp" type="text" autocomplete="off"
              spellcheck="false" aria-label="Onay için nokta adını yazın">
     </div>`, 'Bu noktaya dön', s.name || '');
+  /* Pencere kapanınca yalnız GİZLENİYOR, içeriği duruyor — kutunun değeri
+     bu yüzden onaydan sonra hâlâ okunabiliyor. Bir sonraki pencere açılınca
+     içerik değişir, o yüzden okuma burada, hemen yapılıyor. */
+  const ileriSar = !!(document.getElementById('ileri-sar-cb') || {}).checked;
   if (!ok) return;
   const r = await api('/recovery-set/restore', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ set: sid, onayla: true })
+    body: JSON.stringify({ set: sid, onayla: true, ileri_sar: ileriSar })
   });
   await watchJob(r.job, 'Kurtarma noktasına dönülüyor…',
     'Her motor sırayla geri yükleniyor; sonunda hangisinin hedefe tam oturduğu yazılacak.');

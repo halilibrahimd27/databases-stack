@@ -1585,12 +1585,28 @@ main {
 /* Üst barın sağında, sistem/açık/koyu arasında dönen küçük düğme. Metin de
    taşıyor: yalnız ikon olsaydı hangi durumda olduğunu anlamak için tıklayıp
    denemek gerekirdi. */
+/* DİL VE GÖRÜNÜM DÜĞMELERİ TEK GRUP. Eskiden her ikisi de kendi
+   'margin-left:auto'sunu taşıyordu: ilki başlıktan itiliyor, ikincisi ona
+   yapışıyor ve ikisi de sağdaki ölçüm bloğundan kopuk, sayfanın ortasında
+   duruyordu — kullanıcı "dil düğmesi neden ortada" diye sordu. Grup sağa
+   yaslanıyor, düğmeler ölçüm bloğuna komşu duruyor. */
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  margin-right: 18px;
+}
+/* Başlığı esnek olmayan sayfalarda (kurulum, kapalı motor) grup sağ üstte
+   sabit durur. */
+.topbar-actions.is-fixed { position: fixed; top: 14px; right: 14px;
+                           z-index: 50; margin: 0; }
+.topbar-actions.is-fixed .theme-btn { position: static; }
+
 .theme-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
-  margin-right: 14px;
   padding: 5px 12px;
   border: 1px solid var(--border);
   border-radius: 999px;

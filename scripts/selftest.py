@@ -3794,7 +3794,12 @@ def _js_dizgi_metni(src, i):
         if c == q:
             return j + 1, _js_kacis_coz("".join(out))
         if q == "`" and c == "$" and j + 1 < n and src[j + 1] == "{":
+            _ic_bas = j + 2
             j = _js_ifade_sonu(src, j + 2)
+            # İÇ ŞABLONLAR KAYBOLMASIN: ${...} içindeki kaynak ayrıca
+            # taranmak üzere biriktiriliyor. Aksi hâlde koşullu basılan
+            # metinlerin tamamı görünmez kalır.
+            _js_ic_kaynaklar.append(src[_ic_bas:max(_ic_bas, j - 1)])
             out.append(_DELIK)
             continue
         if q != "`" and c == "\n":
@@ -3829,7 +3834,10 @@ def _js_yorumsuz(src):
     return "".join(out)
 
 
-def _js_zincirler(src):
+_js_ic_kaynaklar = []
+
+
+def _js_zincirler(src, _derinlik=0):
     """Birleştirme zincirlerini tek metin olarak döndürür."""
     src = _js_yorumsuz(src)
     out, i, n = [], 0, len(src)
@@ -3882,10 +3890,23 @@ def _js_zincirler(src):
                 elif d == 0 and c == "+" and src[p - 1] != "+":
                     break
                 p += 1
+            # İFADE BÖLGESİ DE TARANSIN. `'<div>' + (kosul ? `<p>metin</p>`
+            # : '') + '</div>'` yazıldığında parantezli ifade bir DELİK
+            # sayılıp içine hiç bakılmıyordu; koşullu basılan metinlerin
+            # tamamı görünmez kalıyordu ("1 tanesi dikkat istiyor" tam
+            # olarak böyle kaçmıştı).
+            _js_ic_kaynaklar.append(src[k:p])
             parcalar.append(_DELIK)
             j = p
         out.append("".join(parcalar))
         i = max(j, i + 1)
+    # İç şablonlar: en fazla üç kat derine iniyoruz. Daha derini pratikte
+    # yok ve sınırsız özyineleme bozuk bir dosyada asılı kalabilir.
+    if _derinlik < 3:
+        _ic, _js_ic_kaynaklar[:] = list(_js_ic_kaynaklar), []
+        for _k in _ic:
+            if _k.strip():
+                out.extend(_js_zincirler(_k, _derinlik + 1))
     return out
 
 def _metin_dugumleri(html):
@@ -3919,6 +3940,7 @@ def _metin_dugumleri(html):
 #   (b) etiketsiz düz dizgi  → tamamı aday; seçici/yol/tanımlayıcı elenir
 # Geriye kalan dil-nötr parçalar TEK TEK sayılıyor. Liste uzun değil ve her
 # satırı bir karar: "bu iki dilde de aynı". Tahmin yerine sayım.
+_NITELIK_ONEK = _re2.compile(r'^[a-z-]+="')
 _KOD_DIZGI2 = _re2.compile(
     r"^[#.]"
     r"|^/"
@@ -3943,6 +3965,10 @@ _CEVRILMEZ = {
     "{1} B", "{1} KB", "{1} MB", "{1} GB", "{1}s", "~ {1}", "%s",
     "{1} + {2} ≤ {3}",
     "{1} / {2}",
+    "?", "~", "•", "⏳", "⛔", "{1}× · {2}",
+    # Nitelik değerleri tarayıcıya etiketin İÇİ gibi görünüyor; çevirisi
+    # data-i18n-attr yolundan yapılıyor.
+    'title="{1}"',
     # İkonlar
     "ℹ️", "⚠️", "🚨", "◐", "☀", "☾",
 }
@@ -3967,6 +3993,13 @@ def _js_metinleri(yol):
             _x = _re2.sub(r"\s+", " ", _h).strip()
             if not _x or _ATIL.match(_x):
                 continue
+            # Zincir bir NİTELİK ortasında başlıyorsa ('… title="' + x)
+            # baştaki nitelik adı metnin parçası değil.
+            _x2 = _NITELIK_ONEK.sub("", _x)
+            if _x2 != _x:
+                # Önek soyulduysa niteliğin KAPANIŞ tırnağı da metnin
+                # parçası değildir.
+                _x = _x2[:-1] if _x2.endswith('"') else _x2
             _k = _js_numarala(_x)
             if not _etiketli and _KOD_DIZGI2.match(_k):
                 continue

@@ -6157,11 +6157,19 @@ def do_recovery_set(jid, ad, eids):
         BACKUP_LOCK.release()
 
 
-def do_recovery_set_restore(jid, sid, onayla=False):
-    """Seti geri yükler: PITR'ı açık motorlar hedef ana İLERİ SARILIR.
+def do_recovery_set_restore(jid, sid, onayla=False, ileri_sar=False):
+    """Seti geri yükler. Her motor için NE ELDE EDİLDİĞİ ayrı raporlanır —
+    "hepsi aynı ana geldi" demek, ölçmediğimiz bir şeyi iddia etmek olurdu.
 
-    Her motor için NE ELDE EDİLDİĞİ ayrı ayrı raporlanır — "hepsi aynı ana
-    geldi" demek, ölçmediğimiz bir şeyi iddia etmek olurdu."""
+    VARSAYILAN YOL DOSYADAN GERİ YÜKLEMEK. İleri sarma (PITR) ancak açıkça
+    istenirse yapılıyor ve sebebi ölçülmüş: 'pitr.sh don' üretim kipinde
+    PostgreSQL'i iki kez açılamaz hâlde bıraktı, ikincisinde eklediğimiz ön
+    prova kapısı geçtiği hâlde. Kök sebep PITR ailesinde: küme mantıksal bir
+    dump'tan yeniden kurulunca yeni bir soy oluşuyor ve arşivdeki eski
+    fiziksel tabanlar o soya ait olmuyor.
+
+    Dosyadan geri yükleme hedefin N saniye gerisinde kalır; N raporlanıyor.
+    Küçük ama tutulan bir vaat, büyük ama tutulmayan bir vaatten iyidir."""
     s = recovery_set_of(sid)
     if not s:
         return job_done(jid, False, "Böyle bir kurtarma noktası yok: %s" % sid)
@@ -6181,7 +6189,7 @@ def do_recovery_set_restore(jid, sid, onayla=False):
             sonuc[eid] = {"ok": False, "detail": "motor katalogda yok"}
             continue
         ad = e["name"]
-        if _pitr_ileri_sarabilir(eid):
+        if ileri_sar and _pitr_ileri_sarabilir(eid):
             # İLERİ SARMA: dump'ın anı ile hedef arasındaki fark WAL/binlog
             # ile kapatılıyor. Setin asıl değeri bu — dosyalar dakikalar
             # arayla alınmış olsa bile bu motorlar hedefe oturuyor.
@@ -7097,7 +7105,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "Böyle bir kurtarma noktası yok: %s" % _sid})
             jid = new_job("recovery-set-restore", None)
             threading.Thread(target=do_recovery_set_restore, daemon=True,
-                             args=(jid, _sid, True)).start()
+                             args=(jid, _sid, True,
+                                   bool(body.get("ileri_sar")))).start()
             return self._send(202, {"job": jid})
         if path.startswith("/api/engines/"):
             eid = self._engine_from(path)

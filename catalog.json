@@ -1414,7 +1414,8 @@
         "port": 8092,
         "services": [
           "grafana"
-        ]
+        ],
+        "path": "/d/dbstack-genel"
       },
       "exporter": null,
       "replication": {},

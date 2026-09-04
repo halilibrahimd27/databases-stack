@@ -1163,8 +1163,9 @@ function renderEvents(events) {
   const icon = { info: 'ℹ️', warning: '⚠️', critical: '🚨' };
   box.innerHTML = events.slice().reverse().slice(0, 25).map((e) => `
     <div class="event event-${esc(e.level)}">
-      <span class="event-time">${new Date(e.ts * 1000).toLocaleString('tr-TR')}</span>
-      <span>${icon[e.level] || '•'} <b>${esc(e.engine)}</b> — ${esc(e.message)}</span>
+      <span class="event-time">${new Date(e.ts * 1000).toLocaleString(T('tr-TR'))}</span>
+      <span>${icon[e.level] || '•'} <b>${esc(e.engine)}</b> — <span
+        class="event-msg">${esc(e.message)}</span></span>
     </div>`).join('');
 }
 
