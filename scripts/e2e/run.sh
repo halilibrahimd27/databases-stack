@@ -147,6 +147,21 @@ for s in "${SECILEN[@]}"; do
 done
 
 # --------------------------------------------------------------------- özet --
+# HANGİ MOTORLARA HİÇ DOKUNULMADI. Kapalı bir motorun paketleri dürüstçe
+# "[ATLANDI]" der ama özet yalnız bir sayı gösteriyordu; elli atlama satırının
+# içinde, temiz kurulumda hiç yedeklenemeyen bir motor (elasticsearch) aylarca
+# görünmez kaldı. Sayı değil AD yazıyoruz.
+_kapali_motorlar() {
+    local eid prim out=""
+    for eid in $(catalog_query 'print(chr(10).join(e["id"] for e in d["engines"]))' 2>/dev/null); do
+        prim="$(primary_of "$eid" 2>/dev/null)" || continue
+        [ -n "$prim" ] || continue
+        container_running "$prim" 2>/dev/null || out="$out $eid"
+    done
+    printf '%s' "$out"
+}
+_KAPALI="$(_kapali_motorlar)"
+
 heading "ÖZET"
 for s in "${SECILEN[@]}"; do
     d=${SURE[$s]}
@@ -169,7 +184,14 @@ printf '  toplam [ÖLÇÜLEMEDİ]   : %d   <- başarısız sayılır\n' \
     "$(say '\[ÖLÇÜLEMEDİ\]')"
 printf '  toplam [ATLANDI]      : %d   ← sebepleri günlükte, sessizce geçilmedi\n' \
     "$(say '\[ATLANDI\]')"
-printf '  günlük                : %s\n\n' "$RUN_LOG"
+printf '  günlük                : %s\n' "$RUN_LOG"
+if [ -n "$_KAPALI" ]; then
+    printf '  %sbu koşumda HİÇ SINANMAYAN motorlar%s:%s\n' \
+        "$YELLOW" "$NC" "$_KAPALI"
+    printf '    (kapalıydılar; paketler dürüstçe atladı — ama atlanan bir\n'
+    printf '     kontrol, koşmuş bir kontrol değildir. Açıp tekrar koşun.)\n'
+fi
+echo
 
 if [ "$BASARISIZ" -gt 0 ]; then
     err "$BASARISIZ paket geçemedi (başarısız / ölçülemedi / kesildi). Ayrıntı: $RUN_LOG"

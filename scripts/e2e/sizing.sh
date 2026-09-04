@@ -782,6 +782,11 @@ else
     S_ALLOC="$(pjq "$ST_SYS" 'd["system"]["allocatable_mb"]')" || S_ALLOC=""
     S_POL="$(pjq "$ST_SYS"   'd["system"]["overcommit_limit"]')" || S_POL=""
     S_RES="$(pjq "$ST_SYS"   'd["system"]["stack_reserved_mb"]')" || S_RES=""
+    # POLİTİKANIN BAKTIĞI SAYI. Paketin `docker inspect`ten topladığı HAM
+    # toplam değil: ürün, ana kopya ile yedek kopyayı aynı anda tepe
+    # yapamayacakları için yedeği ağırlıklı sayıyor. Ham toplamı sınırla
+    # karşılaştırmak, ürünü uymadığı bir kurala göre yargılamak olurdu.
+    S_DEFTER="$(pjq "$ST_SYS" 'd["system"]["stack_committed_mb"]')" || S_DEFTER=""
 
     if ! tamsayi_mi "${S_ALLOC:-}" || [ "$S_ALLOC" -le 0 ]; then
         t_unknown "açık motorların REZERVE toplamı dağıtılabilir belleğe sığıyor (SERT kural)" \
@@ -810,14 +815,18 @@ else
             if ! tamsayi_mi "${sinir:-}" || [ "$sinir" -le 0 ]; then
                 t_unknown "açık container TAVANLARI aşırı taahhüt sınırının altında (YUMUŞAK kural)" \
                           "sınır hesaplanamadı (allocatable=$S_ALLOC × politika=$S_POL)"
-            elif [ "$toplam_mb" -gt "$sinir" ]; then
+            elif ! tamsayi_mi "${S_DEFTER:-}"; then
+                t_unknown "açık container TAVANLARI aşırı taahhüt sınırının altında (YUMUŞAK kural)" \
+                          "/api/status system.stack_committed_mb üretmiyor — politikanın baktığı defter okunamadı"
+            elif [ "$S_DEFTER" -gt "$sinir" ]; then
                 t_fail "açık container TAVANLARI aşırı taahhüt sınırının altında (YUMUŞAK kural)" \
-                       "tavan toplamı $toplam_mb MB > sınır $sinir MB (dağıtılabilir $S_ALLOC × aşırı taahhüt $S_POL)${okunamayan:+ (üstelik şunlar hiç okunamadı:$okunamayan)}"
+                       "defter $S_DEFTER MB > sınır $sinir MB (dağıtılabilir $S_ALLOC × aşırı taahhüt $S_POL; ham toplam $toplam_mb MB)${okunamayan:+ (üstelik şunlar hiç okunamadı:$okunamayan)}"
             elif [ -n "$okunamayan" ]; then
                 t_unknown "açık container TAVANLARI aşırı taahhüt sınırının altında (YUMUŞAK kural)" \
                           "$adet container'ın $olculen tanesi okunabildi; limiti okunamayan:$okunamayan — eksik toplam ($toplam_mb MB) sınırın ($sinir MB) altında görünüyor ama gerçek toplam bilinmiyor"
             else
-                t_ok "açık $adet container'ın tavan toplamı ($toplam_mb MB) politika sınırının ($sinir MB) altında"
+                t_ok "açık $adet container'ın tavan defteri ($S_DEFTER MB) politika sınırının ($sinir MB) altında" \
+                     "ham toplam $toplam_mb MB — yedek kopyalar ağırlıklı sayılıyor"
             fi
         fi
     fi
@@ -1126,8 +1135,24 @@ EOF
         elif [ -z "$gecmeyen" ]; then
             t_ok "$eid: hesaplanan $bakilan iç ayarın hepsi container'ın komutunda/ortamında bulundu"
         else
-            t_fail "$eid: hesaplanan iç ayarlar container'ın komutuna/ortamına geçmiş" \
-                   "container'da bulunmayan:$gecmeyen — compose 'state/tuning.env' okunmadan çalıştırılmış olabilir; motor imaj varsayılanıyla açık"
+            # DENGELEMEDEN SONRA FARK BEKLENİR. İç ayar çalışan bir motorda
+            # değiştirilemez (buffer pool geri verilemez); dengeleme tavanı
+            # canlı düşürür, iç ayarı bir SONRAKİ açılışa yazar ve bunu kendi
+            # günlüğünde söyler. tuning.json container'dan yeniyse gördüğümüz
+            # fark budur — arıza değil. Denetimin aradığı arıza compose'un
+            # tuning.env OKUNMADAN çalıştırılması; onu ayırt etmek için
+            # zamana bakıyoruz.
+            _tj="$STACK_ROOT/state/tuning.json"
+            _tj_ts="$( [ -f "$_tj" ] && stat -c %Y "$_tj" 2>/dev/null || echo 0)"
+            _c_ts="$(docker inspect "$KC" --format '{{.State.StartedAt}}' 2>/dev/null \
+                     | { read -r _v; date -d "$_v" +%s 2>/dev/null || echo 0; })"
+            if [ "${_tj_ts:-0}" -gt "${_c_ts:-0}" ] && [ "${_c_ts:-0}" -gt 0 ]; then
+                t_unknown "$eid: hesaplanan iç ayarlar container'ın komutuna/ortamına geçmiş" \
+                          "tuning.json ($(date -d "@$_tj_ts" '+%H:%M:%S')) container'ın başlangıcından ($(date -d "@$_c_ts" '+%H:%M:%S')) YENİ — aradaki fark bir yeniden dengelemeden kalmış olabilir ve iç ayarlar bir sonraki açılışta geçerli olur; farklı olanlar:$gecmeyen"
+            else
+                t_fail "$eid: hesaplanan iç ayarlar container'ın komutuna/ortamına geçmiş" \
+                       "container'da bulunmayan:$gecmeyen — compose 'state/tuning.env' okunmadan çalıştırılmış olabilir; motor imaj varsayılanıyla açık"
+            fi
         fi
     fi
 

@@ -807,6 +807,31 @@ backup_cassandra() {
     finalize_backup "$f"
 }
 
+# Elasticsearch'ün JSON hatasından okunabilir tek satır çıkarır. Sebebi
+# göstermeyen bir hata mesajı, kullanıcıyı kendi sunucusunda kör bırakır.
+es_hata() {
+    printf '%s' "$1" | python3 -c '
+import json, sys
+ham = sys.stdin.read().strip()
+try:
+    d = json.loads(ham)
+except Exception:
+    print((ham or "cevap yok")[:200]); raise SystemExit
+e = d.get("error")
+if isinstance(e, dict):
+    parca = [e.get("reason") or e.get("type") or ""]
+    c = e.get("caused_by")
+    while isinstance(c, dict):
+        r = c.get("reason") or c.get("type")
+        if r and r not in parca:
+            parca.append(r)
+        c = c.get("caused_by")
+    print(" ← ".join(p for p in parca if p)[:300])
+else:
+    print((str(e) or ham)[:200])
+' 2>/dev/null || printf '%s' "$1" | head -c 200
+}
+
 backup_elasticsearch() {
     local f; f="$(out_path elasticsearch full tar.gz)"
     local snap="bk_$DATE"
@@ -815,11 +840,33 @@ backup_elasticsearch() {
 
     # Snapshot deposu (path.repo=/snapshots compose'da tanımlı). Veri dizinini
     # kopyalamak TUTARSIZ olur — ES'te doğru yol snapshot API'sidir.
-    es -X PUT "http://localhost:9200/_snapshot/backup_repo" -H 'Content-Type: application/json' \
-       -d '{"type":"fs","settings":{"location":"/snapshots"}}' >>"$LOG_FILE" 2>&1
-    es -X PUT "http://localhost:9200/_snapshot/backup_repo/$snap?wait_for_completion=true" \
-       -H 'Content-Type: application/json' -d '{"indices":"*","include_global_state":true}' \
-       >>"$LOG_FILE" 2>&1 || { berr "snapshot başarısız"; return 1; }
+    # SEBEBİ SAKLAMIYORUZ. Eskiden çıktı doğrudan günlüğe gidiyor ve kullanıcı
+    # yalnız "snapshot başarısız" görüyordu. Ölçüldü: gerçek sebep
+    # "[backup_repo] path is not accessible on master node /
+    # access_denied_exception: /snapshots/..." idi — yani depo dizini
+    # yazılamıyordu ve bunu anlamak için elle sormak gerekti.
+    local es_cikti
+    es_cikti="$(es -X PUT "http://localhost:9200/_snapshot/backup_repo" \
+        -H 'Content-Type: application/json' \
+        -d '{"type":"fs","settings":{"location":"/snapshots"}}' 2>&1)"
+    printf '%s\n' "$es_cikti" >>"$LOG_FILE"
+    case "$es_cikti" in
+        *'"error"'*|"")
+            berr "snapshot deposu kurulamadı: $(es_hata "$es_cikti")"
+            berr "  Depo dizini (/snapshots) Elasticsearch'ün yazabildiği bir yer olmalı."
+            berr "  Bu kurulumda hacmi 'elasticsearch-repo-init' sahiplendirir;"
+            berr "  eski bir kurulumda: docker compose up -d elasticsearch-repo-init"
+            return 1 ;;
+    esac
+    es_cikti="$(es -X PUT \
+        "http://localhost:9200/_snapshot/backup_repo/$snap?wait_for_completion=true" \
+        -H 'Content-Type: application/json' \
+        -d '{"indices":"*","include_global_state":true}' 2>&1)"
+    printf '%s\n' "$es_cikti" >>"$LOG_FILE"
+    case "$es_cikti" in
+        *'"state":"SUCCESS"'*) : ;;
+        *) berr "snapshot başarısız: $(es_hata "$es_cikti")"; return 1 ;;
+    esac
 
     # Depoyu buda. Eski sürüm hiçbir snapshot'ı SİLMİYORDU: her gece bir yenisi
     # ekleniyor, /snapshots volume'u şişiyor (ES disk watermark'a takılınca
@@ -916,7 +963,9 @@ backup_neo4j() {
     if [ "${BACKUP_NEO4J_OFFLINE:-false}" != "true" ]; then
         warn "Neo4j atlandı: Community sürümde yedek almak veritabanını DURDURMAYI gerektirir."
         warn "  Kesintiyi göze alıyorsanız: BACKUP_NEO4J_OFFLINE=true ./scripts/backup.sh neo4j"
-        return 0
+        # 3 = ATLANDI. 0 dönmek turun bunu BAŞARI sayması demekti ve özet,
+        # yedeği hiç olmayan bir motoru başarı hanesine yazıyordu.
+        return 3
     fi
     local f; f="$(out_path neo4j full dump.gz)"
     blog "Neo4j durduruluyor (çevrimdışı yedek)…"
@@ -951,25 +1000,43 @@ backup_all() {
     fi
     local start; start="$(date +%s)"
     local okc=0 failc=0 skipc=0 eid primary
+    local atlananlar="" dusenler="" kapalilar=""
 
     for eid in $(backupable_engines); do
         primary="$(primary_of "$eid")"
         if ! container_running "$primary"; then
             printf '  %-14s %s\n' "$eid" "atlandı (kapalı)"
-            skipc=$((skipc+1)); continue
+            skipc=$((skipc+1)); kapalilar="$kapalilar $eid"; continue
         fi
         # Alt kabuk KASITLI: bir motorun beklenmedik kabuk hatası (tanımsız
         # değişken gibi) `set -u` yüzünden BÜTÜN turu ortasından kesiyordu —
         # mssql'de gerçekten oldu ve o geceden sonraki motorların hiçbiri
         # yedeklenmedi, özet tablosu bile basılmadı. Alt kabukta hata yalnız o
         # motoru düşürür, diğerleri yedeklenmeye devam eder.
-        if ( "backup_$eid" ); then okc=$((okc+1)); else failc=$((failc+1)); fi
+        # Üç ayrı sonuç: başarılı, ATLANDI (3), başarısız. Atlananı başarı
+        # saymak, korumasız kalan bir motoru yeşil göstermekti.
+        # `|| _rc=$?` ŞART: set -e altında çıplak bir `( ... )` başarısız
+        # olduğunda bütün tur ortasından kesilirdi — mssql'de bir kez
+        # yaşanan ve o geceki bütün motorları yedeksiz bırakan arıza
+        # tam olarak buydu.
+        local _rc=0
+        ( "backup_$eid" ) || _rc=$?
+        case "$_rc" in
+            0) okc=$((okc+1)) ;;
+            3) skipc=$((skipc+1)); atlananlar="$atlananlar $eid" ;;
+            *) failc=$((failc+1)); dusenler="$dusenler $eid" ;;
+        esac
     done
 
     local dur=$(( $(date +%s) - start ))
     heading "Özet"
-    printf '  Başarılı : %d\n  Başarısız: %d\n  Atlanan  : %d (kapalı motorlar)\n' \
+    printf '  Başarılı : %d\n  Başarısız: %d\n  Atlanan  : %d\n' \
         "$okc" "$failc" "$skipc"
+    # HANGİLERİ olduğu yazılıyor: "Atlanan: 1" bir sayıdır, hangi motorun
+    # korumasız kaldığını söylemez.
+    [ -n "$dusenler" ]   && printf '    düşen   :%s\n' "$dusenler"
+    [ -n "$kapalilar" ]  && printf '    kapalı  :%s\n' "$kapalilar"
+    [ -n "$atlananlar" ] && printf '    atlanan :%s (sebebi yukarıda)\n' "$atlananlar"
     printf '  Süre     : %dm %ds\n' $((dur/60)) $((dur%60))
     printf '  Toplam   : %s\n' "$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1)"
     printf '  Boş disk : %s\n' "$(df -Ph "$BACKUP_DIR" | awk 'NR==2{print $4}')"

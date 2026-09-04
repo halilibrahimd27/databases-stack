@@ -1208,6 +1208,13 @@ services:
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
       - elasticsearch_snapshots:/snapshots
+    depends_on:
+      # Snapshot deposunun SAHİPLENMESİ önce bitmeli. Ölçüldü: docker adlandırılmış
+      # hacmi root'a ait yaratıyor, ES uid 1000 ile koşuyor ve depoyu kuramıyor —
+      # "path is not accessible on master node". Temiz kurulumda Elasticsearch'ün
+      # yedeği hiç alınamıyordu.
+      elasticsearch-repo-init:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "curl -sf -u elastic:$$ELASTIC_PASSWORD http://127.0.0.1:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
       interval: 30s
@@ -1218,6 +1225,22 @@ services:
       resources:
         limits:
           memory: ${ELASTIC_MEM_LIMIT:-2G}
+
+  # Tek seferlik: snapshot deposunu Elasticsearch'ün yazabileceği hâle getirir.
+  # ES imajı uid 1000 ile koşuyor; docker'ın yarattığı adlandırılmış hacim ise
+  # root'a ait. Bu servis olmadan snapshot API'si depoyu KURAMIYOR ve yedekleme
+  # sessizce "snapshot başarısız" diyordu.
+  elasticsearch-repo-init:
+    profiles: [elasticsearch]
+    image: ${ELASTIC_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-8.15.3}}
+    container_name: elasticsearch-repo-init
+    restart: "no"
+    user: "0:0"
+    networks: [dbnet]
+    logging: *logging
+    entrypoint: ["sh", "-c", "chown -R 1000:0 /snapshots && chmod 775 /snapshots && echo '[es-repo-init] /snapshots hazır'"]
+    volumes:
+      - elasticsearch_snapshots:/snapshots
 
   # Tek seferlik: Kibana'nın kullandığı kibana_system kullanıcısının parolasını
   # ayarlar. Kibana `elastic` superuser'ı ile bağlanmayı REDDEDER, bu yüzden şart.
