@@ -370,8 +370,27 @@ def main():
 
     # Neo4j parolayı "kullanıcı/parola" biçiminde ister
     vals["NEO4J_AUTH"] = "neo4j/" + vals.get("NEO4J_PASSWORD", "DEĞİŞTİRİN")
-    sec = ("---\n# ⚠️ GERÇEK PAROLA İÇERİR — git'e commit ETMEYİN.\n"
-           "# Üretimde bunun yerine sealed-secrets / external-secrets / Vault kullanın.\n"
+    # BAŞLIK HANGİ DOSYAYI YAZDIĞIMIZA BAĞLI. Eskiden ikisine de aynı uyarı
+    # yazılıyordu ve depoda duran ÖRNEK dosya "gerçek parola içerir, commit
+    # etmeyin" diyordu. İçinde gerçek parola yok — değerler 'DEĞİŞTİRİN'
+    # yer tutucusunun base64'ü — ama depoyu açan biri için o uyarı ya yanlış
+    # ya da bir sızıntı işareti. İkisi de doğru değil.
+    if with_secrets:
+        basmetin = ("# ⚠️ GERÇEK PAROLA İÇERİR — git'e commit ETMEYİN.\n"
+                    "# Üretimde bunun yerine sealed-secrets / external-secrets"
+                    " / Vault kullanın.\n")
+    else:
+        basmetin = ("# ÖRNEK. Değerler yer tutucudur ('DEĞİŞTİRİN' kelimesinin"
+                    " base64'ü);\n"
+                    "# gerçek parola YOKTUR ve bu dosyanın depoda durması"
+                    " güvenlidir.\n"
+                    "# Gerçeğini üretmek için:"
+                    " python3 scripts/gen-k8s.py --with-secrets\n"
+                    "# Çıktı k8s/secrets/ altına yazılır ve orası"
+                    " .gitignore'dadır.\n"
+                    "# Üretimde sealed-secrets / external-secrets / Vault"
+                    " kullanın.\n")
+    sec = ("---\n" + basmetin +
            "apiVersion: v1\nkind: Secret\nmetadata:\n  name: db-secrets\n"
            "  namespace: %s\ntype: Opaque\ndata:\n" % NS)
     for k in sorted(vals):

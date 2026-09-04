@@ -451,7 +451,7 @@ def container_stats(force=False):
     return out
 
 
-def container_usage_mb(c):
+def container_usage_mb(c, ucuz=False):
     """Container'ın GERÇEK bellek kullanımı (MB); ölçülemezse None.
 
     Önce cgroup: /sys/fs/cgroup altında memory.current (cgroup v2) ya da
@@ -482,6 +482,12 @@ def container_usage_mb(c):
                 return int(f.read().strip()) // (1024 * 1024)
         except (OSError, ValueError):
             continue
+    if ucuz:
+        # ÇAĞIRAN PAHALI YOLU İSTEMİYOR. `docker stats` önbelleği boşsa
+        # daemon'ı örneklemeye zorlar ve saniyeler sürer; os_reserve_mb gibi
+        # her istekte çağrılan bir hesabın içinde bu, panelin beklemesi
+        # demektir (ölçüldü: /healthz zaman aşımına uğradı).
+        return None
     st = container_stats().get(c.get("name")) or {}
     kullanim = st.get("used_bytes")
     return int(kullanim // (1024 * 1024)) if kullanim else None
@@ -1058,7 +1064,10 @@ def measured_os_mb(total=None, available=None):
         for c in docker_containers():
             if c["status"] != "running":
                 continue
-            k = container_usage_mb(c)
+            # UCUZ ölçüm: yalnız cgroup dosyası. Bu fonksiyon /api/status,
+            # /metrics ve her plan hesabının içinde; pahalı yola düşerse
+            # panel bekler.
+            k = container_usage_mb(c, ucuz=True)
             if k is None:
                 eksik = True
                 break
@@ -3421,12 +3430,28 @@ def do_rebalance(jid):
         # 1) İstenen tavanlar: aktivasyondaki formülün AYNISI. İki yerde iki
         #    formül tutmak, "yeniden dengele"den sonra motoru kapatıp açınca
         #    başka bir sayı çıkması demek olurdu.
-        istek = {}
+        # İKİ AYRI SAYI. Bunları karıştırmak dengelemeyi işlevsiz bırakıyordu:
+        #   ideal = aktivasyondaki formül (RAM payı). Kullanıma HİÇ bakmaz.
+        #   taban = ölçülen kullanım × REBALANCE_HEADROOM (en az min_mb).
+        # Eskiden yalnız `ideal` isteniyor, `taban` sadece "bunun altına inme"
+        # diye kullanılıyordu. Ölçüldü: kullanım 194 MB iken tavan 2992'den
+        # 3040 MB'a ÇIKIYOR ve kullanıcı yer açmak için bastığı düğmeden
+        # "Tamamlandı" alıp aynı hatayı görmeye devam ediyordu.
+        ideal, taban, agirlik = {}, {}, {}
         for e, _c, _s in hedefler:
             res = e.get("resources", {})
-            istek[e["id"]] = int(_clamp(total * float(res.get("share", 0.2)),
-                                        int(res.get("min_mb", 256)),
-                                        int(res.get("max_mb", 8192))))
+            mn = int(res.get("min_mb", 256))
+            eid_ = e["id"]
+            ideal[eid_] = int(_clamp(total * float(res.get("share", 0.2)),
+                                     mn, int(res.get("max_mb", 8192))))
+            agirlik[eid_] = 1.0 + (STANDBY_CEILING_WEIGHT
+                                   if _s is not None else 0.0)
+            kul = [container_usage_mb(x) for x in (_c, _s) if x is not None]
+            kul = [k for k in kul if k is not None]
+            # Ölçemediysek küçültmüyoruz: tabanı kendi ideali sayıyoruz.
+            taban[eid_] = (max(mn, int(max(kul) * REBALANCE_HEADROOM))
+                           if kul else ideal[eid_])
+        istek = dict(ideal)
 
         # 2) YUMUŞAK KURAL: motorların tavan toplamı, dağıtılabilirin aşırı
         #    taahhüt katından "bizim dokunmadığımız" container'ların (panel,
@@ -3466,14 +3491,35 @@ def do_rebalance(jid):
                          "bütçesini tüketmiş — motorlar asgari tavana çekildi"
                     % disari)
         elif toplam > pay and toplam > 0:
-            oran = float(pay) / toplam
-            for k in istek:
-                res = CATALOG.engine(k).get("resources", {})
-                istek[k] = max(int(res.get("min_mb", 256)),
-                               int(istek[k] * oran))
-            job_log(jid, "tavan bütçesi dar (%d MB istendi, %d MB var): "
-                         "istekler %.2f katsayısıyla kısıldı"
-                    % (toplam, pay, oran))
+            # BÜTÇE DAR: hedefi RAM payı değil ÖLÇÜLEN KULLANIM yapıyoruz.
+            # Eski davranış istekleri tek bir katsayıyla kısıyordu; kullanım
+            # tavanın %6'sıysa o katsayı (0.95) hiçbir şey açmıyordu.
+            istek = dict(taban)
+            taban_toplam = _agirlikli_toplam(istek)
+            kalan = pay - taban_toplam
+            if kalan <= 0:
+                job_log(jid, "tavan bütçesi ÖLÇÜLEN KULLANIMA bile yetmiyor "
+                             "(%d MB gerekli, %d MB var) — tabanlarda "
+                             "kalınıyor. Bir motoru durdurmadan ya da "
+                             "OVERCOMMIT_LIMIT'i yükseltmeden bu sunucuya "
+                             "sığmaz." % (int(taban_toplam), pay))
+            else:
+                # Kalan bütçe ideale doğru ORANTILI dağıtılıyor. Büyüme
+                # maliyeti ağırlıklı hesaplanıyor: yedek kopyası olan bir
+                # motorda 1 MB büyümek deftere 1+W MB yazar.
+                buyume = sum(max(0, ideal[k] - taban[k]) * agirlik[k]
+                             for k in istek)
+                if buyume > 0:
+                    oran = min(1.0, float(kalan) / buyume)
+                    for k in istek:
+                        istek[k] = int(taban[k]
+                                       + (ideal[k] - taban[k]) * oran)
+                job_log(jid, "tavan bütçesi dar (%d MB istendi, %d MB var): "
+                             "hedef ölçülen kullanıma çekildi (taban %d MB), "
+                             "kalan bütçe ideale doğru %.2f oranında "
+                             "dağıtıldı"
+                        % (toplam, pay, int(taban_toplam),
+                           min(1.0, float(kalan) / buyume) if buyume else 0.0))
 
         # 3) SERT KURAL: yeni tavanlardan türeyecek REZERVE toplamı
         #    dağıtılabiliri aşamaz. Aşıyorsa %10'luk adımlarla iniyoruz;

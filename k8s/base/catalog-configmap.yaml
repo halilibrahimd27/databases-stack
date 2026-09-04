@@ -151,6 +151,14 @@ data:
             "free_for_production": true,
             "note": "Tam açık kaynak. Kullanımda kısıtlama yok.",
             "alternative": null
+          },
+          "data_volumes": {
+            "mariadb": [
+              "mariadb_data"
+            ],
+            "mariadb-replica": [
+              "mariadb_replica_data"
+            ]
           }
         },
         {
@@ -294,6 +302,17 @@ data:
             "free_for_production": true,
             "note": "BSD benzeri, en serbest lisanslardan biri. Kısıtlama yok.",
             "alternative": null
+          },
+          "data_volumes": {
+            "pgadmin": [
+              "pgadmin_data"
+            ],
+            "postgresql": [
+              "postgresql_data"
+            ],
+            "postgresql-replica": [
+              "postgresql_replica_data"
+            ]
           }
         },
         {
@@ -403,6 +422,17 @@ data:
             "free_for_production": "copyleft",
             "note": "4.0'dan beri SSPL. OSI onaylı 'açık kaynak' DEĞİL. Kendi işiniz için kullanmak serbesttir; MongoDB'yi bir SERVİS olarak üçüncü taraflara sunarsanız tüm hizmet yığınınızı açmanız istenir.",
             "alternative": "FerretDB (Apache-2.0)"
+          },
+          "data_volumes": {
+            "mongodb": [
+              "mongodb_data"
+            ],
+            "mongodb-arbiter": [
+              "mongodb_arbiter_data"
+            ],
+            "mongodb-replica-1": [
+              "mongodb_replica_data"
+            ]
           }
         },
         {
@@ -509,6 +539,17 @@ data:
             "free_for_production": "copyleft",
             "note": "7.4 ile RSALv2+SSPL'e geçti, 8.0 ile üçüncü seçenek olarak AGPL-3.0 eklendi. Pinlenen 8-alpine AGPL kapsamındadır. Copyleft istemiyorsanız Valkey birebir yerine geçer: REDIS_IMAGE=valkey/valkey:8-alpine",
             "alternative": "Valkey (BSD-3, birebir uyumlu)"
+          },
+          "data_volumes": {
+            "redis": [
+              "redis_data"
+            ],
+            "redis-insight": [
+              "redisinsight_data"
+            ],
+            "redis-replica": [
+              "redis_replica_data"
+            ]
           }
         },
         {
@@ -604,6 +645,11 @@ data:
             "free_for_production": true,
             "note": "Varsayılan MSSQL_PID=Express: ücretsizdir ve üretimde kullanılabilir. Sınırları: veritabanı başına 10 GB, ~1.4 GB tampon havuzu, en fazla 4 çekirdek. Tüm özellikler gerekiyorsa MSSQL_PID=Developer ücretsizdir ama YALNIZ geliştirme/test içindir; üretimde Standard/Enterprise lisansı gerekir.",
             "alternative": "MSSQL_PID=Developer (yalnız geliştirme) ya da Standard/Enterprise (ücretli)"
+          },
+          "data_volumes": {
+            "mssql": [
+              "mssql_data"
+            ]
           }
         },
         {
@@ -711,6 +757,11 @@ data:
             "free_for_production": true,
             "note": "Tam açık kaynak. Kısıtlama yok.",
             "alternative": null
+          },
+          "data_volumes": {
+            "cassandra": [
+              "cassandra_data"
+            ]
           }
         },
         {
@@ -819,6 +870,12 @@ data:
             "free_for_production": "copyleft",
             "note": "7.11'den beri ELv2+SSPL; OSI onaylı değil. 8.16+ sürümlerde AGPL-3.0 seçeneği de var. Kendi kullanımınız serbest; yönetilen arama servisi olarak SATAMAZSINIZ.",
             "alternative": "OpenSearch (Apache-2.0) — birebir geçiş değil, Dashboards ayrı"
+          },
+          "data_volumes": {
+            "elasticsearch": [
+              "elasticsearch_data",
+              "elasticsearch_snapshots"
+            ]
           }
         },
         {
@@ -924,6 +981,11 @@ data:
             "free_for_production": true,
             "note": "Tam açık kaynak. Kısıtlama yok.",
             "alternative": null
+          },
+          "data_volumes": {
+            "kafka": [
+              "kafka_data"
+            ]
           }
         },
         {
@@ -1016,6 +1078,11 @@ data:
             "free_for_production": true,
             "note": "Dosya bazlı zayıf copyleft. Kullanımda pratik kısıtlama yok.",
             "alternative": null
+          },
+          "data_volumes": {
+            "rabbitmq": [
+              "rabbitmq_data"
+            ]
           }
         },
         {
@@ -1124,6 +1191,11 @@ data:
             "free_for_production": true,
             "note": "Tam açık kaynak. Kısıtlama yok.",
             "alternative": null
+          },
+          "data_volumes": {
+            "clickhouse": [
+              "clickhouse_data"
+            ]
           }
         },
         {
@@ -1226,6 +1298,11 @@ data:
             "free_for_production": "copyleft",
             "note": "Community sürümü GPL-3.0. Kullanmak serbest; kümeleme, çevrimiçi yedek ve rol bazlı yetkilendirme yalnız ticari Enterprise'da var.",
             "alternative": "Enterprise lisansı"
+          },
+          "data_volumes": {
+            "neo4j": [
+              "neo4j_data"
+            ]
           }
         },
         {
@@ -1318,6 +1395,11 @@ data:
             "free_for_production": "copyleft",
             "note": "Ücretli DEĞİL, AGPL-3.0. Ancak 2025'te community konsolundaki YÖNETİM özellikleri ticari AIStor'a taşındı. Bu yüzden sürüm bilerek o değişiklikten önceye sabitlendi (konsol tam çalışsın diye). AGPL: MinIO'yu değiştirip servis olarak sunarsanız kaynağı açmanız gerekir; kendi altyapınızda kullanmak serbesttir.",
             "alternative": "SeaweedFS (Apache-2.0)"
+          },
+          "data_volumes": {
+            "minio": [
+              "minio_data"
+            ]
           }
         },
         {
@@ -1340,7 +1422,8 @@ data:
             "port": 8092,
             "services": [
               "grafana"
-            ]
+            ],
+            "path": "/d/dbstack-genel"
           },
           "exporter": null,
           "replication": {},
@@ -1384,10 +1467,19 @@ data:
             "name": "Apache-2.0 (Prometheus, node-exporter) / AGPL-3.0 (Grafana)",
             "free_for_production": "copyleft",
             "note": "Grafana OSS AGPL-3.0'dır. Olduğu gibi çalıştırmak serbesttir; AGPL yükümlülüğü ancak Grafana'yı DEĞİŞTİRİP ağ üzerinden üçüncü taraflara sunarsanız doğar. İç ağda kendi panolarınızı kullanmak bu kapsama girmez."
+          },
+          "data_volumes": {
+            "grafana": [
+              "grafana_data"
+            ],
+            "prometheus": [
+              "prometheus_data"
+            ]
           }
         }
       ],
       "_sizing_note": "resources.* alanlarını controller/app.py okur. ÜÇ AYRI KAVRAM: reserve = motorun AÇILIŞTA gerçekten ayırdığı bellek (reserve.from içindeki tuning anahtarlarından türer, boş liste = taban yok); tuning[kind=limit] = docker --memory TAVANI, aşılırsa cgroup OOM killer devreye girer; dağıtılabilir = toplam RAM - OS payı - çekirdek servisler. Aktivasyon üç kuralı birden ister: SERT (Σ rezerve + yeni rezerve <= dağıtılabilir), YUMUŞAK (Σ tavan + yeni tavan <= dağıtılabilir x OVERCOMMIT_LIMIT, varsayılan 1.5 — tavanların hepsi aynı anda dolmaz) ve ÇEKİRDEK KEMERİ (/proc/meminfo MemAvailable >= yeni rezerve + emniyet payı). Sığıyorsa limit = clamp(toplam*share, min_mb, max_mb) ve tavan bütçesi; tuning kuralları bu limitten türetilip state/tuning.env'e yazılır. Tavanları toplayıp RAM ile kıyaslamak KATEGORİ HATASIDIR: %6 dolu bir sunucuda panel '%122 aşım' yazdırıp bütün motorları reddediyordu. pool_mb = motorla BİRLİKTE açılan bağlantı havuzunun (PgBouncer) tavanı; ölçümde boşta 1.9 MB kullanıyor, 64 MB kat kat üstü. overhead_mb bu üçünün toplamıdır: panel + exporter + havuz.",
       "_failover_note": "Otomatik failover tek makinede SÜREÇ/CONTAINER arızasına karşı korur; host'un tamamı düşerse iki kopya da düşer (aynı arıza alanı). Gerçek host arızası koruması için replikayı ikinci bir makinede çalıştırın — docs/FAILOVER.md.",
-      "_license_note": "Lisanslar bilgi amaçlıdır, hukuki tavsiye değildir. Bu yığındaki motorlar varsayılan ayarlarıyla üretimde ücretsiz kullanılabilir (SQL Server Express dahil). Dikkat gerektiren iki durum: (1) MSSQL_PID'i Developer yaparsanız o kurulum ÜRETİMDE kullanılamaz, (2) SSPL/AGPL lisanslı motorları üçüncü taraflara SERVİS olarak sunuyorsanız hukuk biriminize danışın. Ayrıntı: docs/LICENSING.md"
+      "_license_note": "Lisanslar bilgi amaçlıdır, hukuki tavsiye değildir. Bu yığındaki motorlar varsayılan ayarlarıyla üretimde ücretsiz kullanılabilir (SQL Server Express dahil). Dikkat gerektiren iki durum: (1) MSSQL_PID'i Developer yaparsanız o kurulum ÜRETİMDE kullanılamaz, (2) SSPL/AGPL lisanslı motorları üçüncü taraflara SERVİS olarak sunuyorsanız hukuk biriminize danışın. Ayrıntı: docs/LICENSING.md",
+      "_volume_note": "data_volumes: her servisin docker-compose.yml'de bağladığı ADLI hacimler. Buradaki adlar PROJE ÖNEKİ OLMADAN yazılır; çalışan hacim adı '<proje>_<ad>' olur. Kaynak compose dosyasıdır ve selftest ikisinin ayrışmadığını denetler — hacim adını yalnız compose'da değiştirmek, ürünün yanlış hacmi silmesi demek olurdu."
     }

@@ -295,6 +295,62 @@ ck("dengeleme hiçbir tavanı kullanımın %.2f katının altına indirmiyor"
    % app.REBALANCE_HEADROOM,
    all(v >= int(200 * app.REBALANCE_HEADROOM) for v in _yeni),
    "en düşük=%s MB" % (min(_yeni) if _yeni else "-"))
+# DAR BÜTÇE: hedef artık RAM payı değil ÖLÇÜLEN KULLANIM. Motor dışı bir
+# container bütçeyi yiyor; dengelemenin yer açması gerekiyor.
+_docker_cagri[:] = []
+RUNNING["list"] = [{"service": "mariadb", "memory_mb": 6000},
+                   {"service": "mariadb-replica", "memory_mb": 6000},
+                   {"service": "postgresql", "memory_mb": 4000},
+                   {"service": "baska-bir-sey", "memory_mb": 15000}]
+_jid2 = app.new_job("rebalance", None)
+try:
+    app.do_rebalance(_jid2)
+    _hata2 = None
+except Exception as _e2:
+    _hata2 = repr(_e2)
+_yeni2 = [int(c[c.index("--memory") + 1].rstrip("m"))
+          for c in _docker_cagri if "--memory" in c]
+_tavan_taban = int(200 * app.REBALANCE_HEADROOM)
+# ÖLÇÜLEN ARIZA: tavan 2992 MB'dan 3040 MB'a ÇIKIYORDU. Beklenen, en küçük
+# eski tavanın (4000 MB) bile altına inmesi — "biraz kısıldı" değil, gerçekten
+# düştü.
+ck("dar bütçede dengeleme tavanları GERÇEKTEN düşürüyor",
+   _hata2 is None and bool(_yeni2) and max(_yeni2) < 4000,
+   _hata2 or "yeni tavanlar=%s (eskiler 6000/6000/4000, kullanım 200 MB)"
+   % sorted(set(_yeni2)))
+# Taban KUTSAL: cgroup limiti anlık kullanımın altına inerse container o
+# saniye OOM olur.
+ck("dar bütçede bile hiçbir tavan ölçülen kullanımın altına inmiyor",
+   all(v >= 200 for v in _yeni2),
+   "en düşük=%s MB" % (min(_yeni2) if _yeni2 else "-"))
+
+# ÇOK DAR BÜTÇE: kalan, tabanların toplamına bile yetmiyor. Burada tabanda
+# kalınmalı ve altına İNİLMEMELİ — daha fazla sıkmak OOM demek.
+_docker_cagri[:] = []
+RUNNING["list"] = [{"service": "mariadb", "memory_mb": 6000},
+                   {"service": "mariadb-replica", "memory_mb": 6000},
+                   {"service": "postgresql", "memory_mb": 4000},
+                   {"service": "baska-bir-sey", "memory_mb": 18600}]
+_jid3 = app.new_job("rebalance", None)
+try:
+    app.do_rebalance(_jid3)
+    _hata3 = None
+except Exception as _e3:
+    _hata3 = repr(_e3)
+_yeni3 = [int(c[c.index("--memory") + 1].rstrip("m"))
+          for c in _docker_cagri if "--memory" in c]
+_min_tavan = min(int(app.CATALOG.engine(k)["resources"]["min_mb"])
+                 for k in ("mariadb", "postgresql"))
+ck("bütçe tabanlara bile yetmediğinde tabanda kalınıyor, altına inilmiyor",
+   _hata3 is None and bool(_yeni3)
+   and min(_yeni3) >= min(_tavan_taban, _min_tavan),
+   _hata3 or "yeni tavanlar=%s (taban %d MB, motor asgarisi %d MB)"
+   % (sorted(set(_yeni3)), _tavan_taban, _min_tavan))
+_gunluk3 = " ".join(app.JOBS[_jid3].get("log") or [])
+ck("yetmediğinde SÖYLÜYOR (sessizce tabanda kalmıyor)",
+   "yetmiyor" in _gunluk3 or "tabanlarda" in _gunluk3,
+   _gunluk3[-110:] if _gunluk3 else "günlük boş")
+
 app.run, app.container_usage_mb = _eski_run, _eski_kul2
 app.load_topology = _eski_topo2
 RUNNING["list"] = []
@@ -3686,6 +3742,45 @@ else:
     ck("Türkçe kipte motor metne dokunmuyor", _tr_ok,
        "" if _tr_ok else "tr kipinde çıktı kaynaktan farklı")
 
+
+# =============================================================================
+# DEPODAKİ ÖRNEK SECRET'TA GERÇEK PAROLA OLMAMALI. Değerler base64 olduğu
+# için göze gerçek parola gibi görünüyor; ayırt etmenin tek yolu çözüp
+# bakmak. Bir gün biri --with-secrets çıktısını oraya yazarsa, bu satır
+# yakalar — kimsenin gözüne çarpmasını beklemeyiz.
+import base64 as _b64                                     # noqa: E402
+import re as _re_sec                                      # noqa: E402
+
+_sec_yol = _os2.path.join(ROOT, "k8s", "base", "secret.example.yaml")
+if not _os2.path.exists(_sec_yol):
+    ck("örnek k8s secret'ı depoda ve yer tutucu taşıyor", False,
+       "k8s/base/secret.example.yaml yok")
+else:
+    _sec = io.open(_sec_yol, encoding="utf-8").read()
+    _degerler = _re_sec.findall(r"^  [A-Z0-9_]+: (\S+)$", _sec, _re_sec.M)
+    _cozulen = []
+    for _v in _degerler:
+        try:
+            _cozulen.append(_b64.b64decode(_v).decode("utf-8", "replace"))
+        except Exception:
+            _cozulen.append(_v)
+    # Yer tutucu: ya 'DEĞİŞTİRİN' ya da onu içeren bir bileşim
+    # (NEO4J_AUTH 'neo4j/DEĞİŞTİRİN' biçiminde).
+    _gercek = [d for d in _cozulen if "DEĞİŞTİRİN" not in d]
+    ck("örnek k8s secret'ındaki her değer yer tutucu (base64 çözülerek)",
+       bool(_degerler) and not _gercek,
+       "%d anahtar; yer tutucu olmayan: %s"
+       % (len(_degerler), ", ".join(_gercek[:2]) or "yok"))
+    # Dosya depoda duruyor; "commit etmeyin" uyarısı taşıması ya uyarının
+    # yanlış ya da dosyanın sızıntı olduğu anlamına gelir. İkisi de doğru
+    # değil ve okuyanı tedirgin eder.
+    ck("depodaki örnek dosya 'gerçek parola içerir' uyarısı TAŞIMIYOR",
+       "GERÇEK PAROLA İÇERİR" not in _sec)
+
+# Gerçek parolaların yazıldığı dizin git'in dışında olmalı.
+_gi = io.open(_os2.path.join(ROOT, ".gitignore"), encoding="utf-8").read()
+ck("k8s/secrets/ .gitignore'da (gerçek parolalar depoya girmez)",
+   "k8s/secrets/" in _gi)
 
 # =============================================================================
 head("12. İki dil — çeviri belgeyi bozmamalı")
