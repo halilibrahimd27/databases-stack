@@ -1143,42 +1143,56 @@ ck("bu redde hiçbir container'a/hacme dokunulmuyor", not _rb)
 # servislerinin hepsi compose'da `depends_on: <asıl primary>: service_healthy`
 # taşıdığı için compose onu YİNE başlatıyordu. Bu yüzden argv'ye değil,
 # compose'un depends_on grafiğiyle hesaplanan EFEKTİF servis kümesine bakıyoruz.
-import yaml as _yaml_dep  # noqa: E402
+# PyYAML BEYAN EDİLMEMİŞ BİR BAĞIMLILIKTI. CI ilk koşumunda temiz bir
+# makinede yığın iziyle öldük ve o noktadan sonraki hiçbir kontrol
+# koşmadı. Modül yoksa ne ölçemediğimizi söyleyip yalnız ona bağlı
+# denetimleri atlıyoruz; geri kalan her şey koşmaya devam ediyor.
+try:
+    import yaml as _yaml_dep  # noqa: E402
+except ImportError:
+    _yaml_dep = None
 
-_cyaml = _yaml_dep.safe_load(open("docker-compose.yml", encoding="utf-8"))
-_DEPS = {}
-for _n, _sv in (_cyaml.get("services") or {}).items():
-    _d = (_sv or {}).get("depends_on") or {}
-    _DEPS[_n] = list(_d.keys()) if isinstance(_d, dict) else list(_d)
+ck("compose depends_on grafiği denetlenebiliyor", _yaml_dep is not None,
+   "" if _yaml_dep is not None else
+   "PyYAML kurulu değil — devir sonrası efektif servis kümesi "
+   "DENETLENEMEDİ (kurun: pip install pyyaml)")
 
+if _yaml_dep is not None:
 
-def _effective_services(cmd):
-    """compose'un bu komutla GERÇEKTEN başlatacağı servisler (bağımlılıklar dahil)."""
-    if "up" not in cmd:
-        return set()
-    named = [x for x in cmd[cmd.index("up") + 1:] if not x.startswith("-")]
-    eff, queue, no_deps = set(), list(named), "--no-deps" in cmd
-    while queue:
-        s = queue.pop()
-        if s in eff:
-            continue
-        eff.add(s)
-        if not no_deps:
-            queue += _DEPS.get(s, [])
-    return eff
+    _cyaml = _yaml_dep.safe_load(open("docker-compose.yml", encoding="utf-8"))
+    _DEPS = {}
+    for _n, _sv in (_cyaml.get("services") or {}).items():
+        _d = (_sv or {}).get("depends_on") or {}
+        _DEPS[_n] = list(_d.keys()) if isinstance(_d, dict) else list(_d)
 
 
-_jid = app.new_job("activate", "mariadb")
-app.run = _rebuild_run()
-_rb[:] = []
-app.do_activate(_jid, "mariadb")
-_eff = set()
-for _c in _rb:
-    _eff |= _effective_services(_c["cmd"])
-ck("devir sonrası 'Aktif Et' eskimiş kopyayı compose bağımlılığıyla bile açmaz",
-   "mariadb-replica" in _eff and "mariadb" not in _eff, " ".join(sorted(_eff)))
-ck("panel ve exporter yine de açılıyor (bağımlılık iptali işlevi kesmiyor)",
-   {"phpmyadmin", "mariadb-exporter"} <= _eff, " ".join(sorted(_eff)))
+    def _effective_services(cmd):
+        """compose'un bu komutla GERÇEKTEN başlatacağı servisler (bağımlılıklar dahil)."""
+        if "up" not in cmd:
+            return set()
+        named = [x for x in cmd[cmd.index("up") + 1:] if not x.startswith("-")]
+        eff, queue, no_deps = set(), list(named), "--no-deps" in cmd
+        while queue:
+            s = queue.pop()
+            if s in eff:
+                continue
+            eff.add(s)
+            if not no_deps:
+                queue += _DEPS.get(s, [])
+        return eff
+
+
+    _jid = app.new_job("activate", "mariadb")
+    app.run = _rebuild_run()
+    _rb[:] = []
+    app.do_activate(_jid, "mariadb")
+    _eff = set()
+    for _c in _rb:
+        _eff |= _effective_services(_c["cmd"])
+    ck("devir sonrası 'Aktif Et' eskimiş kopyayı compose bağımlılığıyla bile açmaz",
+       "mariadb-replica" in _eff and "mariadb" not in _eff, " ".join(sorted(_eff)))
+    ck("panel ve exporter yine de açılıyor (bağımlılık iptali işlevi kesmiyor)",
+       {"phpmyadmin", "mariadb-exporter"} <= _eff, " ".join(sorted(_eff)))
 
 # Yönlendirme tablosu gateway'e uygulanamadıysa iş "✅ Tamamlandı" DEMEZ:
 # uygulamalar hâlâ eski/ölü hedefe gider, kullanıcı ise iş penceresine bakar.

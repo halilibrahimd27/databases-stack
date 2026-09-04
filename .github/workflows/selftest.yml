@@ -31,6 +31,11 @@ jobs:
         with:
           node-version: '20'
 
+      # selftest compose'un depends_on grafigini okuyor; PyYAML olmadan o
+      # denetimler ATLANIR. CI'da olculsunler diye kuruyoruz.
+      - name: bagimliliklar
+        run: python3 -m pip install --quiet pyyaml
+
       - name: selftest
         run: python3 scripts/selftest.py
 
