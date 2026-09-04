@@ -875,6 +875,9 @@ data:
             "elasticsearch": [
               "elasticsearch_data",
               "elasticsearch_snapshots"
+            ],
+            "elasticsearch-repo-init": [
+              "elasticsearch_snapshots"
             ]
           }
         },
