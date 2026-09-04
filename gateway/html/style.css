@@ -1153,6 +1153,21 @@ main {
   font-size: var(--fs-md);
 }
 .plan-line:last-child { border-bottom: none; }
+/* Açma penceresindeki isteğe bağlı boyut kutusu. Alan BOŞ bırakılabilir:
+   ürünün vaadi "elle bir şey girmeniz gerekmiyor" ve o vaat duruyor. */
+.mem-input {
+  width: 110px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.mem-input:focus { outline: 2px solid var(--accent-border); outline-offset: 1px; }
 .plan-line span { color: var(--muted); min-width: 0; }
 .plan-line b {
   font-variant-numeric: tabular-nums;

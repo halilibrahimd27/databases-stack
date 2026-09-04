@@ -166,11 +166,39 @@ async function activate(engine) {
         Hesaplanan teknik ayarlar (bilgi amaçlı)</summary>
       <div style="margin-top:8px">${rows}</div>
     </details>
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;color:var(--muted);font-size:13px">
+        Belleği kendim vereyim (isteğe bağlı)</summary>
+      <p class="note" style="margin-top:8px">Boş bırakırsanız yukarıdaki
+         ölçülmüş değer kullanılır. Bir sayı girerseniz sunucu onu kendi
+         bütçesinden geçirir; sığmazsa sebebini sayılarla söyler.
+         En az ${mb(plan.min_mb)}, en çok ${mb(plan.max_mb)}.</p>
+      <label class="plan-line" style="gap:10px">
+        <span>Üst sınır (MB)</span>
+        <input type="number" id="istek-mb" class="mem-input"
+               min="${esc(String(plan.min_mb))}"
+               max="${esc(String(plan.max_mb))}" step="64"
+               placeholder="${esc(String(plan.limit_mb))}">
+      </label>
+    </details>
     <p class="note">İlk açılışta veritabanı imajı indirileceği için birkaç dakika sürebilir.</p>`,
     'Aktif Et');
+  /* Kutunun değeri onay penceresi KAPANMADAN okunmalı: kapanınca eleman
+     DOM'dan gidiyor ve sonradan okumaya kalkmak her seferinde boş verirdi. */
+  const istekEl = document.getElementById('istek-mb');
+  const istek = istekEl && istekEl.value.trim() !== ''
+    ? parseInt(istekEl.value, 10) : null;
   if (!ok) return;
 
-  const r = await api('/engines/' + engine.id + '/activate', { method: 'POST' });
+  /* Sayıyı DOĞRULAMIYORUZ: sunucunun kendi kapıları (sert kural, yumuşak
+     kural, çekirdek kemeri) zaten doğruluyor ve reddederse ölçülen sayılarla
+     sebebini söylüyor. Panelde ikinci bir sınır uydurmak, iki ayrı doğrulama
+     demekti ve biri diğerini yalanlardı. */
+  const govde = (istek && istek > 0)
+    ? { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memory_mb: istek }) }
+    : { method: 'POST' };
+  const r = await api('/engines/' + engine.id + '/activate', govde);
   watchJob(r.job, engine.name + ' açılıyor…');
 }
 

@@ -1270,6 +1270,12 @@
        yığına ait olanlar (yeniden dengeleme, gece yedeği turu). */
     'tümü': 'all',
     'bulunamadı': 'not found',
+    /* Açma penceresindeki isteğe bağlı boyut alanı. */
+    'Belleği kendim vereyim (isteğe bağlı)':
+      'Let me set the memory myself (optional)',
+    'Üst sınır (MB)': 'Ceiling (MB)',
+    'Boş bırakırsanız yukarıdaki ölçülmüş değer kullanılır. Bir sayı girerseniz sunucu onu kendi bütçesinden geçirir; sığmazsa sebebini sayılarla söyler. En az {1}, en çok {2}.':
+      'Leave it empty and the measured value above is used. Enter a number and the server puts it through its own budget; if it does not fit, it tells you why, with numbers. At least {1}, at most {2}.',
     /* --- kurtarma provası özeti: her ölçüm ayrı bir yan tümce --- */
     'geri yüklendi: {1} tablo / {2} satır (tablo=tablo, satır=satır), ölçülen RTO {3} sn':
       'restored: {1} tables / {2} rows (table=table, row=row), measured RTO {3} s',
