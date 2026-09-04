@@ -4614,6 +4614,22 @@ ck("'başka oturumlar kullanıyor' hatası zararsız SAYILMIYOR",
    "is being accessed by other users" not in
    _pg_govde.split("grep -viE")[1].split(chr(10))[0])
 
+# BOŞ BİR YEDEĞİ DOĞRU GERİ YÜKLEMEK BAŞARIDIR. Ölçüldü: sunucudaki Redis
+# gerçekten boştu, yedek de boştu, geri yükleme doğru çalıştı ve DBSIZE 0
+# geldi — kod buna "yedek boş ya da RDB yüklenemedi" deyip başarısız saydı.
+# O cümle iki apayrı durumu tek torbaya koyuyordu. Artık dosyanın içindeki
+# anahtar sayısı redis-check-rdb ile ÖLÇÜLÜYOR.
+_redis_govde = _bsrc2.split("restore_redis()")[1].split(chr(10) + "}")[0]
+# Yorum satırları hariç: arızayı ANLATAN yorumun kendisi denetimi düşürmesin.
+_redis_kod = chr(10).join(r for r in _redis_govde.split(chr(10))
+                          if not r.lstrip().startswith("#"))
+ck("Redis geri yüklemesi dosyadaki anahtar sayısını ölçüyor",
+   "redis-check-rdb" in _redis_govde and "BEKLENEN" in _redis_govde)
+ck("boş yedek ile yüklenemeyen RDB birbirine karıştırılmıyor",
+   "yedek boş ya da RDB yüklenemedi" not in _redis_kod)
+ck("ölçemediğimiz durum ayrıca söyleniyor",
+   "ÖLÇÜLEMEDİ (redis-check-rdb okunamadı)" in _redis_kod)
+
 # PITR ÜRETİM GERİ YÜKLEMESİ TEK YÖNLÜ KAPI OLMAMALI. Canlı sunucuda
 # ölçüldü: pencere kontrolü geçti, taban üretim hacmine basıldı, küme
 # açılamadı ("could not locate required checkpoint record"), container 21 kez

@@ -1139,6 +1139,16 @@ restore_redis() {
     oku_akis "$f" | docker run -i --rm -v "$vol:/d" --entrypoint sh "$img" -c         'rm -rf /d/appendonlydir /d/appendonly.aof* /d/dump.rdb && cat > /d/dump.rdb && chown 999:999 /d/dump.rdb'
     [ "${PIPESTATUS[0]}" -eq 0 ] || { berr "RDB yazılamadı"; return 1; }
 
+    # DOSYANIN İÇİNDE KAÇ ANAHTAR VAR — açmadan önce ölç. Eskiden geri yükleme
+    # sonrası DBSIZE 0 ise "yedek boş ya da RDB yüklenemedi" deniyordu; o cümle
+    # iki apayrı durumu tek torbaya koyuyordu. Boş bir yedeği doğru geri
+    # yüklemek başarıdır. redis-check-rdb "[info] N keys read" yazıyor;
+    # beklenen sayıyı oradan alıyoruz. Okuyamazsak BEKLENEN boş kalır ve
+    # aşağıda "ölçemedik" diye ayrıca söylenir — sessizce iyimser davranmayız.
+    local BEKLENEN
+    BEKLENEN="$(docker run -i --rm -v "$vol:/d" --entrypoint redis-check-rdb "$img" /d/dump.rdb 2>&1 \
+        | sed -n 's/.*\[info\] \([0-9]\{1,\}\) keys read.*/\1/p' | tail -1)"
+
     blog "3/5 Redis AOF KAPALI başlatılıyor (RDB okunabilsin diye)"
     REDIS_APPENDONLY=no compose --profile redis up -d --force-recreate "$C" >>"$LOG_FILE" 2>&1
     local i=0
@@ -1146,13 +1156,22 @@ restore_redis() {
     [ $i -lt 60 ] || { berr "Redis açılmadı"; return 1; }
 
     local n; n="$(rcli DBSIZE 2>/dev/null | tr -d '[:space:]')"
-    if [ "${n:-0}" -eq 0 ]; then
-        berr "Geri yükleme sonrası 0 anahtar — yedek boş ya da RDB yüklenemedi."
+    if [ "${n:-0}" -eq 0 ] && [ "${BEKLENEN:-}" = "0" ]; then
+        # Dosyanın içinde de 0 anahtar var. Geri yükleme İSTENENİ yaptı:
+        # Redis'i o yedeğin alındığı âna, yani boş hâline döndürdü.
+        blog "    RDB yüklendi: 0 anahtar (yedeğin kendisinde de 0 anahtar var)"
+    elif [ "${n:-0}" -eq 0 ]; then
+        if [ -n "${BEKLENEN:-}" ]; then
+            berr "Geri yükleme sonrası 0 anahtar — dosyada $BEKLENEN anahtar vardı, RDB yüklenemedi."
+        else
+            berr "Geri yükleme sonrası 0 anahtar; dosyadaki anahtar sayısı ÖLÇÜLEMEDİ (redis-check-rdb okunamadı)."
+        fi
         berr "Redis normal yapılandırmaya döndürülüyor."
         compose --profile redis up -d --force-recreate "$C" >>"$LOG_FILE" 2>&1
         return 1
+    else
+        blog "    RDB yüklendi: $n anahtar${BEKLENEN:+ (dosyada $BEKLENEN)}"
     fi
-    blog "    RDB yüklendi: $n anahtar"
 
     blog "4/5 AOF açılıyor ve geri yüklenen veriden yeniden üretiliyor"
     rcli CONFIG SET appendonly yes >/dev/null
@@ -1172,7 +1191,7 @@ restore_redis() {
     while [ $i -lt 60 ]; do rcli PING 2>/dev/null | grep -q PONG && break; sleep 2; i=$((i+1)); done
 
     local n2; n2="$(rcli DBSIZE 2>/dev/null | tr -d '[:space:]')"
-    if [ "${n2:-0}" -eq 0 ]; then
+    if [ "${n2:-0}" -eq 0 ] && [ "${BEKLENEN:-}" != "0" ]; then
         berr "Normal yapılandırmaya dönünce veri kayboldu (AOF üretilememiş olabilir)"
         return 1
     fi
