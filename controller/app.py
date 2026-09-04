@@ -417,7 +417,7 @@ def _parse_size(text):
         return None
 
 
-def container_stats(force=False):
+def container_stats(force=False, sadece_onbellek=False):
     """Container başına anlık bellek kullanımı ve CPU yüzdesi.
 
     `docker stats` her çağrıda tüm container'ları örnekler ve saniyeler
@@ -429,6 +429,12 @@ def container_stats(force=False):
     with _STATS_LOCK:
         if not force and (time.time() - _STATS_CACHE["at"]) < _STATS_TTL:
             return _STATS_CACHE["data"]
+        if sadece_onbellek:
+            # ÖRNEKLEMEYİ TETİKLEMEDEN oku. Çağıran sıcak yolda (her istekte
+            # çalışan bir hesabın içinde) ve `docker stats` saniyeler
+            # sürebiliyor; soğuk önbellek "ölçemedik" demektir, beklemek
+            # değil.
+            return _STATS_CACHE["data"] or {}
     out = {}
     rc, sout, _ = run(["docker", "stats", "--no-stream", "--format",
                        "{{.Name}}|{{.MemUsage}}|{{.CPUPerc}}"], timeout=60)
@@ -483,11 +489,13 @@ def container_usage_mb(c, ucuz=False):
         except (OSError, ValueError):
             continue
     if ucuz:
-        # ÇAĞIRAN PAHALI YOLU İSTEMİYOR. `docker stats` önbelleği boşsa
-        # daemon'ı örneklemeye zorlar ve saniyeler sürer; os_reserve_mb gibi
-        # her istekte çağrılan bir hesabın içinde bu, panelin beklemesi
-        # demektir (ölçüldü: /healthz zaman aşımına uğradı).
-        return None
+        # ÇAĞIRAN PAHALI YOLU İSTEMİYOR: `docker stats` örneklemesi saniyeler
+        # sürebiliyor ve os_reserve_mb her istekte çağrılıyor (ölçüldü:
+        # /healthz zaman aşımına uğradı). Ama ölçmeyi büsbütün bırakmıyoruz —
+        # önbellekte hazır bir değer varsa onu alıyoruz; yoksa "ölçemedik".
+        st = container_stats(sadece_onbellek=True).get(c.get("name")) or {}
+        k = st.get("used_bytes")
+        return int(k // (1024 * 1024)) if k else None
     st = container_stats().get(c.get("name")) or {}
     kullanim = st.get("used_bytes")
     return int(kullanim // (1024 * 1024)) if kullanim else None
