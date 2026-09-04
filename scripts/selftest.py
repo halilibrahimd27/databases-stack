@@ -3393,6 +3393,63 @@ _BEKLENEN = [
      "1 backup cannot be opened (encrypted, no key)"),
     ("3 yedek açılamaz (şifreli, anahtar yok)",
      "3 backups cannot be opened (encrypted, no key)"),
+    # --- olay akışı: kullanıcının "loglar Türkçe geliyor" dediği yer ---
+    # Kendi başına duran mesaj.
+    ("Otomatik failover açıldı", "Automatic failover turned on"),
+    # Dıştaki kalıp çevriliyordu, İÇERİDEKİ sebep Türkçe kalıyordu.
+    ("Otomatik failover: mariadb devre dışı, mariadb-replica primary oldu."
+     " Sebep: primary 3 kez üst üste sağlıksız (unhealthy)",
+     "Automatic failover: mariadb is out of service, mariadb-replica became"
+     " the primary. Reason: the primary was unhealthy 3 times in a row"),
+    # Son delik AYIRICIYLA birlikte yakalanıyor; anahtar da öyle olmalı.
+    ("Yedek zamanlaması: açık, saat 07:39, 7 gün saklama"
+     " — sonraki koşum 2026-09-03 07:39",
+     "Backup schedule: on, at 07:39, 7 days retention"
+     " — next round 2026-09-03 07:39"),
+    # Kurtarma noktası özeti olay metnine bütün olarak gömülüyor.
+    ("Kurtarma noktası seti geri yüklendi: 1 motor hedef anda;"
+     " 1 motor hedefin gerisinde (mariadb 5 sn); 0 başarısız",
+     "Recovery point restored: 1 engines at the target moment;"
+     " 1 behind the target (mariadb 5 s); 0 failed"),
+    # Katalogdaki lisans notu: motor kartının içinde görünüyor.
+    ("Express Edition — ücretsiz, üretimde de kullanılabilir",
+     "Express Edition — free, and usable in production too"),
+    # ON ÜÇ değer taşıyan cümle. Kalıp motoru deliği TEK BASAMAK okuyordu
+    # ({1}..{9}); onuncu ve sonrası hiç görülmediği için bu cümlenin
+    # karşılığı yazılamıyor, İngilizce panelde Türkçe kalıyordu.
+    ("YUMUŞAK KURAL (tavan) çiğneniyor. SQL Server en az 2048 MB tavan ister"
+     " (+ 0 MB panel/exporter). Dağıtılabilir bellek 12340 MB; aşırı taahhüt"
+     " katsayısı 1.50 ile tavan bütçesi 18510 MB ediyor ve bunun 16812 MB'ı"
+     " zaten çalışan container'ların tavanlarına verilmiş, geriye 1698 MB"
+     " kalıyor. Bu bir TAVAN sıkışmasıdır, belleğin dolu olduğu anlamına"
+     " GELMEZ: çekirdeğin bu andaki boş bellek ölçümü 13936 MB, bellek"
+     " baskısı 'yok'. Çözüm: 'Yeniden dengele' ile açık motorların"
+     " tavanlarını güncel kullanıma göre düşürün, bir motoru durdurun ya da"
+     " OVERCOMMIT_LIMIT'i yükseltin. (Toplam 15984 MB RAM'in 3196 MB'ı"
+     " işletim sistemine, 448 MB'ı çekirdek servislere ayrıldı.)",
+     "A SOFT RULE (the ceiling) is being broken. SQL Server wants a ceiling"
+     " of at least 2048 MB (+ 0 MB for the panel/exporter). Distributable"
+     " memory is 12340 MB; with an overcommit factor of 1.50 the ceiling"
+     " budget comes to 18510 MB, and 16812 MB of that is already given to"
+     " the ceilings of running containers, leaving 1698 MB. This is a"
+     " CEILING squeeze; it does NOT mean memory is full: the kernel's"
+     " free-memory reading right now is 13936 MB and memory pressure is"
+     " 'none'. What to do: use 'Rebalance' to lower the ceilings of running"
+     " engines to match current use, stop an engine, or raise"
+     " OVERCOMMIT_LIMIT. (Of 15984 MB total RAM, 3196 MB is set aside for"
+     " the operating system and 448 MB for core services.)"),
+    # Yan tümcelerden kurulan cümle: bütünün karşılığı yazılamaz (şekil
+    # sayısı kombinatoryal), parçalar tek tek çevrilip HEPSİ çevrildiyse
+    # kullanılıyor. 'indeks' Türkçeye özgü harf taşımıyor — diakritiğe bakan
+    # bir denetim onu çevrilmiş sanardı.
+    ("geri yüklendi: 1 tablo / 3 satır (tablo=tablo, satır=satır), ölçülen"
+     " RTO 8 sn; üretimle birebir eşleşti; ŞEMA FARKI: indeks 2≠1"
+     " (kopya≠üretim) — yedek alındıktan sonra şema değişmiş olabilir;"
+     " değişmediyse geri yükleme nesne kaybediyor",
+     "restored: 1 tables / 3 rows (table=table, row=row), measured RTO 8 s;"
+     " matched production exactly; SCHEMA DIFFERENCE: indexes 2≠1"
+     " (copy≠production) — the schema may have changed after the backup was"
+     " taken; if it did not, the restore is losing objects"),
 ]
 
 if not _nodejs:

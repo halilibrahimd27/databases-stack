@@ -1250,6 +1250,100 @@
       'Automatic failover was turned off too, because the standby was removed — there is no node left to promote. To be covered again, set up a standby copy and turn automatic failover back on.',
     'Yedek kopya kurulamadı ve kaldırıldı; ana kopya etkilenmedi.':
       'The standby copy could not be set up and was removed; the primary was not affected.',
+    'Devir YAPILMADI: Yedek kopya ({1}) çalışmıyor — yükseltilecek sağlam bir kopya yok. Ana kopyaya dokunulmadı.':
+      'NO failover: the standby ({1}) is not running — there is no healthy copy to promote. The primary was not touched.',
+    '[{1}] ✗ replikasyon sağlıklı değil — yükseltmek veri kaybı olur':
+      '[{1}] ✗ replication is not healthy — promoting would lose data',
+    'Otomatik failover açıldı': 'Automatic failover turned on',
+    'Otomatik failover kapatıldı': 'Automatic failover turned off',
+    /* Devir sebebi ayrı bir parça olarak geliyor: dıştaki kalıp 'Sebep: {3}'
+       diyor, içerideki metnin kendi karşılığı olmak zorunda. */
+    'primary {1} kez üst üste sağlıksız (unhealthy)':
+      'the primary was unhealthy {1} times in a row',
+    'elle tetiklendi': 'triggered by hand',
+    /* Motor yerine 'tümü' yazan olaylar: tek bir motora değil bütün
+       yığına ait olanlar (yeniden dengeleme, gece yedeği turu). */
+    'tümü': 'all',
+    'bulunamadı': 'not found',
+    /* --- kurtarma provası özeti: her ölçüm ayrı bir yan tümce --- */
+    'geri yüklendi: {1} tablo / {2} satır (tablo=tablo, satır=satır), ölçülen RTO {3} sn':
+      'restored: {1} tables / {2} rows (table=table, row=row), measured RTO {3} s',
+    'üretimle birebir eşleşti': 'matched production exactly',
+    /* Şema farkı, nesne türü başına 'ad sayı≠sayı' parçalarından
+       kuruluyor ve virgülle birleşiyor (adlar: indeks kısıt view
+       trigger rutin). Türü çevirmezsek İngilizce cümlenin ortasında
+       Türkçe kelime kalıyor — üstelik 'indeks'te Türkçeye özgü harf
+       yok, o yüzden diakritiğe bakan bir denetimden de kaçardı. */
+    'indeks {1}': 'indexes {1}',
+    'kısıt {1}': 'constraints {1}',
+    'rutin {1}': 'routines {1}',
+    'indeks {1}, kısıt {2}': 'indexes {1}, constraints {2}',
+    'indeks {1}, view {2}': 'indexes {1}, views {2}',
+    'indeks {1}, trigger {2}': 'indexes {1}, triggers {2}',
+    'kısıt {1}, view {2}': 'constraints {1}, views {2}',
+    'indeks {1}, kısıt {2}, view {3}': 'indexes {1}, constraints {2}, views {3}',
+    'üretimle eşleşmedi (kopya {1}/{2}, üretim {3}/{4}) — yedek alındıktan sonra üretime yazılmış olabilir':
+      'did not match production (copy {1}/{2}, production {3}/{4}) — production may have been written to after the backup was taken',
+    'ŞEMA FARKI: {1} (kopya≠üretim) — yedek alındıktan sonra şema değişmiş olabilir':
+      'SCHEMA DIFFERENCE: {1} (copy≠production) — the schema may have changed after the backup was taken',
+    'değişmediyse geri yükleme nesne kaybediyor':
+      'if it did not, the restore is losing objects',
+    'yedeğin şema kaydı yok (bu dosya parmak izi eklenmeden önce alınmış olabilir)':
+      'the backup has no schema record (this file may predate the fingerprint)',
+    /* --- katalog: lisans ve uyarı notları --- */
+    'Enterprise lisansı': 'Enterprise licence',
+    'Express Edition — ücretsiz, üretimde de kullanılabilir':
+      'Express Edition — free, and usable in production too',
+    'MSSQL_PID=Developer (yalnız geliştirme) ya da Standard/Enterprise (ücretli)':
+      'MSSQL_PID=Developer (development only) or Standard/Enterprise (paid)',
+    'OpenSearch (Apache-2.0) — birebir geçiş değil, Dashboards ayrı':
+      'OpenSearch (Apache-2.0) — not a drop-in replacement; Dashboards is separate',
+    'Lisanslar bilgi amaçlıdır, hukuki tavsiye değildir. Bu yığındaki motorlar varsayılan ayarlarıyla üretimde ücretsiz kullanılabilir (SQL Server Express dahil). Dikkat gerektiren iki durum: (1) MSSQL_PID\'i Developer yaparsanız o kurulum ÜRETİMDE kullanılamaz, (2) SSPL/AGPL lisanslı motorları üçüncü taraflara SERVİS olarak sunuyorsanız hukuk biriminize danışın. Ayrıntı: docs/LICENSING.md':
+      'Licence notes are informational, not legal advice. With their default settings the engines in this stack can be used in production for free (SQL Server Express included). Two cases need attention: (1) if you set MSSQL_PID to Developer, that installation cannot be used IN PRODUCTION, (2) if you offer SSPL/AGPL-licensed engines to third parties AS A SERVICE, talk to your legal team. Detail: docs/LICENSING.md',
+    'Otomatik failover tek makinede SÜREÇ/CONTAINER arızasına karşı korur; host\'un tamamı düşerse iki kopya da düşer (aynı arıza alanı). Gerçek host arızası koruması için replikayı ikinci bir makinede çalıştırın — docs/FAILOVER.md.':
+      'On a single machine, automatic failover protects against a PROCESS/CONTAINER failure; if the whole host goes down both copies go down with it (the same failure domain). For real host-failure protection, run the replica on a second machine — docs/FAILOVER.md.',
+    'PgBouncer hedefini container YARATILIRKEN pgbouncer.ini\'ye yazar; devirden sonra bu servis yeniden yaratılmazsa havuz fence edilmiş eski ana kopyaya bakmaya devam eder. 5432 doğrudan bağlantı olarak kalır: transaction pooling oturum durumunu korumaz (SQL düzeyinde PREPARE/DEALLOCATE, LISTEN/NOTIFY, oturum değişkenleri, geçici tablolar). Ayrıntı: docs/POOLING.md':
+      'PgBouncer writes its target into pgbouncer.ini WHEN THE CONTAINER IS CREATED; if that service is not recreated after a failover, the pool keeps pointing at the fenced old primary. 5432 stays as the direct connection: transaction pooling does not preserve session state (SQL-level PREPARE/DEALLOCATE, LISTEN/NOTIFY, session variables, temporary tables). Detail: docs/POOLING.md',
+    /* --- bellek: tavan bütçesi sıkışması (on üç değer taşıyor) --- */
+    'YUMUŞAK KURAL (tavan) çiğneniyor. {1} en az {2} MB tavan ister (+ {3} MB panel/exporter). Dağıtılabilir bellek {4} MB; aşırı taahhüt katsayısı {5} ile tavan bütçesi {6} MB ediyor ve bunun {7} MB\'ı zaten çalışan container\'ların tavanlarına verilmiş, geriye {8} MB kalıyor. Bu bir TAVAN sıkışmasıdır, belleğin dolu olduğu anlamına GELMEZ: çekirdeğin bu andaki boş bellek ölçümü {9} MB, bellek baskısı \'{10}\'. Çözüm: \'Yeniden dengele\' ile açık motorların tavanlarını güncel kullanıma göre düşürün, bir motoru durdurun ya da OVERCOMMIT_LIMIT\'i yükseltin. (Toplam {11} MB RAM\'in {12} MB\'ı işletim sistemine, {13} MB\'ı çekirdek servislere ayrıldı.)':
+      'A SOFT RULE (the ceiling) is being broken. {1} wants a ceiling of at least {2} MB (+ {3} MB for the panel/exporter). Distributable memory is {4} MB; with an overcommit factor of {5} the ceiling budget comes to {6} MB, and {7} MB of that is already given to the ceilings of running containers, leaving {8} MB. This is a CEILING squeeze; it does NOT mean memory is full: the kernel\'s free-memory reading right now is {9} MB and memory pressure is \'{10}\'. What to do: use \'Rebalance\' to lower the ceilings of running engines to match current use, stop an engine, or raise OVERCOMMIT_LIMIT. (Of {11} MB total RAM, {12} MB is set aside for the operating system and {13} MB for core services.)',
+    /* --- devir: yükseltmeye hazırlık satırları (motorların kendi çıktısı) --- */
+    '[{1}] {2} yükseltmeye hazır': '[{1}] {2} is ready to be promoted',
+    '[pg] {1} yükseltmeye hazır (alınan WAL: {2})':
+      '[pg] {1} is ready to be promoted (WAL received: {2})',
+    '[redis] {1} yükseltmeye hazır (offset: {2})':
+      '[redis] {1} is ready to be promoted (offset: {2})',
+    /* --- örnekleme kapsaması: ölçülmeyen saniyeler --- */
+    'bu aralığın {1} saniyesi HİÇ örneklenmedi — özet yalnız ölçülen saniyeler hakkındadır':
+      '{1} seconds of this window were NEVER sampled — the summary speaks only about the seconds that were measured',
+    'ölçüldü: toplam {1} bayt boşa gidiyor':
+      'measured: {1} bytes are being wasted in total',
+    'ölçülemedi: Yedekleme kilidi başkasında ({1}) — yedekleme ya da geri yükleme sürüyor. Prova YAPILMADI; yedeğin durumu hakkında bir şey söylemiyoruz.':
+      'could not measure: the backup lock is held by someone else ({1}) — a backup or a restore is running. The drill DID NOT RUN; we are not saying anything about the state of the backup.',
+    /* Kurtarma noktası özeti: olay metninin içine bütün olarak gömülüyor. */
+    '{1} motor hedef anda; {2} motor hedefin gerisinde ({3}); {4} başarısız':
+      '{1} engines at the target moment; {2} behind the target ({3}); {4} failed',
+    'İstenen {1} MB tavan bütçesini aşıyor (kullanılabilir: {2} MB; dağıtılabilir {3} MB × aşırı taahhüt {4} − açık tavanlar {5} MB).':
+      'the requested {1} MB exceeds the ceiling budget (available: {2} MB; distributable {3} MB × overcommit {4} − open ceilings {5} MB).',
+    /* Zamanlama durumu tek başına bir parça ('Yedek zamanlaması: {1}, …').
+       Büyük harfli 'Açık'/'Kapalı' AYRI anahtarlar; bunlar küçük harfli
+       hâlleri ve yalnız bu cümlelerde geçiyor. */
+    'açık': 'on',
+    'kapalı': 'off',
+    /* Zamanlama kalıbının son deliği ayırıcıyla birlikte yakalanıyor;
+       anahtar da öyle olmak zorunda. */
+    '— sonraki koşum {1}': '— next round {1}',
+    'sonraki koşum {1}': 'next round {1}',
+    'kilit meşguldü, {1} dakika sonra tekrar':
+      'the lock was busy, retrying in {1} minutes',
+    /* Motorun kendi çıktısı olay metnine gömülüyor; iki satır tek düğüm. */
+    '[✗] {1}\'de binlog KAPALI — taban alınsa bile ileri gidilemez, PITR yapılamaz. [✗] config/{2}/my.cnf\'te log_bin açık olmalı ve container o ayarla açılmalı.':
+      '[✗] binlog is OFF on {1} — even with a base you could not move forward, so PITR is not possible. [✗] log_bin must be on in config/{2}/my.cnf and the container must start with that setting.',
+    'başka bir yedekleme ya da geri yükleme state/backup.lock kilidini tutuyordu':
+      'another backup or restore was holding the state/backup.lock lock',
+    'Zamanlanmış yedekleme tamamlandı.': 'The scheduled backup completed.',
+    'GERİ YÜKLENEMEDİ: yedek dosyası sonuna kadar OKUNAMADI (okuma rc={1}) — şifreli bir yedekte bu, anahtarın eksik ya da yanlış olduğu anlamına da gelir':
+      'COULD NOT RESTORE: the backup file COULD NOT BE READ to the end (read rc={1}) — on an encrypted backup this can also mean the key is missing or wrong',
     'Yedek zamanlaması: {1}, saat {2}, {3} gün saklama{4}':
       'Backup schedule: {1}, at {2}, {3} days retention{4}',
     'Yedekleme turu beklenmeyen bir hatayla durdu: {1}':
@@ -1468,7 +1562,10 @@
     for (var k in EN) {
       if (!Object.prototype.hasOwnProperty.call(EN, k)) continue;
       if (k.indexOf('{1}') < 0) continue;
-      var parca = k.split(/\{(\d)\}/);          /* metin, no, metin, no, ... */
+      /* Delik numarası ÇOK BASAMAKLI olabilir: bellek uyarısı gibi uzun
+         cümleler ondan fazla değer taşıyor ve tek basamak varsayımı o
+         cümlelerin karşılığını yazılamaz kılıyordu. */
+      var parca = k.split(/\{(\d+)\}/);         /* metin, no, metin, no, ... */
       var desen = '', sira = [];
       for (var i = 0; i < parca.length; i++) {
         if (i % 2 === 0) desen += kacir(parca[i]);
@@ -1520,11 +1617,31 @@
         deger[KALIPLAR[i].sira[j]] = icCevir(m[j + 1], derinlik);
       }
       var en = cogulSec(KALIPLAR[i].en, deger['1']);
-      return en.replace(/\{(\d)\}/g, function (t, no) {
+      return en.replace(/\{(\d+)\}/g, function (t, no) {
         return Object.prototype.hasOwnProperty.call(deger, no) ? deger[no] : t;
       });
     }
-    return null;
+    return derinlik === 0 ? parcaliCevir(metin) : null;
+  }
+
+  /* Cümle YAN TÜMCELERDEN kuruluyorsa bütününün karşılığı yazılamaz: hangi
+     ölçümün çıkacağı duruma bağlı ve şekil sayısı kombinatoryal (kurtarma
+     provası özeti tam olarak böyle). Parçaları tek tek çeviriyoruz ve
+     HEPSİ çevrilirse kullanıyoruz. Biri bile çevrilmezse metne hiç
+     dokunmuyoruz: yarı Türkçe bir cümle, hiç çevrilmemiş bir cümleden
+     kötüdür — okuyan, eksik olanın çeviri mi ölçüm mü olduğunu ayırt
+     edemez. */
+  function parcaliCevir(metin) {
+    if (metin.indexOf('; ') < 0) return null;
+    var p = metin.split('; '), out = [], i, oz, c;
+    for (i = 0; i < p.length; i++) {
+      oz = p[i].trim();
+      c = Object.prototype.hasOwnProperty.call(EN, oz)
+        ? EN[oz] : kalipCevir(oz, 1);
+      if (c === null || c === undefined) return null;
+      out.push(c);
+    }
+    return out.join('; ');
   }
 
   function atlanir(d) {
