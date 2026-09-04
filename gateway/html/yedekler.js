@@ -1219,6 +1219,23 @@ function rowHtml(engine, b, st, s) {
          aria-label="${esc(engine.name)} yedeğinin kurtarma provasını yap"
          >Prova yap</button>` : '';
 
+  /* SEBEBİ SATIRDA YAZ. Sönük bir düğme + baloncuk, "geri yükleyebilir
+     miyim?" sorusunu cevapsız bırakıyordu; kullanıcı düğmeyi sönük görüp
+     bunun geçici bir durum mu yoksa kalıcı bir sınır mı olduğunu
+     anlayamıyordu. Diğer durumlar (prova geçti, hiç yedek yok) zaten
+     satırda yazılı — bu da yazılmalı. */
+  const geriRozet = !geriOk
+    ? `<span class="bk-drill bk-drill-yok" title="${esc(grNot)}"
+         >panelden geri yükleme yok — elle: docs/BACKUP.md</span>`
+    : '';
+  /* Yedeği hiç alınamayan motorun SEBEBİ. Neo4j Community'de çevrimiçi yedek
+     yok; sebep yalnız yedekleme günlüğünde kalıyordu ve panelde motor
+     sessizce yedeksiz görünüyordu. */
+  const kesintiRozet = (!b.latest && (engine.backup || {}).requires_downtime)
+    ? `<span class="bk-drill bk-drill-yok"
+         >otomatik yedek yok — bu motorda yedek almak veritabanını durdurur</span>`
+    : '';
+
   const sonBtn = b.latest
     ? `<button class="btn btn-sm btn-danger" data-act="restore-last"
          data-id="${esc(engine.id)}"${grKapali ? ' disabled' : ''}${
@@ -1320,7 +1337,7 @@ function rowHtml(engine, b, st, s) {
   <li class="bk-row" id="bk-${esc(engine.id)}">
     <span class="bk-icon" aria-hidden="true">${esc(engine.icon)}</span>
     <span class="bk-name">${esc(engine.name)}</span>
-    <span class="bk-facts">${facts.join('')}${provaRozet}${denemeNotu}</span>
+    <span class="bk-facts">${facts.join('')}${provaRozet}${geriRozet}${kesintiRozet}${denemeNotu}</span>
     <span class="bk-acts">
       <button class="btn btn-sm" data-act="backup" data-id="${esc(engine.id)}"
         ${kapali || mesgul ? 'disabled' : ''}${bkNot ? ' title="' + esc(bkNot) + '"' : ''}

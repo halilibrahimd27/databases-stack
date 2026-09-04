@@ -717,8 +717,6 @@
       'Memory reserved up front is above the distributable total.',
     'Bu dosya listede artık yok — saklama temizliği silmiş olabilir. Sayfayı tazeleyin.':
       'This file is no longer in the list — the retention sweep may have removed it. Refresh the page.',
-    'Bu motorda panelden geri yükleme yok; docs/BACKUP.md anlatıyor':
-      'This engine cannot be restored from the panel; docs/BACKUP.md explains how',
     'Bu motorun listede bir yedeği görünmüyor. Sayfayı tazeleyip tekrar bakın.':
       'This engine has no backup in the list. Refresh the page and look again.',
     'Dosya çok büyük olduğu için tamamı taranmadı — liste EKSİK olabilir.':
@@ -1270,6 +1268,15 @@
        yığına ait olanlar (yeniden dengeleme, gece yedeği turu). */
     'tümü': 'all',
     'bulunamadı': 'not found',
+    /* Yedekler sayfası: geri yükleme kapsamı ve kesinti gerektiren yedek. */
+    'Community sürümünde çevrimiçi yedek yok; dump için veritabanının durması gerekir. Gece turunda ATLANIR. Kesintiyi göze alıyorsanız: BACKUP_NEO4J_OFFLINE=true':
+      'There is no online backup in the Community edition; a dump requires stopping the database. The nightly round SKIPS it. If you accept the outage: BACKUP_NEO4J_OFFLINE=true',
+    'panelden geri yükleme yok — elle: docs/BACKUP.md':
+      'no restore from the panel — by hand: docs/BACKUP.md',
+    'Bu motorda panelden geri yükleme yok; docs/BACKUP.md anlatıyor':
+      'This engine cannot be restored from the panel; docs/BACKUP.md explains how',
+    'otomatik yedek yok — bu motorda yedek almak veritabanını durdurur':
+      'no automatic backup — backing this engine up stops the database',
     /* Açma penceresindeki isteğe bağlı boyut alanı. */
     'Belleği kendim vereyim (isteğe bağlı)':
       'Let me set the memory myself (optional)',

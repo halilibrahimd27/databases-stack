@@ -1231,7 +1231,9 @@ data:
           "backup": {
             "supported": true,
             "kind": "dump",
-            "ext": "dump.gz"
+            "ext": "dump.gz",
+            "requires_downtime": true,
+            "note": "Community sürümünde çevrimiçi yedek yok; dump için veritabanının durması gerekir. Gece turunda ATLANIR. Kesintiyi göze alıyorsanız: BACKUP_NEO4J_OFFLINE=true"
           },
           "connection": {
             "username": "neo4j",
