@@ -322,6 +322,15 @@ pg_arsiv_segmentleri() {
         -regex '.*/[0-9A-F]{24}' -printf '%f\n' 2>/dev/null | sort
 }
 
+# En SON YAZILMIŞ segment. Adı en büyük olan değil: terk edilmiş bir zaman
+# çizgisinin adı güncel çizgininkinden büyük olabilir ve o dosyalar eskidir.
+pg_arsiv_en_yeni_segment() {
+    [ -d "$WAL_DIR" ] || return 0
+    find "$WAL_DIR" -maxdepth 1 -type f -regextype posix-extended \
+        -regex '.*/[0-9A-F]{24}' -printf '%T@\t%f\n' 2>/dev/null \
+        | sort -n | tail -1 | cut -f2
+}
+
 # Arşivdeki ardışıklık boşluklarını sayar ve İLK boşluğun hemen öncesindeki
 # segmenti bildirir. Zaman çizgileri AYRI AYRI değerlendirilir: yeni bir
 # çizgi her zaman farklı bir sıra numarasından başlayabilir ve iki çizgiyi
@@ -498,14 +507,43 @@ pg_pencere() {
     # En yeni arşivlenmiş segmentin zamanı. Sunucuya pg_stat_archiver'dan da
     # sorabilirdik ama DOSYANIN kendi mtime'ı sunucu kapalıyken de okunur —
     # ve PITR'a en çok sunucu kapalıyken bakılır.
+    #
+    # ADI EN BÜYÜK segment, EN YENİ segment DEĞİLDİR. Arşivde birden çok zaman
+    # çizgisi birikiyor (her PITR ve her devir bir yenisini açıyor) ve terk
+    # edilmiş bir çizginin adı güncel çizgininkinden büyük olabilir. Ölçüldü:
+    # küme 00000002 çizgisinde 09:29'a kadar arşivlemişken, eski bir provadan
+    # kalan 0000000A…E0 sıralamada sona düşüyor ve mtime'ı 07:11 — panel
+    # "dönülebilir → 07:11" diyor, 09:23'e dönme isteği reddediliyordu.
+    # Ölçü zaten mtime; sıralama da mtime'a göre olmalı.
     local sonseg
-    sonseg="$(pg_arsiv_segmentleri | tail -1)"
+    sonseg="$(pg_arsiv_en_yeni_segment)"
     if [ -n "$sonseg" ]; then
         m="$(mtime "$WAL_DIR/$sonseg")" && en_yeni="$m"
     fi
     if [ "${bosluk:-0}" -gt 0 ] && [ -n "$son_saglam" ]; then
-        m="$(mtime "$WAL_DIR/$son_saglam")" && en_yeni="$m"
-        aciklama="arşivde $bosluk boşluk var; aralık $son_saglam segmentinde kesiliyor"
+        # Boşluk EN YENİ TABANDAN ÖNCEYSE tavanı ÇEKMEZ. Kurtarma, hedeften
+        # önceki en yeni tabandan başlayıp WAL'ı oradan oynatır; o tabandan
+        # önce kalan bir boşluğa hiç uğramaz.
+        #
+        # Ölçüldü: bir devirden sonra küme yeni bir zaman çizgisine geçiyor
+        # (00000002…) ve yeni ana kopya arşivlemeye devam ediyor. Eski
+        # çizgide kalmış tek bir boşluk, güncel çizgide biriken bütün WAL'a
+        # rağmen "dönülebilir an"ı devir anına çiviliyordu; panel PITR'ı
+        # ölmüş, kurtarma isteği de "aralığın sonrasında" gösteriyordu.
+        # Boşluk hâlâ raporlanıyor — sadece neyi sınırladığı doğru söyleniyor.
+        local bm taban_son
+        bm="$(mtime "$WAL_DIR/$son_saglam")" || bm=""
+        taban_son="$(pg_tabanlar | tail -1 | cut -f1)"
+        if [ -n "$bm" ] && [ -n "$taban_son" ] && [ "$bm" -lt "$taban_son" ]; then
+            aciklama="arşivde $bosluk boşluk var ($son_saglam segmentinde); \
+boşluk en yeni tabandan ESKİ olduğu için bu ana dönmeyi engellemiyor — \
+yalnız o boşluktan önceki anlara dönüşü sınırlar"
+        elif [ -n "$bm" ]; then
+            en_yeni="$bm"
+            aciklama="arşivde $bosluk boşluk var; aralık $son_saglam segmentinde kesiliyor"
+        else
+            aciklama="arşivde $bosluk boşluk var; $son_saglam okunamadı"
+        fi
     fi
 
     # Hiç WAL arşivlenmemişse taban tek başına yine bir kurtarma noktasıdır

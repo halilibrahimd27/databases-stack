@@ -754,7 +754,7 @@
     'Bu yedek şifreli ve bu kurulumda BACKUP_ENCRYPT_KEY tanımlı değil — içi okunamaz ve geri yüklenemez. Yedeği alan kurulumun anahtarını .env dosyasına ekleyin.':
       'This backup is encrypted and BACKUP_ENCRYPT_KEY is not set on this install — it cannot be read or restored. Add the key from the install that took it to the .env file.',
     '{1} yedek açılamaz (şifreli, anahtar yok)':
-      '{1} backups cannot be opened (encrypted, no key)',
+      '{1} [backup|backups] cannot be opened (encrypted, no key)',
     'açılamaz':
       'cannot open',
 
@@ -1209,7 +1209,7 @@
     'yok': 'none',
     '{1} + en az {2} ≤ {3} ({4} × {5})': '{1} + at least {2} ≤ {3} ({4} × {5})',
     '{1} sn': '{1} s',
-    '{1} yedek': '{1} backups',
+    '{1} yedek': '{1} [backup|backups]',
     '{1} yedekleniyor…': 'Backing up {1}…',
     '{1}…': '{1}…',
     '⏳ Ertelendi': '⏳ Deferred',
@@ -1351,6 +1351,11 @@
     'Sunucu toplam belleği': 'Server total memory',
     'Sıradaki deneme': 'Next attempt',
     'Sıradaki yedek': 'Next backup',
+    /* Etiketle zaman TEK metin düğümü olarak DOM'a düşüyor; sözlüğün
+       gördüğü anahtar bu bileşik hâlidir. */
+    'Sıradaki yedek: {1}': 'Next backup: {1}',
+    'Sıradaki deneme: {1}': 'Next attempt: {1}',
+    'Sıradaki deneme: {1} — {2}': 'Next attempt: {1} — {2}',
     'Temizle': 'Clear',
     'Veritabanı': 'Database',
     'Yönetim ekranı': 'Admin panel',
@@ -1493,6 +1498,17 @@
     return k === null ? x : bas + k + son;
   }
 
+  /* İngilizce sayıdan sonra çoğul ister, Türkçe istemez: '1 yedek' doğru
+     ama '1 backups' değil. Karşılıkta '[tekil|çoğul]' yazılırsa ilk deliğin
+     yakaladığı değere göre biri seçilir. Kural sözlükte duruyor; kodda
+     motor başına özel durum yok. */
+  function cogulSec(en, ilk) {
+    if (en.indexOf('[') < 0) return en;
+    var tekil = String(ilk == null ? '' : ilk).trim() === '1';
+    return en.replace(/\[([^\[\]|]*)\|([^\[\]|]*)\]/g,
+      function (t, a, b) { return tekil ? a : b; });
+  }
+
   function kalipCevir(metin, derinlik) {
     derinlik = derinlik || 0;
     if (!KALIPLAR) kaliplariKur();
@@ -1503,7 +1519,8 @@
       for (var j = 0; j < KALIPLAR[i].sira.length; j++) {
         deger[KALIPLAR[i].sira[j]] = icCevir(m[j + 1], derinlik);
       }
-      return KALIPLAR[i].en.replace(/\{(\d)\}/g, function (t, no) {
+      var en = cogulSec(KALIPLAR[i].en, deger['1']);
+      return en.replace(/\{(\d)\}/g, function (t, no) {
         return Object.prototype.hasOwnProperty.call(deger, no) ? deger[no] : t;
       });
     }

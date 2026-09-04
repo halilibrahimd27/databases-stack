@@ -2678,6 +2678,27 @@ ck("etkin bir 'pitr.sh taban' satırı var (WAL tek başına veri değildir)",
 ck("etkin bir 'pitr.sh temizle' satırı var (arşiv sonsuza kadar büyümemeli)",
    len(_cron_satirlari("pitr.sh temizle")) == 1)
 
+# ARŞİVDE BİRDEN ÇOK ZAMAN ÇİZGİSİ BİRİKİYOR. Her PITR ve her devir yeni bir
+# çizgi açıyor; terk edilmiş bir çizginin ADI güncel çizgininkinden BÜYÜK
+# olabiliyor. Canlı sunucuda ölçüldü: küme 00000002 çizgisinde 09:29'a kadar
+# arşivlemişken, eski bir provadan kalan 0000000A…E0 sıralamada sona düşüyor
+# ve mtime'ı 07:11. Panel "dönülebilir → 07:11" diyordu ve 09:23'e dönme
+# isteği "aralığın SONRASINDA" diye reddediliyordu — çalışan bir PITR ölü
+# gösteriliyordu.
+_pitr_src = io.open("scripts/pitr.sh", encoding="utf-8").read()
+_pencere_govde = _pitr_src.split("pg_pencere()")[1].split(chr(10) + "}")[0]
+ck("en yeni arşiv anı ADA göre değil MTIME'a göre seçiliyor",
+   "pg_arsiv_en_yeni_segment" in _pencere_govde
+   and "pg_arsiv_segmentleri | tail -1" not in _pencere_govde)
+
+# BOŞLUK, EN YENİ TABANDAN ESKİYSE TAVANI ÇEKMEZ. Kurtarma hedeften önceki en
+# yeni tabandan başlar ve WAL'ı oradan oynatır; o tabandan önceki bir boşluğa
+# hiç uğramaz. Eskiden her boşluk tavanı kendine çekiyordu ve bir devirden
+# sonra pencere devir anına çivileniyordu.
+ck("eski boşluk güncel aralığın tavanını çekmiyor",
+   "taban_son" in _pencere_govde
+   and "engellemiyor" in _pencere_govde)
+
 # Taban ile gece yedeği AYNI kilidi kullanır. Aynı saate denk gelirlerse
 # biri her gece sessizce hiç çalışmaz — ve "hiç çalışmayan taban", yukarıdaki
 # satırın var olmasıyla aynı sonucu verir: pencere yok.
@@ -3342,6 +3363,82 @@ for _js in ("gateway/html/app.js", "gateway/html/yedekler.js"):
                         text=True, encoding="utf-8", timeout=120)
     ck("%s sözdizimi geçerli" % _os2.path.basename(_js), _r.returncode == 0,
        (_r.stderr or "").strip().splitlines()[0][:110] if _r.returncode else "")
+
+# ÇALIŞMA ANINDA OLUŞAN METİN. Statik tarama, ekranda gerçekten görünen
+# dizgiyi göremiyor: panel metni parçalardan kuruyor (etiket şablon deliğinin
+# içinde, sayı dışarıda) ve DOM'a düşen tek düğüm hiçbir kaynak dosyada aynen
+# yazmıyor. Ölçüldü: 'Sıradaki yedek: in 22 hours' ekranda Türkçe kaldı,
+# tarayıcı ise geriye kalan ': ' için "harf yok" deyip ATLADI — arıza,
+# denetimin tam da geçtiği yerdeydi. Bu yüzden ürünün kendi motoruna soruyoruz.
+_PROBE = _os2.path.join(ROOT, "scripts", "i18n-probe.js")
+_BEKLENEN = [
+    # (kaynak, İngilizce karşılık)
+    ("Bellek kullanımı", "Memory usage"),
+    # Üst bardaki ikinci satır: iki yarısı tek düğümde.
+    ("baştan ayrılan 2.5 GB · üst sınır 10 GB",
+     "2.5 GB reserved up front · 10 GB ceiling"),
+    # Kapalı motorların kategori başlıkları.
+    ("Arama & Log", "Search & Log"),
+    ("Analitik (OLAP)", "Analytics (OLAP)"),
+    ("Nesne Depolama", "Object storage"),
+    # Araç rozeti: simge kendi elemanında olduğu için metin bu.
+    ("İzleme aç", "Open Monitoring"),
+    # Etiket delikte, saat dışarıda.
+    ("Sıradaki yedek: in 22 hours", "Next backup: in 22 hours"),
+    ("Sıradaki deneme: in 3 minutes", "Next attempt: in 3 minutes"),
+    # Türkçede sayıdan sonra çoğul eki yok, İngilizcede var.
+    ("1 yedek", "1 backup"),
+    ("43 yedek", "43 backups"),
+    ("1 yedek açılamaz (şifreli, anahtar yok)",
+     "1 backup cannot be opened (encrypted, no key)"),
+    ("3 yedek açılamaz (şifreli, anahtar yok)",
+     "3 backups cannot be opened (encrypted, no key)"),
+]
+
+if not _nodejs:
+    ck("çalışma anında oluşan metinlerin karşılığı var", False,
+       "node bulunamadı — çeviri motoru ÇALIŞTIRILAMADI (kurun: nodejs)")
+elif not _os2.path.exists(_PROBE):
+    ck("çalışma anında oluşan metinlerin karşılığı var", False,
+       "scripts/i18n-probe.js yok — motor sorgulanamadı")
+else:
+    _r = subprocess.run(
+        [_nodejs, _PROBE, "en"],
+        input=json.dumps([_k for _k, _ in _BEKLENEN]),
+        capture_output=True, text=True, encoding="utf-8", timeout=120)
+    if _r.returncode != 0:
+        ck("çalışma anında oluşan metinlerin karşılığı var", False,
+           "i18n-probe çıkış %d: %s" % (_r.returncode,
+                                        (_r.stderr or "").strip()[:110]))
+    else:
+        try:
+            _cikti = json.loads(_r.stdout)
+        except Exception as _e:
+            _cikti = None
+            ck("çalışma anında oluşan metinlerin karşılığı var", False,
+               "i18n-probe çıktısı okunamadı: %r" % (_e,))
+        if _cikti is not None:
+            _yanlis = ["%s → %s (beklenen: %s)" % (_k, _g, _b)
+                       for (_k, _b), _g in zip(_BEKLENEN, _cikti) if _g != _b]
+            ck("çalışma anında oluşan metinlerin karşılığı var",
+               not _yanlis, "; ".join(_yanlis[:2])
+               or "%d metin motordan geçti" % len(_BEKLENEN))
+
+    # Türkçe kipte motor KAYNAĞI aynen döndürmeli: çeviri katmanı, dili
+    # değiştirmediğinde metne dokunmamalı.
+    _r2 = subprocess.run(
+        [_nodejs, _PROBE, "tr"],
+        input=json.dumps([_k for _k, _ in _BEKLENEN]),
+        capture_output=True, text=True, encoding="utf-8", timeout=120)
+    _tr_ok = False
+    if _r2.returncode == 0:
+        try:
+            _tr_ok = json.loads(_r2.stdout) == [_k for _k, _ in _BEKLENEN]
+        except Exception:
+            _tr_ok = False
+    ck("Türkçe kipte motor metne dokunmuyor", _tr_ok,
+       "" if _tr_ok else "tr kipinde çıktı kaynaktan farklı")
+
 
 # =============================================================================
 head("12. İki dil — çeviri belgeyi bozmamalı")
