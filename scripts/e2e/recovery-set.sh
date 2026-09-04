@@ -82,12 +82,31 @@ isaret_yaz() {   # isaret_yaz <motor>
     esac
 }
 
+# TABLO YOKSA İŞARET DE YOK — ve bu, geri yüklemenin çalıştığının EN GÜÇLÜ
+# kanıtıdır: set alındığı ana dönülünce, ondan sonra yaratılan tablo hiç
+# var olmamış olur. İlk sürüm "tablo yok" hatasını "ölçemedim" sayıyordu ve
+# ürün doğru çalışırken kontrol ÖLÇÜLEMEDİ diyordu — ölçüm aracının hatası.
+# O yüzden önce TABLONUN VARLIĞINI soruyoruz; o sorgu tablo olmasa da cevap
+# verir.
 isaret_var() {   # isaret_var <motor> → 1/0/HATA
-    local n
+    local n v
     case "$1" in
-    mariadb)    n="$(sql mariadb "SELECT COUNT(*) FROM $TABLO WHERE k='$ISARET';")" ;;
-    postgresql) n="$(sql postgresql "SELECT COUNT(*) FROM $TABLO WHERE k='$ISARET';")" ;;
-    redis)      n="$(sql redis "EXISTS $ISARET")" ;;
+    mariadb)
+        v="$(sql mariadb "SELECT COUNT(*) FROM information_schema.TABLES
+              WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='$TABLO';")"
+        v="$(printf '%s' "${v:-}" | tr -d '[:space:]')"
+        case "$v" in ''|*[!0-9]*) printf 'HATA'; return ;; esac
+        [ "$v" = "0" ] && { printf '0'; return; }
+        n="$(sql mariadb "SELECT COUNT(*) FROM $TABLO WHERE k='$ISARET';")" ;;
+    postgresql)
+        v="$(sql postgresql "SELECT CASE WHEN to_regclass('public.$TABLO')
+              IS NULL THEN 0 ELSE 1 END;")"
+        v="$(printf '%s' "${v:-}" | tr -d '[:space:]')"
+        case "$v" in ''|*[!0-9]*) printf 'HATA'; return ;; esac
+        [ "$v" = "0" ] && { printf '0'; return; }
+        n="$(sql postgresql "SELECT COUNT(*) FROM $TABLO WHERE k='$ISARET';")" ;;
+    redis)
+        n="$(sql redis "EXISTS $ISARET")" ;;
     esac
     n="$(printf '%s' "${n:-}" | tr -d '[:space:]')"
     case "$n" in ''|*[!0-9]*) printf 'HATA' ;; *) printf '%s' "$n" ;; esac
