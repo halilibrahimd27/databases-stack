@@ -1473,7 +1473,7 @@
     'Yönetim ekranı': 'Admin panel',
     'container hâlâ duruyor.': 'containers are still there.',
     '{1} KB göster': 'Show {1} KB',
-    '{1} motorun hiç yedeği yok.': '{1} engines have no backup at all.',
+    '{1} motorun hiç yedeği yok.': '{1} [engine has|engines have] no backup at all.',
     '{1} sürüyor': '{1} running',
     '{1} tanesi dikkat istiyor — en üstte.': '{1} of them need attention — at the top.',
     '{1} — ölçülen sayılar ve ne yapılacağı için tıklayın': '{1} — click for the measured numbers and what to do',
