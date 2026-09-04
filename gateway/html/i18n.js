@@ -1178,7 +1178,152 @@
     '{1} — tam':
       '{1} — exact',
     '{1} — {2} sn geride':
-      '{1} — {2} s behind'
+      '{1} — {2} s behind',
+
+    /* --- diakritiksiz Türkçe: eski süzgeç bunları kaçırıyordu --- */
+    'Bu tarihten': 'Everything written',
+    'Kopyala': 'Copy',
+    'Kur': 'Set up',
+    'Kurulum eksik: {1}': 'Setup incomplete: {1}',
+    'Lisans: {1}': 'Licence: {1}',
+    'PROVA KALDI {1}': 'DRILL FAILED {1}',
+    'Son otomatik yedek: {1} ·': 'Last automatic backup: {1} ·',
+    'Son otomatik yedek: {1} · sonucu bilinmiyor': 'Last automatic backup: {1} · outcome unknown',
+    'Yedek': 'Backup',
+    'en yeni {1}': 'newest {1}',
+    'kapsama %{1}{2}': 'coverage {1}%{2}',
+    'kilitlemez': 'does not lock',
+    'pid {1}': 'pid {1}',
+    'port {1}': 'port {1}',
+    'sonra': 'after',
+    'tek tur': 'single round',
+    'yeni bir kopyaya': 'into a new copy',
+    'yok': 'none',
+    '{1} + en az {2} ≤ {3} ({4} × {5})': '{1} + at least {2} ≤ {3} ({4} × {5})',
+    '{1} sn': '{1} s',
+    '{1} yedek': '{1} backups',
+    '{1} yedekleniyor…': 'Backing up {1}…',
+    '{1}…': '{1}…',
+    '⏳ Ertelendi': '⏳ Deferred',
+    '💾 Yedekler': '💾 Backups',
+    'Panele girin': 'Enter the panel',
+    'İzleme': 'Monitoring',
+
+    /* --- olay günlüğü: sunucuda Türkçe yazılıyor, panelde çevriliyor --- */
+    'Ana kopya ({1}) çalışmadığı için replikasyon slot\'u silinemedi ({2}). Motoru açtıktan sonra \'Yedek Kopya Kur / Kapat\' işlemini bir kez daha çalıştırın.':
+      'The replication slot could not be dropped because the primary ({1}) is not running ({2}). Turn the engine on and run set up / turn off the standby copy once more.',
+    'Ana kopya ({1}) çalışmadığı için slot durumu sorulamadı. Motoru açtıktan sonra \'Yedek Kopya Kur / Kapat\' işlemini bir kez daha çalıştırın. {2}':
+      'The slot state could not be queried because the primary ({1}) is not running. Turn the engine on and run set up / turn off the standby copy once more. {2}',
+    'Devir YAPILMADI: {1} yükseltmeye hazır değil (replikasyon sağlıklı değil). Ana kopyaya dokunulmadı — veri kaybı riski alınmadı. {2}':
+      'NO failover: {1} is not ready to be promoted (replication is not healthy). The primary was not touched — no risk of data loss was taken. {2}',
+    'Devir tamamlandı ama izleme ucu ({1}) yeni ana kopyaya çevrilemedi; bu motorun grafikleri boş kalabilir. Veritabanı etkilenmedi.':
+      'The failover completed but the monitoring endpoint ({1}) could not be pointed at the new primary; this engine\'s graphs may stay empty. The database is unaffected.',
+    'Eski yedekler temizlenemedi: {1} — yedek dizini büyümeye devam eder.':
+      'Old backups could not be cleaned up: {1} — the backup directory will keep growing.',
+    'Geri dönüş bileti doldu ({1} saat): önceki hacim {2} silindi. Bu motorda artık takas öncesine dönülemez.':
+      'The return ticket expired ({1} hours): the previous volume {2} was deleted. This engine can no longer go back to before the switch.',
+    'Kurtarma noktası seti alındı: {1} motor, pencere {2} sn. PITR\'ı açık {3} motor hedef ana ileri sarılabilir; kalanlar hedefin en çok {4} sn öncesinde.':
+      'Recovery point taken: {1} engines, window {2} s. {3} engines with PITR on can be rolled forward to the target moment; the rest are at most {4} s before it.',
+    'Kurtarma noktası seti başladı: {1}':
+      'Recovery point started: {1}',
+    'Kurtarma noktası seti geri yüklendi: {1}':
+      'Recovery point restored: {1}',
+    'Kurtarma noktası seti geri yükleniyor: {1} ({2} motor)':
+      'Restoring the recovery point: {1} ({2} engines)',
+    'Otomatik devir sırasında beklenmeyen hata: {1} — veritabanının durumunu elle kontrol edin.':
+      'Unexpected error during automatic failover: {1} — check the database\'s state by hand.',
+    'Otomatik failover: {1} devre dışı, {2} primary oldu. Sebep: {3}':
+      'Automatic failover: {1} is out of service, {2} became the primary. Reason: {3}',
+    'Sahipsiz gölge hacmi bulundu: {1}. Yarıda kalmış bir gölge geri yüklemeden kalmış olabilir; içeriğini kontrol edip silin: docker volume rm {2}':
+      'An orphaned shadow volume was found: {1}. It may be left over from a shadow restore that stopped halfway; check its contents and delete it: docker volume rm {2}',
+    'Tavanlar yeniden dengelendi: {1} motorun {2}\'sinde tavan değişti{3}. Dağıtılabilir {4} MB, aşırı taahhüt sınırı {5}. Container\'lar yeniden başlatılmadı.':
+      'Ceilings rebalanced: the ceiling changed on {2} of {1} engines{3}. Distributable {4} MB, overcommit limit {5}. No container was restarted.',
+    'Yedek kopya kaldırıldığı için otomatik devir de kapatıldı — yükseltilecek bir düğüm kalmadı. Yeniden korunmak için \'Yedek Kopya Kur\' deyip otomatik devri tekrar açın.':
+      'Automatic failover was turned off too, because the standby was removed — there is no node left to promote. To be covered again, set up a standby copy and turn automatic failover back on.',
+    'Yedek kopya kurulamadı ve kaldırıldı; ana kopya etkilenmedi.':
+      'The standby copy could not be set up and was removed; the primary was not affected.',
+    'Yedek zamanlaması: {1}, saat {2}, {3} gün saklama{4}':
+      'Backup schedule: {1}, at {2}, {3} days retention{4}',
+    'Yedekleme turu beklenmeyen bir hatayla durdu: {1}':
+      'The backup round stopped with an unexpected error: {1}',
+    'Yeniden dengeleme beklenmeyen bir hatayla durdu: {1}':
+      'Rebalancing stopped with an unexpected error: {1}',
+    'Yükseltme başarısız oldu; {1} geri açıldı ve hizmet sürüyor. Replikasyonu kontrol edin.':
+      'The promotion failed; {1} was brought back and is serving again. Check replication.',
+    'Yükseltme başarısız ve eski primary geri açılamadı ({1}) — veritabanı ŞU AN ERİŞİLEMEZ.':
+      'The promotion failed and the old primary could not be brought back ({1}) — the database is UNREACHABLE RIGHT NOW.',
+    'Zamanlama açık ve henüz başarılı bir tur yok — taban yedeği {1} içinde alınacak ({2}). Gece saatini beklemek, o ana kadar yedeksiz kalmak demekti.':
+      'The schedule is on and no round has succeeded yet — a base backup will be taken within {1} ({2}). Waiting for the nightly hour would have meant no backup at all until then.',
+    'Zamanlanmış yedekleme ertelendi: {1}. Tur koşmuş sayılmıyor; {2}.':
+      'The scheduled backup was deferred: {1}. The round does not count as run; {2}.',
+    '{1} açılamadı: {2}':
+      '{1} could not be turned on: {2}',
+    '{1} açıldı — {2} MB ayrıldı{3}':
+      '{1} was turned on — {2} MB reserved{3}',
+    '{1} bakımı tamamlandı: {2}':
+      '{1} maintenance completed: {2}',
+    '{1} başarısız: {2}':
+      '{1} failed: {2}',
+    '{1} devir provası BAŞARISIZ: {2}':
+      '{1} failover drill FAILED: {2}',
+    '{1} devir provası GEÇTİ — ölçülen kesinti {2} sn, veri kaybı: {3}':
+      '{1} failover drill PASSED — measured outage {2} s, data loss: {3}',
+    '{1} devir provası başlatıldı (gerçek devir).':
+      '{1} failover drill started (a real failover).',
+    '{1} eskimiş verisiyle yazılabilir durumda ayaktaydı ve durduruldu; güncel ana kopya {2}. Eski kopyayı geri almak için \'Eski kopyayı yeniden kur\' düğmesini kullanın.':
+      '{1} was up and writable with stale data and has been stopped; the current primary is {2}. Use "Rebuild the old copy" to bring the old one back.',
+    '{1} geri yüklendi ama PITR TABANI ALINAMADI: {2}. PITR şu an açık GÖRÜNÜYOR ama bu veriye dönülemez — \'./scripts/pitr.sh taban {3}\' ile elle alın.':
+      '{1} was restored but THE PITR BASE COULD NOT BE TAKEN: {2}. PITR still LOOKS on, but this data cannot be travelled back to — take one by hand with \'./scripts/pitr.sh taban {3}\'.',
+    '{1} geri yüklendi ama PITR durumu ÖLÇÜLEMEDİ; taban yenilenmedi. PITR açıksa arşiv zinciri artık bu veriye uymuyor demektir — \'./scripts/pitr.sh durum {2}\' ile bakıp gerekiyorsa \'./scripts/pitr.sh taban {3}\' çalıştırın.':
+      '{1} was restored but the PITR state COULD NOT BE MEASURED; the base was not renewed. If PITR is on, the archive chain no longer matches this data — check with \'./scripts/pitr.sh durum {2}\' and run \'./scripts/pitr.sh taban {3}\' if needed.',
+    '{1} geri yüklendikten sonra PITR tabanı yenilendi; zaman penceresi bu andan itibaren yeniden birikiyor.':
+      'The PITR base was renewed after {1} was restored; the time window starts building again from this moment.',
+    '{1} geri yüklenemedi: {2} — veritabanı YARIM kalmış olabilir, durumunu hemen kontrol edin.':
+      '{1} could not be restored: {2} — the database may be left HALF DONE; check its state immediately.',
+    '{1} geri yüklenmedi, ertelendi: başka bir yedekleme ya da geri yükleme sürüyor. Veriye dokunulmadı.':
+      '{1} was not restored, it was deferred: another backup or restore is running. No data was touched.',
+    '{1} gölge geri yükleme DÜŞTÜ: {2} — üretim etkilenmedi.':
+      '{1} shadow restore FAILED: {2} — production was not affected.',
+    '{1} için geri yükleme başlatıldı: {2} — mevcut veriler ÜZERİNE YAZILIYOR.':
+      'A restore was started for {1}: {2} — the current data is BEING OVERWRITTEN.',
+    '{1} için gölge geri yükleme başlatıldı{2} — ÜRETİME DOKUNULMUYOR, yeni bir kopya hazırlanıyor.':
+      'Shadow restore started for {1}{2} — PRODUCTION IS NOT TOUCHED, a new copy is being prepared.',
+    '{1} için yedek kopya kuruldu ({2})':
+      'A standby copy was set up for {1} ({2})',
+    '{1} işlemi beklenmeyen bir hatayla durdu: {2} — veritabanının durumunu kontrol edin.':
+      'The {1} operation stopped with an unexpected error: {2} — check the database\'s state.',
+    '{1} kapatıldı — belleği serbest bırakıldı (veriler duruyor)':
+      '{1} was turned off — its memory was released (the data is still there)',
+    '{1} kurtarma provası BAŞARISIZ: {2}':
+      '{1} restore drill FAILED: {2}',
+    '{1} kurtarma provası GEÇTİ — yedek gerçekten geri yüklendi ({2} sn).':
+      '{1} restore drill PASSED — the backup really was restored ({2} s).',
+    '{1} takas öncesine döndü ({2}). Kesinti {3} sn. Gölge hacmi {4} duruyor; artık kullanılmıyorsa elle silinebilir.':
+      '{1} went back to before the switch ({2}). Outage {3} s. The shadow volume {4} is still there; it can be deleted by hand if it is no longer used.',
+    '{1} takası yapılamadı: {2}':
+      'The swap for {1} could not be done: {2}',
+    '{1} tamamlandı.':
+      '{1} completed.',
+    '{1} temizlik adımı hata verdi ({2}); yedek kopya yine de kaldırıldı — bu motorda ana kopyayı etkileyecek bir kalıntı kalmıyor.':
+      'The {1} cleanup step errored ({2}); the standby copy was removed anyway — no leftover remains that would affect the primary on this engine.',
+    '{1} yedek kopyası kaldırıldı ({2})':
+      '{1} standby copy removed ({2})',
+    '{1} yedeklendi: {2} ({3} MB)':
+      '{1} was backed up: {2} ({3} MB)',
+    '{1} yedeklenemedi: {2}':
+      '{1} could not be backed up: {2}',
+    '{1} yedeklenmedi, ertelendi: sunucuda başka bir yedekleme ya da geri yükleme sürüyor. Bittiğinde tekrar deneyin.':
+      '{1} was not backed up, it was deferred: another backup or restore is running on the server. Try again when it finishes.',
+    '{1} yedeği alınırken şema değişti (DDL). Parmak izi kaydedildi ama \'kararsız\' işaretlendi: dosyanın hangi şemayı taşıdığı kesin değil.':
+      'The schema changed (DDL) while {1} was being backed up. The fingerprint was recorded but marked \'unstable\': which schema that file carries is not certain.',
+    '{1} yeni kopyaya geçti ({2}). Kesinti {3} sn — geri yükleme {4} sn sürmüştü. Önceki hacim {5}, {6} saat geri dönüş bileti olarak duruyor.':
+      '{1} switched to the new copy ({2}). Outage {3} s — the restore had taken {4} s. The previous volume {5} is kept as a return ticket for {6} hours.',
+    '{1} yeniden başlatıldıktan sonra primary rolü yeniden uygulandı':
+      'The primary role was reapplied after {1} restarted',
+    '{1} yeniden replika olarak kuruldu; roller tutarlı (ana kopya: {2})':
+      '{1} was rebuilt as a replica; the roles are consistent (primary: {2})',
+    '{1} {2} dosyasından geri yüklendi; önceki veriler bu dosyanın içeriğiyle değiştirildi.':
+      '{1} was restored from {2}; the previous data was replaced with the contents of that file.'
   };
 
   function dilOku() {

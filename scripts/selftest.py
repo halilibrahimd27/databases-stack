@@ -3573,6 +3573,16 @@ class _I18nTarayici(_html_parser.HTMLParser):
 
 
 _NOTR = {"Windows", "macOS", "Linux (Ubuntu / Debian)", "Android / iOS"}
+# İki dilde de AYNI kalan metinler: işletim sistemi adları, birebir kabuk
+# komutları (çevrilirse okuyucu çalışmayan bir satır kopyalar), ikonlar ve
+# dil düğmesinin kendi etiketi.
+_HTML_NOTR = set(_NOTR) | {
+    "TR", "…", "◐", "🌐", "💤", "💾", "🔒", "🗄️",
+    "sudo cp ca.crt /usr/local/share/ca-certificates/databases-stack.crt "
+    "sudo update-ca-certificates",
+    "sudo security add-trusted-cert -d -r trustRoot "
+    "\\ -k /Library/Keychains/System.keychain ca.crt",
+}
 _isaretli_eksik = []
 for _s in sorted(_glob2.glob(_os2.path.join(_HTML_DIZIN, "*.html"))):
     _c = _I18nTarayici()
@@ -3582,7 +3592,9 @@ for _s in sorted(_glob2.glob(_os2.path.join(_HTML_DIZIN, "*.html"))):
         if _m not in _ANAHTARLAR and _m not in _NOTR:
             _isaretli_eksik.append("%s: %s" % (_ad, _m[:44]))
     for _m in _c.serbest:
-        if _ATIL.match(_m) or not any(_ch in _TR_HARF for _ch in _m):
+        # DİL TAHMİNİ YOK: "Panele girin" gibi diakritiksiz Türkçe metinler
+        # eski süzgeçten kaçıyordu. Dil-nötr olanlar TEK TEK sayılı.
+        if _ATIL.match(_m) or _m in _HTML_NOTR:
             continue
         if _m not in _ANAHTARLAR:
             _isaretli_eksik.append("%s (işaretsiz): %s" % (_ad, _m[:40]))
@@ -3633,7 +3645,68 @@ for _e in _kat_json["engines"]:
     for _cp in (_e.get("client_ports") or []):
         _kat_ekle((_cp or {}).get("label"))
 
+# MOTOR ADLARI da ekranda görünür. Çoğu ürün adıdır ve çevrilmez; yığının
+# kendi sözde-motoru ("İzleme") Türkçedir ve çevrilmelidir. Ürün adlarını
+# TEK TEK sayıyoruz — "büyük harfle başlıyorsa ürün adıdır" gibi bir tahmin,
+# tam da bu boşluğu yaratan tahmin türü.
+_URUN_ADI = {"MariaDB", "PostgreSQL", "MongoDB", "Redis", "SQL Server",
+             "Cassandra", "Elasticsearch", "Apache Kafka", "RabbitMQ",
+             "ClickHouse", "Neo4j", "MinIO"}
+for _e in _kat_json["engines"]:
+    _ad_m = (_e.get("name") or "").strip()
+    if _ad_m and _ad_m not in _URUN_ADI:
+        _kat_metin.append(_ad_m)
+
 _kat_eksik = sorted(set(_m for _m in _kat_metin if _m not in _ANAHTARLAR))
+# --- OLAY GÜNLÜĞÜ ------------------------------------------------------------
+# Olaylar sunucuda TÜRKÇE yazılıp panelde olduğu gibi basılıyor. İngilizce
+# modda günlüğün tamamı Türkçe kalıyordu ve hiçbir kontrol görmüyordu; ekran
+# görüntüsüyle bildirildi. Mesajlar record_event'ten AST ile çıkarılıp
+# delikleri numaralanıyor — kaynak tek, elle tutulan ikinci bir liste yok.
+import ast as _ast                                        # noqa: E402
+
+
+def _olay_duz(_n):
+    if isinstance(_n, _ast.Constant) and isinstance(_n.value, str):
+        return _n.value
+    if isinstance(_n, _ast.BinOp) and isinstance(_n.op, _ast.Add):
+        _a, _b = _olay_duz(_n.left), _olay_duz(_n.right)
+        if _a is not None and _b is not None:
+            return _a + _b
+    return None
+
+
+def _olay_kalibi(_n):
+    if isinstance(_n, _ast.BinOp) and isinstance(_n.op, _ast.Mod):
+        return _olay_duz(_n.left)
+    return _olay_duz(_n)
+
+
+_olay_eksik = []
+for _n in _ast.walk(_ast.parse(io.open("controller/app.py", encoding="utf-8").read())):
+    if not isinstance(_n, _ast.Call):
+        continue
+    _fad = getattr(_n.func, "id", None) or getattr(_n.func, "attr", None)
+    if _fad != "record_event" or len(_n.args) < 3:
+        continue
+    _m = _olay_kalibi(_n.args[2])
+    if not _m:
+        continue
+    _m = _re2.sub(r"\s+", " ", _m).strip()
+    if not _m:
+        continue
+    _s = [0]
+
+    def _no(_x):
+        _s[0] += 1
+        return "{%d}" % _s[0]
+
+    _m = _re2.sub(r"%[-+ 0-9.]*[sdfr]", _no, _m).replace("%%", "%")
+    if _m not in _ANAHTARLAR:
+        _olay_eksik.append(_m[:46])
+ck("olay günlüğündeki her mesajın karşılığı var", not _olay_eksik,
+   "; ".join(_olay_eksik[:2]) or "hepsi sözlükte")
+
 ck("catalog.json'daki her kullanıcı metninin karşılığı var", not _kat_eksik,
    "; ".join(_m[:40] for _m in _kat_eksik[:2])
    or "%d metin" % len(set(_kat_metin)))
@@ -3836,42 +3909,80 @@ def _metin_dugumleri(html):
     return parcalar
 
 
-# Bunlar metin düğümü olarak ekrana çıkar ama ÇEVRİLMEZ: birebir komut ya da
-# her iki dilde aynı olan teknik ad.
-_CEVRILMEZ = {"docker update"}
+# DİL TAHMİNİ YAPMIYORUZ. Eski sürüm "içinde çğıöşü var mı" diye bakıyordu ve
+# diakritiksiz Türkçe ondan kaçıyordu: "yedek", "en yeni", "kapsama", "port",
+# "yok", "tek tur"... Panel İngilizcedeyken bu satırlar Türkçe kalıyordu ve
+# hiçbir kontrol görmüyordu; kullanıcı ekran görüntüsüyle bildirdi.
+#
+# Doğru ayrım harf değil BİÇİM:
+#   (a) etiket içeren zincir → metin düğümlerine bölünür, her biri anahtar ister
+#   (b) etiketsiz düz dizgi  → tamamı aday; seçici/yol/tanımlayıcı elenir
+# Geriye kalan dil-nötr parçalar TEK TEK sayılıyor. Liste uzun değil ve her
+# satırı bir karar: "bu iki dilde de aynı". Tahmin yerine sayım.
+_KOD_DIZGI2 = _re2.compile(
+    r"^[#.]"
+    r"|^/"
+    r"|^&[a-z]+;?$"
+    r"|^[a-z][a-z0-9-]*$"
+    r"|^[A-Z_]{2,}$"
+    r"|^[a-z-]+:[a-z-]+$"
+    r"|^\{\d\}$"
+    r"|^[\w.-]+\.(js|css|html|json|md|sh|py)$")
+
+_CEVRILMEZ = {
+    # HTML/JS kırıntısı — ekrana metin olarak çıkmaz
+    '"', "'", "&#39;", "']/g,", "[data-act]", "[data-bk]", "details[data-key]",
+    "use strict", "_blank",
+    # MIME ve protokol
+    "Content-Type", "application/json", "HTTP {1}", "https://{1}:{2}{3}",
+    # CSS sınıf kalıpları
+    "mem-advice{1}", "meter-fill{1}", "sys-sub{1}",
+    # Birebir komut — çevrilirse kullanıcı çalışmayan bir satır kopyalar
+    "docker update", "./stack.sh app-user",
+    # Birimler ve biçim: iki dilde de aynı
+    "{1} B", "{1} KB", "{1} MB", "{1} GB", "{1}s", "~ {1}", "%s",
+    "{1} + {2} ≤ {3}",
+    "{1} / {2}",
+    # İkonlar
+    "ℹ️", "⚠️", "🚨", "◐", "☀", "☾",
+}
+
+
+def _js_numarala(x):
+    _s = [0]
+
+    def _no(_m):
+        _s[0] += 1
+        return "{%d}" % _s[0]
+
+    return _re2.sub(_DELIK, _no, x)
 
 
 def _js_metinleri(yol):
-    """(tam_metinler, kalip_metinler) — kalıpta delikler {1}{2}… olur."""
-    tam, kalip = set(), set()
-    for birlesik in _js_zincirler(io.open(yol, encoding="utf-8").read()):
-        for ham in _metin_dugumleri(birlesik):
-            d = _re2.sub(r"\s+", " ", ham).strip()
-            if not d or _ATIL.match(d):
+    """Ekrana çıkabilecek her metin — dil tahmini YOK."""
+    out = set()
+    for _z in _js_zincirler(io.open(yol, encoding="utf-8").read()):
+        _etiketli = "<" in _z and ">" in _z
+        for _h in (_metin_dugumleri(_z) if _etiketli else [_z]):
+            _x = _re2.sub(r"\s+", " ", _h).strip()
+            if not _x or _ATIL.match(_x):
                 continue
-            if not any(c in _TR_HARF for c in d):
+            _k = _js_numarala(_x)
+            if not _etiketli and _KOD_DIZGI2.match(_k):
                 continue
-            if _DELIK in d:
-                sayac = [0]
-
-                def _no(_m):
-                    sayac[0] += 1
-                    return "{%d}" % sayac[0]
-
-                kalip.add(_re2.sub(_DELIK, _no, d))
-            else:
-                tam.add(d)
-    return tam, kalip
+            if _ATIL.match(_re2.sub(r"\{\d\}", "", _k)):
+                continue
+            out.add(_k)
+    return out
 
 
 _js_eksik = []
 for _js2 in ("app.js", "yedekler.js"):
-    _tam, _kalip = _js_metinleri(_os2.path.join(_HTML_DIZIN, _js2))
-    for _d in sorted(_tam | _kalip):
+    for _d in sorted(_js_metinleri(_os2.path.join(_HTML_DIZIN, _js2))):
         if _d not in _ANAHTARLAR and _d not in _CEVRILMEZ:
             _js_eksik.append("%s: %s" % (_js2, _d[:46]))
-ck("panelin JS ile çizdiği her cümle sözlükte", not _js_eksik,
-   "; ".join(_js_eksik[:3]) or "eksik yok")
+ck("panelin JS ile çizdiği her metnin karşılığı var (dil tahmini yok)",
+   not _js_eksik, "; ".join(_js_eksik[:3]) or "eksik yok")
 
 # Göreli zaman ("3 saat önce") parçalardan kuruluyor; tam metin düğümü hiç
 # oluşmadığı için DOM çevirisi ona yetişemez — kaynakta T() ile sarmalı.
@@ -4551,6 +4662,24 @@ ck("motor_parolasi yalnız common.sh'ta tanımlı", not _kopya,
    ", ".join(_kopya) or "tek kaynak")
 ck("common.sh motor_parolasi'nı sağlıyor",
    "motor_parolasi() {" in io.open("scripts/lib/common.sh", encoding="utf-8").read())
+
+# ÇALIŞTIRMA BİTİ DEPODA DURMALI. Windows'ta `chmod +x` yerel dosyayı
+# değiştirir ama git core.fileMode=false olduğu için commit'e GİRMEZ; taze bir
+# `git clone` betikleri çalıştıramaz ve kullanıcı "command not found" görür.
+# Bu gerçekten yaşandı: sunucuda yeni e2e paketleri koşmadı.
+# `sh <betik>` ile çağrılanlar ve source edilenler dışarıda.
+_calistirilmayan = {"scripts/lib/common.sh",
+                    "config/postgresql/wal-archive.sh",
+                    "config/postgresql/wal-restore.sh"}
+_mod = subprocess.run(["git", "ls-files", "-s", "*.sh"], cwd=ROOT,
+                      capture_output=True, text=True, timeout=30)
+_bitsiz = []
+for _ln in (_mod.stdout or "").splitlines():
+    _p = _ln.split()
+    if len(_p) >= 4 and _p[0] != "100755" and _p[3] not in _calistirilmayan:
+        _bitsiz.append(_p[3])
+ck("çalıştırılan her betiğin çalıştırma biti depoda", not _bitsiz,
+   ", ".join(_bitsiz[:3]) or "hepsi 100755")
 
 # YALNIZ scripts/ ALTINDA DURAN ÖZELLİK KEŞFEDİLEMEZ. stack.sh'ın kendi
 # yorumu bunu söylüyor: kullanıcı "./stack.sh" yazıp yardım ekranına bakıyor,
