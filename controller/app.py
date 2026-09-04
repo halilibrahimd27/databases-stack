@@ -127,6 +127,11 @@ REBALANCE_HEADROOM = _env_float("REBALANCE_HEADROOM", 1.3, 1.05)
 # yedek kopya gerçekten ağır iş yaparken ana kopya da hizmet veriyor.
 STANDBY_CEILING_WEIGHT = min(
     1.0, _env_float("STANDBY_CEILING_WEIGHT", 0.5, 0.0))
+# Yeniden dengeleme tavan bütçesinin NE KADARINI dağıtsın. Tamamını dağıtmak,
+# bir sonraki motorun kesin reddi demek: ölçüldü, dengelemeden sonra oran
+# %152'ye çıkıyor ve kapalı motorların hepsi "üst sınır bütçesi doldu" diyordu.
+# Kalan pay, açılacak bir sonraki motorun yeridir.
+REBALANCE_FILL = min(1.0, _env_float("REBALANCE_FILL", 0.85, 0.3))
 # İşletim sistemi payı ÖLÇÜLDÜĞÜNDE, ölçülen değerin kaç katı ayrılsın.
 # Ölçüm anlıktır; OS'un tepe ihtiyacı ondan yüksek olabilir.
 OS_MEASURE_SAFETY = _env_float("OS_MEASURE_SAFETY", 2.0, 1.0)
@@ -1382,8 +1387,16 @@ def plan_engine(eid, requested_mb=None):
                              OVERCOMMIT_LIMIT, committed)),
                 reason_kind="bellek")
             return detail
-        limit = _clamp(want, min_mb, None)
+        # KATALOG ÜST SINIRINA DA KIRPILIYOR. Eskiden yalnız bütçeye
+        # bakılıyordu; panel "en çok N" diyor, sunucu N-i aşan değeri
+        # kabul ediyor ve sonraki bir yeniden dengeleme onu sessizce
+        # max_mb-ye indiriyordu — kullanıcının tercihi ilgisiz bir anda
+        # geri alınmış oluyordu.
+        limit = int(_clamp(want, min_mb, max_mb))
         source = "kullanıcı"
+        if limit != want:
+            # Kırpmayı SÖYLÜYORUZ: sessiz kırpma, sessiz yoksaymadır.
+            detail["clamped_from_mb"] = want
     else:
         limit = int(_clamp(total * share, min_mb, max_mb))
         limit = min(limit, engine_budget)
@@ -1911,6 +1924,13 @@ def gateway_reload_or_alert(eid, what):
 # =============================================================================
 # OLAYLAR + BİLDİRİM
 # =============================================================================
+# Olay defteri de SINIRSIZ BÜYÜMÜYOR. Bu dosyada üç ayrı yerde "events.jsonl'de
+# bir kez yaşandı" diye ders çıkarılmış ve ders başka defterlere uygulanmış ama
+# suçlunun kendisi düzeltilmemişti. Tavanı aşınca '.1' olarak yer değiştirir;
+# elde her zaman en çok iki dosya kalır.
+OLAY_MAX_BYTES = int(os.environ.get("OLAY_MAX_BYTES", str(4 * 1024 * 1024)))
+
+
 def record_event(kind, engine, message, level="info", **extra):
     ev = {"ts": int(time.time()), "kind": kind, "engine": engine,
           "level": level, "message": message}
@@ -1919,6 +1939,8 @@ def record_event(kind, engine, message, level="info", **extra):
         os.makedirs(STATE_DIR, exist_ok=True)
         with open(EVENTS_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+        if os.path.getsize(EVENTS_FILE) > OLAY_MAX_BYTES:
+            os.replace(EVENTS_FILE, EVENTS_FILE + ".1")
     except Exception as e:
         log("olay yazılamadı:", e)
     log("OLAY[%s] %s: %s" % (level, engine, message))
@@ -1943,13 +1965,47 @@ def _notify(ev):
         log("bildirim gönderilemedi:", e)
 
 
-def read_events(limit=100):
+def _son_satirlar(yol, n, blok=65536):
+    """Dosyanın SON n satırı — tamamını belleğe almadan.
+
+    Eskiden `f.readlines()[-limit:]` vardı: panel /api/events'i beş saniyede
+    bir çağırıyor ve bu, defter ne kadar büyükse o kadar baytı her seferinde
+    okumak demekti. Sondan geriye blok blok okuyoruz; okunan miktar dosyanın
+    değil istenen satır sayısının büyüklüğüne bağlı.
+    """
     try:
-        with open(EVENTS_FILE, encoding="utf-8") as f:
-            lines = f.readlines()[-limit:]
-        return [json.loads(x) for x in lines if x.strip()]
-    except Exception:
+        with open(yol, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            kalan = f.tell()
+            veri = b""
+            while kalan > 0 and veri.count(b"\n") <= n:
+                oku = min(blok, kalan)
+                kalan -= oku
+                f.seek(kalan)
+                veri = f.read(oku) + veri
+        return veri.decode("utf-8", "replace").splitlines()[-n:]
+    except OSError:
         return []
+
+
+def read_events(limit=100):
+    satir = _son_satirlar(EVENTS_FILE, limit)
+    # Az önce rotasyon olduysa güncel dosya neredeyse boştur; eksiği bir
+    # önceki defterden tamamlıyoruz ki panel aniden boşalmasın.
+    if len(satir) < limit and os.path.exists(EVENTS_FILE + ".1"):
+        satir = _son_satirlar(EVENTS_FILE + ".1", limit - len(satir)) + satir
+    out = []
+    for x in satir:
+        x = x.strip()
+        if not x:
+            continue
+        try:
+            out.append(json.loads(x))
+        except ValueError:
+            # Rotasyon anında yarım kalmış bir satır olabilir; bir bozuk
+            # satır yüzünden bütün olay akışını kaybetmiyoruz.
+            continue
+    return out
 
 
 # =============================================================================
@@ -3488,6 +3544,8 @@ def do_rebalance(jid):
             return t
 
         toplam = _agirlikli_toplam(istek)
+        # Bütçenin TAMAMI değil, REBALANCE_FILL kadarı hedefleniyor.
+        hedef_pay = int(pay * REBALANCE_FILL)
         if pay <= 0:
             # Motor dışı container'ların tavanları tek başına bütçeyi yemiş.
             # Motorlara verebileceğimiz en dürüst değer asgarileridir; daha
@@ -3498,19 +3556,20 @@ def do_rebalance(jid):
             job_log(jid, "UYARI: motor dışı container tavanları (%d MB) tavan "
                          "bütçesini tüketmiş — motorlar asgari tavana çekildi"
                     % disari)
-        elif toplam > pay and toplam > 0:
+        elif toplam > hedef_pay and toplam > 0:
             # BÜTÇE DAR: hedefi RAM payı değil ÖLÇÜLEN KULLANIM yapıyoruz.
             # Eski davranış istekleri tek bir katsayıyla kısıyordu; kullanım
             # tavanın %6'sıysa o katsayı (0.95) hiçbir şey açmıyordu.
             istek = dict(taban)
             taban_toplam = _agirlikli_toplam(istek)
-            kalan = pay - taban_toplam
+            kalan = hedef_pay - taban_toplam
             if kalan <= 0:
                 job_log(jid, "tavan bütçesi ÖLÇÜLEN KULLANIMA bile yetmiyor "
-                             "(%d MB gerekli, %d MB var) — tabanlarda "
-                             "kalınıyor. Bir motoru durdurmadan ya da "
-                             "OVERCOMMIT_LIMIT'i yükseltmeden bu sunucuya "
-                             "sığmaz." % (int(taban_toplam), pay))
+                             "(%d MB gerekli, hedeflenen pay %d MB / toplam "
+                             "%d MB) — tabanlarda kalınıyor. Bir motoru "
+                             "durdurmadan ya da OVERCOMMIT_LIMIT'i "
+                             "yükseltmeden bu sunucuya sığmaz."
+                        % (int(taban_toplam), hedef_pay, pay))
             else:
                 # Kalan bütçe ideale doğru ORANTILI dağıtılıyor. Büyüme
                 # maliyeti ağırlıklı hesaplanıyor: yedek kopyası olan bir
@@ -3522,11 +3581,13 @@ def do_rebalance(jid):
                     for k in istek:
                         istek[k] = int(taban[k]
                                        + (ideal[k] - taban[k]) * oran)
-                job_log(jid, "tavan bütçesi dar (%d MB istendi, %d MB var): "
-                             "hedef ölçülen kullanıma çekildi (taban %d MB), "
-                             "kalan bütçe ideale doğru %.2f oranında "
-                             "dağıtıldı"
-                        % (toplam, pay, int(taban_toplam),
+                job_log(jid, "tavan bütçesi dar (%d MB istendi, dağıtılacak "
+                             "pay %d MB — bütçenin %.0f%%'i, kalanı yeni bir "
+                             "motora ayrıldı): hedef ölçülen kullanıma "
+                             "çekildi (taban %d MB), artan pay ideale doğru "
+                             "%.2f oranında dağıtıldı"
+                        % (toplam, hedef_pay, REBALANCE_FILL * 100,
+                           int(taban_toplam),
                            min(1.0, float(kalan) / buyume) if buyume else 0.0))
 
         # 3) SERT KURAL: yeni tavanlardan türeyecek REZERVE toplamı

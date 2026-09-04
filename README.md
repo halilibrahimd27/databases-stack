@@ -301,6 +301,19 @@ with `docker update`:
   rebalancing never takes a ceiling **below the engine's current reserve**; that
   setting is only recalculated against the new ceiling when the engine is
   restarted.
+- **What it aims at depends on how tight the budget is.** With room to spare,
+  every engine keeps its share-of-RAM ceiling — there is no reason to squeeze.
+  When the budget is tight the target becomes the **measured usage**
+  (`usage × REBALANCE_HEADROOM`, never below the engine's minimum), and whatever
+  budget is left over is distributed back towards the generous figure in
+  proportion. Measured: three containers at 6000/6000/4000 MB using 200 MB each
+  came down to 1741/1741/1377 MB.
+  Before this, rebalancing recalculated the *same share-of-RAM formula* and only
+  scaled it if the budget was tight — so on a server where usage was 6% of the
+  ceiling it moved a ceiling from 2992 MB to **3040 MB** and freed nothing,
+  while the button promised the opposite.
+- If the floors alone do not fit, rebalancing stops at the floors and **says so**
+  — going below them is what the cgroup OOM killer is for.
 
 `./scripts/e2e/sizing.sh` measures this: it creates the overcommit condition
 itself, calls rebalancing, reads from the cgroup that the ceiling really

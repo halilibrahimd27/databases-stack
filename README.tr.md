@@ -281,6 +281,18 @@ uygular:
   küçültülemez — buffer pool'u geri veremezsiniz. Bu yüzden yeniden dengeleme
   hiçbir tavanı motorun mevcut **rezervesinin altına** indirmez; o ayar ancak
   motor yeniden başlatıldığında yeni tavana göre hesaplanır.
+- **Neyi hedeflediği bütçenin darlığına bağlı.** Yer bolsa herkes RAM payı
+  kadar tavanını korur — sıkmanın sebebi yok. Bütçe darsa hedef **ölçülen
+  kullanım** olur (`kullanım × REBALANCE_HEADROOM`, motorun asgarisinin asla
+  altına inmeden) ve artan bütçe cömert değere doğru orantılı dağıtılır.
+  Ölçüldü: 6000/6000/4000 MB tavanlı, her biri 200 MB kullanan üç container
+  1741/1741/1377 MB'a indi.
+  Öncesinde dengeleme *aynı RAM-payı formülünü* yeniden hesaplıyor ve yalnız
+  bütçe darsa bir katsayıyla kısıyordu — kullanımın tavanın %6'sı olduğu bir
+  sunucuda tavanı 2992 MB'dan **3040 MB'a çıkarıyor** ve hiç yer açmıyordu;
+  düğme ise tersini vaat ediyordu.
+- Tabanlar bile sığmıyorsa dengeleme tabanlarda durur ve bunu **söyler** —
+  altına inmek, cgroup OOM killer'ın devreye girmesi demektir.
 
 `./scripts/e2e/sizing.sh` bunu ölçüyor: aşırı taahhüt durumunu kendisi
 yaratıyor, yeniden dengelemeyi çağırıyor, tavanın gerçekten düştüğünü

@@ -1,0 +1,46 @@
+# Selftest her itmede ve her PR'da koşar.
+#
+# NEDEN: 580'den fazla kontrol ve 19 uçtan uca paket var ama hiçbiri otomatik
+# koşmuyordu. Açık kaynakta bu, eldeki en değerli varlığı kullanmamak demek —
+# gelen bir PR'ın selftest'i geçip geçmediği görülmüyordu.
+#
+# Selftest docker İSTEMEZ: kontrol düzlemini süreç içinde ayağa kaldırır,
+# docker çağrılarını taklit eder ve kaynak dosyaları okur. node gerekiyor,
+# çünkü panelin JS'i ve çeviri motoru gerçekten çalıştırılarak denetleniyor —
+# node yoksa selftest bunu "ölçemedim" diye BAŞARISIZ sayar, sessizce geçmez.
+name: selftest
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Panelin JS'i ve çeviri motoru node ile denetleniyor.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: selftest
+        run: python3 scripts/selftest.py
+
+      - name: kabuk betikleri sözdizimi
+        run: |
+          hata=0
+          for f in $(git ls-files '*.sh'); do
+            bash -n "$f" || { echo "SÖZDİZİMİ HATASI: $f"; hata=1; }
+          done
+          exit $hata
+
+      - name: katalog tutarlılığı
+        run: bash scripts/check-catalog.sh
