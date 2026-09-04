@@ -1032,6 +1032,21 @@ restore_postgresql() {
     # (--single-transaction da kullanılamaz: CREATE/DROP DATABASE tek işlem
     # içinde çalıştırılamaz.)
     # ------------------------------------------------------------------------
+    # ÖNCE DİĞER OTURUMLARI KAPAT. Döküm 'pg_dumpall --clean' ile alınıyor ve
+    # içinde DROP DATABASE var; açık tek bir bağlantı bile o DROP'u
+    # "is being accessed by other users" ile düşürür. Eskiden bu hata
+    # zararsız sayılıyordu ve geri yükleme sessizce BİRLEŞTİRMEYE dönüşüyordu:
+    # veritabanı düşmüyor, döküm var olanın içine yükleniyor ve o andan sonra
+    # yaratılmış her nesne yerinde kalıyordu. Kullanıcı zamanda geri
+    # döndüğünü sanıyordu. (e2e/recovery-set.sh yakaladı.)
+    docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" "$C" \
+        psql -U "${POSTGRES_USER:-root}" -d postgres -tAq -c "
+            SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+             WHERE pid <> pg_backend_pid()
+               AND datname IS NOT NULL
+               AND datname NOT IN ('postgres','template0','template1')" \
+        >>"$LOG_FILE" 2>&1 || true
+
     local errf; errf="$(mktemp)"
     oku_akis "$f" | docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-$DB_PASSWORD}" -i "$C" \
         psql -U "${POSTGRES_USER:-root}" -d postgres 2>"$errf" >>"$LOG_FILE"
@@ -1047,9 +1062,15 @@ restore_postgresql() {
     # Beklenen (zararsız) hatalar. Hepsi "bağlı olduğumuz oturumu düşüremeyiz"
     # ailesinden; DROP başarısız olunca ardından gelen CREATE de "zaten var"
     # der — o da beklenendir.
+    #
+    # 'is being accessed by other users' BU AİLEDEN DEĞİL ve listede yok:
+    # o hata, hedef veritabanının GERÇEKTEN düşürülemediği anlamına gelir ve
+    # geri yükleme o noktada birleştirmeye dönüşür. Zararsız saymak, ürünün
+    # "eski veriler bu dosyanın içeriğiyle değiştirildi" cümlesini yalan
+    # yapıyordu.
     local gercek
     gercek="$(grep -E '^(psql:|ERROR|FATAL|HATA)' "$errf" 2>/dev/null \
-        | grep -viE 'current user cannot be dropped|cannot drop the currently open database|role .* already exists|database .* already exists|is being accessed by other users' \
+        | grep -viE 'current user cannot be dropped|cannot drop the currently open database|role .* already exists|database .* already exists' \
         || true)"
     rm -f "$errf"
 

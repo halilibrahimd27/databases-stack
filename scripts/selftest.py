@@ -4601,6 +4601,19 @@ ck("gölge geri yükleme PITR tabanını yeniliyor",
 ck("klasik geri yükleme de PITR tabanını yeniliyor",
    "pitr_taban_yenile(" in _klasik_govde)
 
+# POSTGRESQL GERİ YÜKLEMESİ BİRLEŞTİRMEYE DÖNÜŞMEMELİ. Ölçüldü: döküm
+# 'pg_dumpall --clean' ile alınıyor ama açık bir bağlantı varsa DROP DATABASE
+# "is being accessed by other users" ile düşüyordu ve bu hata ZARARSIZ
+# sayılıyordu; döküm var olan veritabanının içine yükleniyor, o andan sonra
+# yaratılmış nesneler yerinde kalıyor ve ürün "geri yüklendi" diyordu.
+_bsrc2 = io.open("scripts/backup.sh", encoding="utf-8").read()
+_pg_govde = _bsrc2.split("restore_postgresql()")[1].split(chr(10) + "}")[0]
+ck("PostgreSQL geri yüklemesi önce diğer oturumları kapatıyor",
+   "pg_terminate_backend" in _pg_govde)
+ck("'başka oturumlar kullanıyor' hatası zararsız SAYILMIYOR",
+   "is being accessed by other users" not in
+   _pg_govde.split("grep -viE")[1].split(chr(10))[0])
+
 # PITR ÜRETİM GERİ YÜKLEMESİ TEK YÖNLÜ KAPI OLMAMALI. Canlı sunucuda
 # ölçüldü: pencere kontrolü geçti, taban üretim hacmine basıldı, küme
 # açılamadı ("could not locate required checkpoint record"), container 21 kez
