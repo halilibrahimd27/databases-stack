@@ -3512,8 +3512,18 @@ def do_rebalance(jid):
                                    if _s is not None else 0.0)
             kul = [container_usage_mb(x) for x in (_c, _s) if x is not None]
             kul = [k for k in kul if k is not None]
+            # MOTORUN ZATEN AYIRDIĞI BELLEĞİN ALTINA İNİLEMEZ. Ölçülen kullanım
+            # düşük olabilir çünkü buffer pool/heap henüz DOLMAMIŞTIR — ama
+            # yapılandırılmış boyuta doğru büyüyecek ve o an limiti aşarsa
+            # cgroup OOM-killer süreci öldürür. E2E bunu yakaladı:
+            # innodb_buffer_pool 1917 MB iken tavan 789 MB'a indirilmişti.
+            # İç ayar çalışan motorda değişmez; o bellek ancak motor yeniden
+            # başlatılınca geri alınabilir.
+            mevcut = max(x["memory_mb"] for x in (_c, _s) if x is not None)
+            rez_simdi = engine_reserved_mb(eid_, limit_mb=mevcut)
+            zemin = max(mn, int(rez_simdi))
             # Ölçemediysek küçültmüyoruz: tabanı kendi ideali sayıyoruz.
-            taban[eid_] = (max(mn, int(max(kul) * REBALANCE_HEADROOM))
+            taban[eid_] = (max(zemin, int(max(kul) * REBALANCE_HEADROOM))
                            if kul else ideal[eid_])
         istek = dict(ideal)
 
